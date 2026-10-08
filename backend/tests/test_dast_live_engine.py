@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from playwright.sync_api import sync_playwright
 
 from app.config import settings
 from app.dast.domain.identities import build_identities
@@ -123,3 +124,44 @@ def test_an_anonymous_scan_crawls_the_public_pages_in_a_real_browser():
         assert f"{site.base}/about" in urls and f"{site.base}/account" not in urls  # protected pages stay out of reach
         assert {p["identity"] for p in discovery["pages"]} == {"anonymous"}
         # (the API-only case, where no browser is launched at all, is covered offline in test_dast_engine.py)
+
+
+def test_crawl_extraction_does_not_click_localized_logout_controls():
+    with LiveSite() as site, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            context = browser.new_context()
+            page = context.new_page()
+            page.goto(f"{site.base}/login")
+            page.fill("#u", USER)
+            page.fill("#p", PASSWORD)
+            page.click("#go")
+            page.wait_for_url(f"{site.base}/home")
+
+            crawl_node.extract_links_and_forms(page, site.base, "exact")
+            protected_status = page.evaluate(
+                "() => fetch('/api/me').then(response => response.status)"
+            )
+        finally:
+            browser.close()
+
+        assert site.paths(method="POST").count("/api/auth/logout") == 0
+        assert protected_status == 200
+
+
+def test_full_crawl_does_not_enter_session_recovery_from_ui_discovery():
+    with LiveSite() as site:
+        discovery, _audit, _runtime = run(
+            site,
+            request={
+                "method_policy": "opt_in_mutating",
+                "target_disposable": True,
+            },
+        )
+
+        assert "/api/auth/logout" not in site.paths(method="POST")
+        assert not discovery.get("authentication_failed")
+        assert not any(
+            warning.get("event") == "session_lost"
+            for warning in discovery.get("warnings", [])
+        )

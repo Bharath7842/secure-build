@@ -17,15 +17,11 @@ from ..url_utils import get_url_pattern, is_same_domain, normalize_url
 if TYPE_CHECKING:  # lazy: playwright is only needed when a real crawl runs
     from playwright.sync_api import BrowserContext, Page
 
-# Guards against the "logout trap": an agentic crawler blindly clicking a
-# sign-out/delete/reset link would destroy its own session or mutate target
-# state. Checked against both a link's URL and its visible text before it is
-# ever queued or clicked.
+# Guards against destructive anchors being queued and navigated. This is a
+# conservative filter, not a complete classifier for every language or target.
 DESTRUCTIVE_PATTERNS = re.compile(
     r"(?i)(log[\s\-_]?out|sign[\s\-_]?out|delete|deactivate|remove|reset|invalidate|\bdrop\b)"
 )
-
-INTERACTIVE_SELECTOR = 'button, [role="link"], [role="button"], [onclick]'
 
 
 def is_safe_to_visit(url: str, link_text: str = "") -> bool:
@@ -120,71 +116,8 @@ def _extract_hrefs(page: Page, base_url: str, same_domain_mode: str) -> list:
     return links
 
 
-def _discover_via_interactive_elements(page: Page, base_url: str, same_domain_mode: str, known_link_count: int) -> list:
-    """Probe a handful of button/onclick/role=link elements for JS-router navigation.
-
-    Some SPA routers navigate via a button click or an onclick handler rather than a
-    real <a href> (invisible to _extract_hrefs). Only bothers when hrefs are sparse,
-    and caps both the candidate count and the resulting clicks tightly: each probe
-    clicks a live element and mutates page state, so this is deliberately conservative
-    rather than exhaustive. Always attempts to restore the original page afterward.
-    """
-    if known_link_count >= 3:
-        return []
-
-    discovered = []
-    try:
-        original_url = page.url
-        clickable = page.locator(INTERACTIVE_SELECTOR)
-        count = min(clickable.count(), 8)
-        tried = 0
-        for i in range(count):
-            if tried >= 3:
-                break
-            try:
-                el = clickable.nth(i)
-                if not el.is_visible():
-                    continue
-                text = (el.inner_text() or "").strip()[:80]
-            except Exception:  # noqa: BLE001
-                continue
-            if not is_safe_to_visit("", text):
-                continue
-            tried += 1
-            try:
-                el.click(timeout=2_000)
-                page.wait_for_load_state("networkidle", timeout=3_000)
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                new_url = page.url
-                if (
-                    new_url != original_url
-                    and is_same_domain(new_url, base_url, same_domain_mode)
-                    and is_safe_to_visit(new_url, "")
-                ):
-                    discovered.append(new_url)
-            except Exception:  # noqa: BLE001
-                pass
-            # Restore the original page before trying the next candidate.
-            try:
-                if page.url != original_url:
-                    page.go_back(timeout=3_000)
-                    if page.url != original_url:
-                        page.goto(original_url, timeout=5_000)
-            except Exception:  # noqa: BLE001
-                try:
-                    page.goto(original_url, timeout=5_000)
-                except Exception:  # noqa: BLE001
-                    pass
-    except Exception:  # noqa: BLE001
-        pass
-    return discovered
-
-
 def extract_links_and_forms(page: Page, base_url: str, same_domain_mode: str):
     same_domain_links = _extract_hrefs(page, base_url, same_domain_mode)
-    same_domain_links += _discover_via_interactive_elements(page, base_url, same_domain_mode, len(same_domain_links))
 
     try:
         forms = page.eval_on_selector_all(

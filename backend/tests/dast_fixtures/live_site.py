@@ -5,9 +5,10 @@
         site.requests   # every request the server saw: (method, path, headers dict)
 
 Routes: `/` (links), `/login` (a form; POST sets a `session` cookie and redirects to `/home`),
-`/home` and `/account` (need the cookie; `/account` makes an XHR POST with a password field in
-its body), `/api/me` (JSON, needs the cookie, else 401), `/static/app.js`, `/openapi.json`, and
-`/delete-all` (a state-changing GET-looking link the crawler must not follow).
+`/home` and `/account` (need the cookie; `/home` has localized controls and `/account` makes an
+XHR POST with a password field in its body), `/api/me` (JSON, needs the cookie, else 401),
+`/api/auth/logout` (clears the session), `/static/app.js`, `/openapi.json`, and `/delete-all`
+(a state-changing GET-looking link the crawler must not follow).
 """
 
 from __future__ import annotations
@@ -27,7 +28,20 @@ PAGES = {
         "<input id='u' name='username' type='text'><input id='p' name='password' type='password'>"
         "<button id='go' type='submit'>Sign in</button></form></body></html>"
     ),
-    "/home": "<html><head><title>Dashboard</title></head><body><a href='/account'>Account</a> <a href='/logout'>Log out</a> <a href='/delete-all'>Delete everything</a></body></html>",
+    "/home": """<html><head><title>Dashboard</title></head><body>
+<a href='/account'>Account</a>
+<button id='en' type='button'>EN</button>
+<button id='fr' type='button'>FR</button>
+<button id='logout' type='button'>Logout</button>
+<script>
+document.querySelector('#fr').onclick = () => {
+  document.querySelector('#logout').textContent = 'Déconnexion';
+};
+document.querySelector('#logout').onclick = async () => {
+  await fetch('/api/auth/logout', {method: 'POST'});
+  location.href = '/login';
+};
+</script></body></html>""",
     "/account": (
         "<html><head><title>Account</title><script src='/static/app.js'></script></head><body><a href='/home'>Home</a> <a href='/logout'>Log out</a>"
         "<script>fetch('/api/me').then(r=>r.json());"
@@ -88,6 +102,12 @@ class _Handler(BaseHTTPRequestHandler):
             if fields.get("username") == USER and fields.get("password") == PASSWORD:
                 return self._send(302, "", headers={"Location": "/home", "Set-Cookie": f"session={SESSION}; Path=/; HttpOnly"})
             return self._send(200, PAGES["/login"] + "<p>bad credentials</p>")
+        if path == "/api/auth/logout":
+            return self._send(
+                204,
+                "",
+                headers={"Set-Cookie": "session=; Path=/; Max-Age=0; HttpOnly"},
+            )
         if path == "/api/me":
             return self._send(200, '{"ok":true}', "application/json") if self._cookie_ok() else self._send(401, '{"error":"auth"}', "application/json")
         self._send(404, "not found", "text/plain")
