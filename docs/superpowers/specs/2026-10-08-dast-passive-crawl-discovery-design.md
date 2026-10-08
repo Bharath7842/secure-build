@@ -2,7 +2,7 @@
 
 ## Goal
 
-Prevent the DAST discovery crawler from changing target state or destroying its own authenticated session while it discovers pages.
+Prevent the DAST discovery crawler from clicking arbitrary interactive controls while it extracts links and forms. This removes the specific self-inflicted logout path without claiming that ordinary page navigation can never execute target-side behavior.
 
 ## Observed failure
 
@@ -12,14 +12,14 @@ The target did not spontaneously expire the session. The crawler caused the logo
 
 ## Chosen approach
 
-Crawl discovery will be passive:
+Crawl extraction will be non-interactive:
 
 - Extract and queue same-scope destinations from actual anchors with `href` values.
 - Extract forms without submitting them.
 - Keep the existing API traffic capture and JavaScript/schema discovery stages.
 - Do not click generic `button`, `[role="button"]`, `[role="link"]`, or `[onclick]` elements while discovering routes.
 
-The existing destructive URL/text filter remains useful for anchors, but it is not treated as a complete classifier. It cannot reliably recognize every language, icon-only control, or application-specific destructive action.
+The existing destructive URL/text filter remains useful for anchors, but it is not treated as a complete classifier. It cannot reliably recognize every language, icon-only control, or application-specific destructive action. Navigating queued anchors remains a separate, bounded crawl behavior; this change does not promise that a hostile or incorrectly designed GET route is side-effect free.
 
 ## Alternatives rejected
 
@@ -39,20 +39,28 @@ This still permits client-side state corruption and unsafe applications that mut
 
 `backend/app/dast/nodes/crawl.py` will stop invoking interactive-element click discovery from `extract_links_and_forms`. The now-unused click-probing selector and helper will be removed. Anchor discovery, form extraction, screenshots, network capture, crawl planning, and session checks remain unchanged.
 
-Tests will exercise the public extraction behavior with a page fake that contains anchors, forms, and clickable buttons. They will prove that:
+Unit tests will exercise the public extraction behavior with a page fake that contains anchors, forms, and clickable buttons. They will prove that:
 
 1. anchor destinations and forms are still returned;
 2. no clickable element is clicked, including language and localized logout controls;
 3. destructive anchors remain excluded by the existing filter.
 
+A real-browser integration regression will extend the local live-site fixture with the incident sequence: `EN`, `FR`, and a logout control whose text changes to `Déconnexion`. The logout handler will invalidate the fixture session if called. The test will run discovery with state-changing requests otherwise permitted and assert:
+
+- the server receives zero logout requests;
+- a protected identity endpoint still returns HTTP 200 after extraction; and
+- the scan does not enter session recovery because of its own UI probing.
+
+For this test, "session remains usable" means that the same identity's browser context can make a successful authenticated request to the fixture's protected identity endpoint after extraction.
+
 ## Behavior and trade-off
 
-Button-only client-side routes may no longer be learned during the browser crawl. This is an intentional safe-mode trade-off: incomplete passive discovery is preferable to mutating an application or invalidating the identity being scanned. Existing script harvesting, observed network traffic, schemas, and ordinary links continue to supply additional coverage.
+Button-only client-side routes may no longer be learned during the browser crawl. This is an intentional safety trade-off: incomplete non-interactive discovery is preferable to mutating an application or invalidating the identity being scanned. Existing script harvesting, observed network traffic, schemas, and ordinary links continue to supply additional coverage.
 
 ## Success criteria
 
-- Reproducing the employee-app page does not produce `POST /api/auth/logout` during crawl discovery.
-- The authenticated browser session remains usable after link/form extraction.
+- Reproducing the employee-app control sequence does not produce `POST /api/auth/logout` during crawl discovery.
+- The same authenticated browser context receives HTTP 200 from a protected identity endpoint after link/form extraction.
 - Existing anchor and form discovery behavior remains covered and passing.
 - Focused crawler tests and the relevant backend test suite pass.
 
