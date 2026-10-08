@@ -1,0 +1,40 @@
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+backend/.venv/
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+
+# Secrets (keep .env.local.example)
+frontend/.env.local
+
+# Runtime data (DBs, scan logs, workspaces, screenshots)
+data/
+
+# Scratch/debug artifacts from local scan runs (see CLAUDE.md)
+sast_output/
+semgrep-test/
+sast_history.db
+report.json
+s1341.json
+scan1341.json
+v1341.txt
+hardcoded-scan1341.err
+hardcoded-scan1341.json
+hardcoded1341-test.json
+semgrep-validate-err.txt
+semgrep-validate-out.txt
+semgrep1341-*.err
+semgrep1341-*.exit
+semgrep1341-*.json
+semgrep1341-*.out
+Curd-Pro-v2.pdf
+Curd-Pro-v3.pdf
+Juice-Shop-dast-v21.pdf
+SSIR-v2.pdf

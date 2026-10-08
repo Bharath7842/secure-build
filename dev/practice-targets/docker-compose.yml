@@ -1,0 +1,39 @@
+# Deliberately vulnerable practice targets for LOCAL, AUTHORIZED testing only.
+# Every port is bound to 127.0.0.1 — never change that to 0.0.0.0 or publish these to a network.
+# Image versions are pinned; see README.md ("Pinned versions") before bumping them.
+name: dast-practice-targets
+
+services:
+  juice-shop:
+    # OWASP Juice Shop v20.2.0
+    image: bkimminich/juice-shop:v20.2.0@sha256:8739101ade29358abb5469ee66ae78e582c97ed0a5543a4ad102e5fa5193526b
+    ports:
+      - "127.0.0.1:3001:3000"   # 3000 is the frontend's port, so Juice Shop goes on 3001
+    restart: unless-stopped
+
+  dvwa:
+    # Damn Vulnerable Web Application. The project publishes commit-sha tags and `latest`;
+    # pinned here by the digest `latest` pointed at on 2026-10-07.
+    image: ghcr.io/digininja/dvwa@sha256:830037dfb394a98ef408c34eeb5c4f145aff7bd07d1402470c650bba964591d2
+    environment:
+      DB_SERVER: dvwa-db
+    depends_on:
+      - dvwa-db
+    ports:
+      - "127.0.0.1:4280:80"
+    restart: unless-stopped
+
+  dvwa-db:
+    image: mariadb:10.11.19
+    environment:
+      MYSQL_ROOT_PASSWORD: dvwa
+      MYSQL_DATABASE: dvwa
+      MYSQL_USER: dvwa
+      MYSQL_PASSWORD: p@ssw0rd
+    volumes:
+      - dvwa-db:/var/lib/mysql
+    # No published ports: only DVWA talks to its database.
+    restart: unless-stopped
+
+volumes:
+  dvwa-db:

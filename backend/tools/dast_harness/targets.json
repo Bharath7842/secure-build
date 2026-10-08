@@ -1,0 +1,17 @@
+{
+  "_comment": "Practice targets the harness can scan (see dev/practice-targets/README.md). Credentials here are the targets' own published defaults, never real secrets; per-run values can be overridden on the command line.",
+  "dvwa": {
+    "target_url": "http://127.0.0.1:4280",
+    "identities": [
+      {"label": "admin", "role": "Admin", "auth_method": "form", "login_url": "http://127.0.0.1:4280/login.php", "username": "admin", "password": "password"}
+    ],
+    "truth": "ground_truth/dvwa.json"
+  },
+  "juice-shop": {
+    "target_url": "http://127.0.0.1:3001",
+    "identities": [],
+    "note": "Register two accounts on the site first and pass them with --identity label:role:username:password to exercise the authorization checks.",
+    "login_url": "http://127.0.0.1:3001/#/login",
+    "truth": "ground_truth/juice-shop.json"
+  }
+}

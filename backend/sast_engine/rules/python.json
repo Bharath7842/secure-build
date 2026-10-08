@@ -1,0 +1,116 @@
+[
+  {
+    "id": "md5-hash",
+    "title": "Weak hash algorithm (MD5)",
+    "description": "MD5 used for security-sensitive hashing",
+    "cwe": "CWE-328",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "python"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)hashlib\\.md5\\s*\\("
+  },
+  {
+    "id": "python-ssl-verify-false",
+    "title": "Python TLS verify disabled",
+    "description": "requests(..., verify=False) or ssl.CERT_NONE (CWE-295).",
+    "cwe": "CWE-295",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "python"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)(verify\\s*=\\s*False|ssl\\.CERT_NONE|_create_unverified_context\\s*\\()"
+  },
+  {
+    "id": "exec-call",
+    "title": "Dynamic code execution",
+    "description": "Use of exec()",
+    "cwe": "CWE-94",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "python"
+    ],
+    "frameworks": [],
+    "pattern": "\\bexec\\s*\\("
+  },
+  {
+    "id": "os-system",
+    "title": "OS command via os.system",
+    "description": "Command injection via os.system",
+    "cwe": "CWE-78",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "python"
+    ],
+    "frameworks": [],
+    "pattern": "os\\.system\\s*\\("
+  },
+  {
+    "id": "subprocess-shell",
+    "title": "Subprocess with shell=True",
+    "description": "Shell injection risk via subprocess shell",
+    "cwe": "CWE-78",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "python"
+    ],
+    "frameworks": [],
+    "pattern": "subprocess\\.(call|run|Popen)\\([^)]*shell\\s*=\\s*True"
+  },
+  {
+    "id": "debug-enabled",
+    "title": "Debug mode enabled",
+    "description": "DEBUG=true in config",
+    "cwe": "CWE-489",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "python"
+    ],
+    "frameworks": [
+      "Django"
+    ],
+    "pattern": "(?i)DEBUG\\s*=\\s*True"
+  },
+  {
+    "id": "pickle-loads",
+    "title": "Unsafe deserialization (pickle)",
+    "description": "pickle.loads usage",
+    "cwe": "CWE-502",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A08:2021-Software-and-Data-Integrity-Failures",
+    "languages": [
+      "python"
+    ],
+    "frameworks": [],
+    "pattern": "pickle\\.loads\\s*\\("
+  },
+  {
+    "id": "yaml-unsafe-load",
+    "title": "Unsafe YAML load",
+    "description": "yaml.load without SafeLoader",
+    "cwe": "CWE-502",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A08:2021-Software-and-Data-Integrity-Failures",
+    "languages": [
+      "python"
+    ],
+    "frameworks": [],
+    "pattern": "yaml\\.load\\s*\\([^)]*(?!Loader)"
+  }
+]

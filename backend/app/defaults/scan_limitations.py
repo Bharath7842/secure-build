@@ -1,0 +1,260 @@
+"""Configurable scan engine limitations and security checks."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class ScanLimitation:
+    id: str
+    enabled_by_default: bool
+    category: str  # "engine-cap" | "analysis-check" | "security-pattern"
+    title: str
+    description: str
+    affected_scope: str | None = None
+    source: str | None = None
+
+
+SCAN_LIMITATIONS: tuple[ScanLimitation, ...] = (
+    ScanLimitation(
+        id="bedrock-spend-cutoff",
+        enabled_by_default=True,
+        category="engine-cap",
+        title="Bedrock Spend Cutoff: $2.00",
+        description="Once estimated Bedrock spend for a scan reaches $2.00, remaining LLM calls continue on the fallback Ollama model. Does not cap how many files are queued.",
+        affected_scope="Deep LLM file scan (the only LLM stage that scans code), Bedrock primary provider",
+        source="llm_client.py LLM_COST_CUTOFF_USD",
+    ),
+    ScanLimitation(
+        id="ast-structural-check",
+        enabled_by_default=True,
+        category="analysis-check",
+        title="AST Structural Analysis (Java/Angular)",
+        description="Enable Abstract Syntax Tree structural analysis for Spring annotation detection and Angular decorator coverage. Covers Java and Angular projects only.",
+        affected_scope="Tech-stack detection, Java and Angular projects",
+        source="ast_struct.py MAX_FILES_PER_STACK",
+    ),
+    ScanLimitation(
+        id="dependency-manifest-scan",
+        enabled_by_default=True,
+        category="analysis-check",
+        title="Dependency Manifest Scanning",
+        description="Enable scanning of dependency manifests (package.json, pom.xml, requirements.txt, etc.) to detect frameworks and dependencies.",
+        affected_scope="Tech-stack detection, all projects",
+        source="dependency_scan.py _MAX_MANIFESTS",
+    ),
+    ScanLimitation(
+        id="file-categorization",
+        enabled_by_default=True,
+        category="analysis-check",
+        title="File Categorization",
+        description="Enable categorization of files into source / config / dependency / test / build / other buckets.",
+        affected_scope="All files, all projects",
+        source="sast_scan_agent.py categorize node",
+    ),
+    ScanLimitation(
+        id="module-mapping",
+        enabled_by_default=True,
+        category="analysis-check",
+        title="Module Boundary Detection",
+        description="Enable detection of module boundaries and per-file risk classification (CRITICAL/HIGH/MEDIUM/LOW).",
+        affected_scope="All files, all projects",
+        source="sast_scan_agent.py map_modules_and_risk node",
+    ),
+    ScanLimitation(
+        id="jwt-sessionstorage-pattern",
+        enabled_by_default=True,
+        category="security-pattern",
+        title="JWT/Token in SessionStorage Detection",
+        description="Detect when apps store JWT or auth tokens in window.sessionStorage via patterns like tokenStorageService.getCacheToken() → window.sessionStorage.setItem().",
+        affected_scope="Security pattern detection, apps with auth logic",
+        source="Security pattern: token flow to sessionStorage",
+    ),
+    ScanLimitation(
+        id="auth-token-hardcoding",
+        enabled_by_default=True,
+        category="security-pattern",
+        title="Hardcoded Credentials/Tokens Detection",
+        description="Detect hardcoded API keys, auth tokens, and other secrets in code and config files.",
+        affected_scope="Security pattern detection, all projects",
+        source="Security pattern: credential hardcoding",
+    ),
+    ScanLimitation(
+        id="deep-scan-file-cap",
+        enabled_by_default=True,
+        category="engine-cap",
+        title="Deep LLM Scan Capped to 100 Files",
+        description="Up to 100 files get the full whole-file LLM scan: CRITICAL first, then HIGH, in the order the risk rules encounter them. On a repo where the CRITICAL/HIGH bucket runs past that, the remaining files keep their true risk_level for reporting but are routed into the regex-gated triage tier instead — same handling as MEDIUM/LOW. Conversely, when CRITICAL/HIGH doesn't fill the 100-file budget, the leftover slots backfill with the highest-priority MEDIUM (then LOW) files rather than sitting unused, so a repo with a small CRITICAL/HIGH bucket still gets a full LLM scan on some of its MEDIUM/LOW files instead of regex-only triage for all of them.",
+        affected_scope="CRITICAL/HIGH files beyond the 100th, by priority order",
+        source="llm_file_scan.py DEEP_SCAN_FILE_CAP",
+    ),
+    ScanLimitation(
+        id="regex-gated-triage",
+        enabled_by_default=True,
+        category="engine-cap",
+        title="Remaining MEDIUM/LOW Files (Plus Overflow CRITICAL/HIGH) Get Regex Only — No LLM Review",
+        description="MEDIUM and LOW files not selected to backfill spare deep-scan capacity, plus any CRITICAL/HIGH files beyond the 100-file deep-scan cap, are scanned with the regex catalog alone. Every pattern hit is published as a finding with verdict 'unverified' — no model judged it, so it is neither confirmed nor dismissed and must be reviewed by hand before being acted on. Two consequences: recall in this tier is bounded entirely by the rule catalog (anything no pattern describes is not reported), and precision is bounded by the patterns themselves (a noisy rule produces noisy findings, with no LLM pass to filter them). Findings are grouped by rule plus the literal matched text so one construct repeated across many files collapses to a single row. On large repos this tier runs in batches — by real module when the repo has more than one, otherwise fixed-size batches — so results surface incrementally.",
+        affected_scope="MEDIUM/LOW files beyond deep-scan backfill capacity, plus overflow CRITICAL/HIGH",
+        source="llm_file_scan.py TRIAGE_MODE_REGEX_ONLY/TRIAGE_RISK_LEVELS/DEEP_SCAN_FILE_CAP; sast_engine/rules/README.md",
+    ),
+    ScanLimitation(
+        id="generated-code-skip",
+        enabled_by_default=True,
+        category="engine-cap",
+        title="Machine-Generated Source Is Skipped",
+        description="A file whose header carries a generated-code marker (@Generated, 'DO NOT EDIT', 'automatically generated', 'generated by …', a Castor/JAXB/protobuf banner) is skipped by the finding scan. Detection reads the first 4000 characters of content, not the file path, so generated code is caught wherever it lives and hand-written files in the same directory are still scanned. Skipped files stay visible in Discovery and are counted in the scan log, but produce no findings — a real vulnerability in a generated file, or in one that merely claims to be generated, is not reported.",
+        affected_scope="Any file with a generated-code marker in its first 4000 characters",
+        source="llm_file_scan.py looks_generated/GENERATED_HEADER_SCAN_CHARS",
+    ),
+    ScanLimitation(
+        id="absence-checks-llm-only",
+        enabled_by_default=True,
+        category="analysis-check",
+        title="Absence Checks Run Only on the Top 100 CRITICAL/HIGH Files",
+        description="Checks for something missing — no @PreAuthorize on an endpoint, no HttpOnly on a cookie, absent security headers or CSRF token — cannot be expressed as a regex, so they are handled by the whole-file LLM pass. Auth, security, filter, and runtime-config files land in CRITICAL/HIGH under every stack profile, but only the top 100 (by priority) actually reach that pass — such a gap in a MEDIUM/LOW file, or a CRITICAL/HIGH file beyond the cap, will not be reported.",
+        affected_scope="CRITICAL and HIGH files within the top-100 deep-scan cap only",
+        source="sast_engine/rules/README.md",
+    ),
+    ScanLimitation(
+        id="integer-underflow-llm-only",
+        enabled_by_default=True,
+        category="analysis-check",
+        title="Integer Underflow Detection Has No Regex Rule — LLM-Only",
+        description="An unchecked decrement/subtraction feeding an array index, loop bound, allocation size, or buffer/count field without a prior bounds check (CWE-191) requires tracing a variable's type and its arithmetic across statements — genuine data-flow reasoning a single-line regex pattern can't express without a very high false-positive rate. There is no regex rule for this in the catalog; it is named explicitly as a sink class in the deep-scan LLM's base system prompt instead, so it is only found in files that reach the top-100 CRITICAL/HIGH deep-scan pass (see absence-checks-llm-only) and only when the model itself reasons through the arithmetic correctly.",
+        affected_scope="CRITICAL and HIGH files within the top-100 deep-scan cap only; no coverage in the regex-only triage tier",
+        source="llm_file_scan.py _SYSTEM_HEAD",
+    ),
+    ScanLimitation(
+        id="inter-file-call-graph",
+        enabled_by_default=True,
+        category="analysis-check",
+        title="Inter-file Java Call-Graph Flows",
+        description="Build a Java call graph after risk mapping, walk framework or public-API entries to typed sinks across files, and send each multi-file flow's full method bodies to the LLM for a TP/FP verdict. Off automatically when LLM scanning is disabled, tree-sitter is missing, or the stack is not maven-java. Same-file issues stay with the deep/regex scan.",
+        affected_scope="Java (maven-java) source files; LLM flow-slice verification counts against the Bedrock spend cutoff",
+        source="pipeline/call_graph.py, pipeline/flow_verify.py",
+    ),
+    ScanLimitation(
+        id="runtime-derived-regex",
+        enabled_by_default=True,
+        category="analysis-check",
+        title="Runtime-Derived Regex From Call-Graph Wrappers",
+        description="After Java flow verification, derive extra regex rules from project methods that wrap a typed sink (Pass A, no LLM) and optionally one LLM pass for stack-specific source/sink APIs (Pass B). Merged onto the static catalog — catalog wins on matching id or pattern. Capped by the project's max derived regex rules (default 20). Off skips derive and uses the static catalog only.",
+        affected_scope="Triage regex scan of MEDIUM/LOW (and overflow CRITICAL/HIGH) files; deep-scan prompt catalog",
+        source="pipeline/derive_rules.py, sast_scan_agent.py node_derive_runtime_rules",
+    ),
+    ScanLimitation(
+        id="cwe-less-findings-suppressed",
+        enabled_by_default=True,
+        category="security-pattern",
+        title="Findings With No CWE Mapping Are Suppressed",
+        description="A deep-scan (LLM) finding that comes back with no CWE mapping is dropped before being written — too generic to map to a known weakness class is treated as not actionable. Only applies to LLM-generated findings; every regex catalog rule always carries a CWE, so this never affects regex-tier findings.",
+        affected_scope="Deep LLM file scan findings (kind=llm) with an empty cwe field",
+        source="llm_file_scan.py should_publish_finding(suppress_no_cwe=...)",
+    ),
+    ScanLimitation(
+        id="https-enforced-suppress-http",
+        enabled_by_default=False,
+        category="security-pattern",
+        title="Suppress HTTP/Cleartext-Transmission Findings (HTTPS Enforced Elsewhere)",
+        description="When enabled, deep-scan findings about cleartext HTTP transmission or missing HTTPS enforcement (CWE-319/311/523/757, or a title/reason describing the same issue) are dropped. Opt in only when this project's HTTPS is actually enforced at a layer the scan can't see — a load balancer, reverse proxy, or platform-level TLS termination — since the scan has no way to verify that on its own.",
+        affected_scope="Deep LLM file scan findings describing cleartext HTTP / missing HTTPS enforcement",
+        source="llm_file_scan.py should_publish_finding(suppress_http_findings=...)",
+    ),
+    ScanLimitation(
+        id="low-confidence-fp-suppressed",
+        enabled_by_default=True,
+        category="security-pattern",
+        title="Confidently Self-Dismissed False Positives Are Suppressed",
+        description="A deep-scan finding the model marked false_positive with confidence <= 0.2 (confidence = how sure the model is this is exploitable) is dropped before being written — a near-zero exploit-likelihood dismissal adds no review value. Applies across every rule, not just the noisy-catalog-rule allowlist. Findings with higher confidence, or marked true_positive, are never affected regardless of this setting.",
+        affected_scope="Deep LLM file scan findings (kind=llm) with verdict=false_positive and confidence <= 0.2",
+        source="llm_file_scan.py should_publish_finding(suppress_low_confidence_false_positives=...), FALSE_POSITIVE_SUPPRESS_CONFIDENCE_CEILING",
+    ),
+    ScanLimitation(
+        id="vendored-minified-files-skipped",
+        enabled_by_default=True,
+        category="engine-cap",
+        title="Vendored/Minified Third-Party Files Are Skipped",
+        description="A file named *.min.js/*.min.css, or one whose content is characteristically minified (long content with a very high average line length), is skipped by the finding scan. Detection is by filename and content shape, not directory path, so a hand-written file under a directory named lib/vendor/libraries is still scanned. Skipped files stay visible in Discovery and are counted in the scan log, but produce no findings — vendored library internals (jQuery, Bootstrap, ...) are not something a project team can fix.",
+        affected_scope="Files matching the minified filename suffix or content-shape heuristic",
+        source="llm_file_scan.py looks_vendored_or_minified",
+    ),
+    ScanLimitation(
+        id="deep-scan-critical-only",
+        enabled_by_default=True,
+        category="engine-cap",
+        title="Deep LLM Scan Restricted to CRITICAL Files Only",
+        description="Only CRITICAL-risk files get the full whole-file LLM scan; HIGH-risk files move into the triage tier alongside MEDIUM/LOW instead of sharing the CRITICAL/HIGH deep-scan bucket. Deep-scan backfill is also disabled while this is on, so a HIGH file never re-enters the deep-scan bucket to use up spare capacity. Turning this off restores the previous behavior: CRITICAL and HIGH share the deep-scan cap, CRITICAL first. Note: absence checks (missing @PreAuthorize, unset HttpOnly, no CSRF token, integer-underflow reasoning) only run in the deep-scan tier, so HIGH files lose that coverage while this is on — pair with triage-mode-llm-confirm so HIGH still gets an LLM TP/FP ruling on regex hits instead of none at all.",
+        affected_scope="HIGH-risk files (routed to triage instead of deep-scan) and deep-scan backfill (disabled)",
+        source="sast_scan_agent.py node_map_modules_and_risk state['deep_scan_critical_only']",
+    ),
+    ScanLimitation(
+        id="triage-mode-llm-confirm",
+        enabled_by_default=True,
+        category="engine-cap",
+        title="Triage Tier Gets an LLM TP/FP Ruling on Regex Hits (Hybrid Regex+LLM)",
+        description="Sets the triage tier (MEDIUM/LOW, plus HIGH when deep-scan-critical-only is on, plus overflow CRITICAL/HIGH) to 'llm_triage' mode: a hit plus its surrounding ±10-line window is sent to the LLM for a true_positive/false_positive ruling, instead of every regex hit being written up verbatim with verdict 'unverified'. Recall is still bounded by the regex catalog — a construct no pattern matches is never sent to the LLM — but precision on what the catalog does match improves since a model reviews each hit rather than every match becoming a finding.",
+        affected_scope="Triage-tier findings (MEDIUM/LOW, overflow CRITICAL/HIGH, and HIGH when deep-scan-critical-only is on)",
+        source="llm_file_scan.py TRIAGE_MODE_LLM; sast_scan_agent.py state['triage_mode']",
+    ),
+    ScanLimitation(
+        id="sca-direct-deps-only",
+        enabled_by_default=True,
+        category="engine-cap",
+        title="SCA Scans Direct Dependencies Only",
+        description="An SCA scan reads declared versions straight out of manifest files (pom.xml, package.json, requirements.txt, ...) — it does not resolve lockfiles or the full transitive dependency graph. A vulnerable library pulled in only as a transitive dependency (never directly declared) is not seen.",
+        affected_scope="SCA scans (scan_type=sca), all ecosystems",
+        source="sast_engine/pipeline/sca_scan.py collect_dependencies",
+    ),
+    ScanLimitation(
+        id="sca-osv-only",
+        enabled_by_default=True,
+        category="engine-cap",
+        title="SCA Vulnerability Lookup Uses OSV.dev Only",
+        description="SCA findings come from a single source, OSV.dev's batch API — there is no NVD or deps.dev enrichment step in this pass, so CVSS scores are computed from OSV's own CVSS vector when present and severity/CWE metadata can be sparser than a multi-source lookup would provide.",
+        affected_scope="SCA scans (scan_type=sca), all findings (kind=sca)",
+        source="sast_engine/pipeline/sca_scan.py build_findings",
+    ),
+    ScanLimitation(
+        id="sbom-direct-deps-only",
+        enabled_by_default=True,
+        category="engine-cap",
+        title="SBOM Reports Direct Dependencies Only",
+        description="An SBOM scan reads declared versions straight out of manifest files (pom.xml, package.json, requirements.txt, ...) — it does not resolve lockfiles or the full transitive dependency graph, and does not run cdxgen. Every component in the resulting CycloneDX/SPDX documents is reported as a direct dependency; a library pulled in only transitively is not listed.",
+        affected_scope="SBOM scans (scan_type=sbom), all ecosystems",
+        source="sast_engine/pipeline/sbom_scan.py collect_dependencies/build_components",
+    ),
+    ScanLimitation(
+        id="sbom-license-best-effort",
+        enabled_by_default=True,
+        category="analysis-check",
+        title="SBOM License/Cost Classification Is Best-Effort",
+        description="License and free/partially-free/fully-paid cost classification comes primarily from a single deps.dev lookup per package plus a small static vendor-edition table — there is no license-file text parsing and no ClearlyDefined enrichment. A package deps.dev doesn't cover (e.g. rubygems/packagist), or one with no recognizable license string, falls through to the LLM enrichment step below rather than being guessed at here.",
+        affected_scope="SBOM scans (scan_type=sbom), every component's license/cost_classification fields",
+        source="sast_engine/pipeline/sbom_scan.py lookup_depsdev_license/classify_license",
+    ),
+    ScanLimitation(
+        id="sbom-llm-enrichment-best-effort",
+        enabled_by_default=True,
+        category="analysis-check",
+        title="SBOM Supplier/License/Type Fill-In Uses an LLM's General Knowledge",
+        description="Whatever deps.dev + the static vendor table above leave with no known supplier and/or no resolved license is sent to Bedrock Claude Haiku in small batches, asking it to name the package's SPDX license, publisher/maintainer org, and Open Source/Proprietary/Internal type from its training data — there is no lookup against an actual package registry or license file for this step, so a genuinely obscure or newer package can still come back 'Unknown', and a well-known one is occasionally misattributed. The model's answer never overwrites a value the deterministic pass above already resolved. Real scans only reach the network if `SBOM_LLM_ENRICHMENT`/`sbom_llm_enrichment` is on (default on); this step fails open — a Bedrock/parse error just leaves the component at its deterministic 'Unknown' fields rather than failing the scan.",
+        affected_scope="SBOM scans (scan_type=sbom), components with no supplier and/or no resolved license after deps.dev + the static table",
+        source="sast_engine/pipeline/sbom_scan.py llm_enrich_components",
+    ),
+)
+
+
+def limitations_as_dicts() -> list[dict[str, str | bool | None]]:
+    return [
+        {
+            "id": lim.id,
+            "enabled_by_default": lim.enabled_by_default,
+            "category": lim.category,
+            "title": lim.title,
+            "description": lim.description,
+            "affected_scope": lim.affected_scope,
+            "source": lim.source,
+        }
+        for lim in SCAN_LIMITATIONS
+    ]

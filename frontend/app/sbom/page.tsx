@@ -1,0 +1,265 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+
+import { useConfirmDialog } from "@/components/ConfirmDialog";
+import PageContainer from "@/components/PageContainer";
+import ScanStatusBadge from "@/components/ScanStatusBadge";
+import { ApiError, api } from "@/lib/api";
+import type { Project, Scan } from "@/lib/types";
+
+function formatDate(value: string): string {
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return value;
+  }
+}
+
+export default function SbomDashboardPage() {
+  const [scans, setScans] = useState<Scan[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  /** Empty set = show all SBOM-enabled projects. */
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const { confirm, dialog } = useConfirmDialog();
+
+  useEffect(() => {
+    let active = true;
+
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const [scanList, projectList] = await Promise.all([
+          api.scans.list(undefined, "sbom"),
+          api.projects.list(),
+        ]);
+        if (active) {
+          setScans(scanList);
+          setProjects(projectList.filter((p) => p.enable_sbom));
+        }
+      } catch (err) {
+        if (active) {
+          setError(err instanceof ApiError ? err.message : "Failed to load SBOM scan history.");
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const projectNames = useMemo(
+    () => new Map(projects.map((project) => [project.id, project.name])),
+    [projects]
+  );
+
+  const filteredScans = useMemo(() => {
+    const list =
+      selectedProjectIds.size === 0
+        ? scans
+        : scans.filter((scan) => selectedProjectIds.has(scan.project_id));
+    return [...list].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+  }, [scans, selectedProjectIds]);
+
+  function toggleProject(projectId: string) {
+    setSelectedProjectIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  }
+
+  async function deleteScan(id: string) {
+    if (!(await confirm({ message: "Delete this SBOM scan?", confirmLabel: "Delete" }))) return;
+    setDeleting(id);
+    setActionError(null);
+    try {
+      await api.scans.delete(id);
+      setScans(await api.scans.list(undefined, "sbom"));
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Could not delete scan.");
+    } finally {
+      setDeleting(null);
+    }
+  }
+
+  const totalCompleted = scans.filter((s) => s.status === "success").length;
+
+  return (
+    <PageContainer>
+      {dialog}
+      <div>
+        <div className="flex items-baseline justify-between gap-4">
+          <div>
+            <h1 className="font-display text-3xl text-[var(--ink)]">SBOM</h1>
+            <p className="mt-2 max-w-2xl text-sm text-[var(--muted)]">
+              Software Bill of Materials — a complete, exportable inventory of every
+              third-party/open-source component declared in a project&apos;s manifests
+              (pom.xml, package.json, requirements.txt, ...), plus a best-effort license and
+              cost classification (free/partially free/fully paid) for each one.
+            </p>
+          </div>
+          <Link
+            href="/scans/new?type=sbom"
+            className="shrink-0 rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+          >
+            New SBOM scan
+          </Link>
+        </div>
+
+        {error && (
+          <div className="mt-8 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+        {actionError && (
+          <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {actionError}
+          </div>
+        )}
+
+        {!loading && !error && projects.length === 0 && (
+          <div className="mt-8 rounded-md border border-dashed border-slate-300 bg-white/60 px-6 py-10 text-center">
+            <p className="text-sm text-[var(--muted)]">
+              No projects have SBOM enabled yet.{" "}
+              <Link href="/projects" className="font-medium text-[var(--accent)] hover:underline">
+                Enable it in a project&apos;s settings
+              </Link>{" "}
+              to start generating its component inventory.
+            </p>
+          </div>
+        )}
+
+        {!loading && !error && projects.length > 0 && (
+          <div className="mt-8">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+              Filter by project
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--ink)]">
+                <input
+                  type="checkbox"
+                  checked={selectedProjectIds.size === 0}
+                  onChange={() => setSelectedProjectIds(new Set())}
+                  className="h-4 w-4 rounded border-slate-300 text-[var(--accent)] focus:ring-[var(--accent)]/30"
+                />
+                All projects
+              </label>
+              {projects.map((project) => (
+                <label
+                  key={project.id}
+                  className="flex cursor-pointer items-center gap-2 text-sm text-[var(--ink)]"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedProjectIds.has(project.id)}
+                    onChange={() => toggleProject(project.id)}
+                    className="h-4 w-4 rounded border-slate-300 text-[var(--accent)] focus:ring-[var(--accent)]/30"
+                  />
+                  {project.name}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {loading ? (
+          <p className="mt-10 text-sm text-[var(--muted)]">Loading scans…</p>
+        ) : !error && filteredScans.length === 0 ? (
+          <div className="mt-10 rounded-md border border-slate-200 bg-white/60 px-6 py-10 text-center">
+            <p className="text-sm text-[var(--muted)]">
+              {scans.length === 0
+                ? "No SBOM scans yet."
+                : "No SBOM scans for the selected projects."}
+            </p>
+            {scans.length === 0 && projects.length > 0 && (
+              <Link
+                href="/scans/new?type=sbom"
+                className="mt-2 inline-block text-sm font-medium text-[var(--accent)]"
+              >
+                Trigger your first SBOM scan →
+              </Link>
+            )}
+          </div>
+        ) : (
+          <>
+            <p className="mt-6 text-sm text-[var(--muted)]">
+              Showing {filteredScans.length}
+              {selectedProjectIds.size > 0 ? ` of ${scans.length}` : ""} scan
+              {filteredScans.length === 1 ? "" : "s"}
+              {totalCompleted > 0 ? ` · ${totalCompleted} completed` : ""}
+            </p>
+
+            <table className="mt-4 w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-[var(--muted)]">
+                  <th className="w-12 py-2 font-medium">#</th>
+                  <th className="py-2 font-medium">Project</th>
+                  <th className="py-2 font-medium">Scan ID</th>
+                  <th className="py-2 font-medium">Version</th>
+                  <th className="py-2 font-medium">Branch</th>
+                  <th className="py-2 font-medium">Status</th>
+                  <th className="py-2 font-medium">Started</th>
+                  <th className="py-2 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredScans.map((scan, index) => {
+                  const isActive = scan.status === "queued" || scan.status === "running";
+                  const serial = filteredScans.length - index;
+                  return (
+                    <tr key={scan.id} className="border-b border-slate-100">
+                      <td className="py-3 text-[var(--muted)]">{serial}</td>
+                      <td className="py-3 text-[var(--ink)]">
+                        {projectNames.get(scan.project_id) ?? "Unknown project"}
+                      </td>
+                      <td className="py-3 font-mono text-xs text-[var(--muted)]" title={scan.id}>
+                        {scan.id.slice(0, 8)}
+                      </td>
+                      <td className="py-3 text-[var(--muted)]">v{scan.version}</td>
+                      <td className="py-3 text-[var(--muted)]">{scan.branch}</td>
+                      <td className="py-3">
+                        <ScanStatusBadge status={scan.status} />
+                      </td>
+                      <td className="py-3 text-[var(--muted)]">{formatDate(scan.created_at)}</td>
+                      <td className="py-3 text-right">
+                        <div className="flex items-center justify-end gap-3">
+                          <Link href={`/scans/${scan.id}`} className="font-medium text-[var(--accent)]">
+                            View →
+                          </Link>
+                          <button
+                            type="button"
+                            disabled={deleting === scan.id || isActive}
+                            onClick={() => deleteScan(scan.id)}
+                            title={isActive ? "Stop the scan first, then delete" : "Delete scan"}
+                            className="font-medium text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-40 disabled:no-underline"
+                          >
+                            {deleting === scan.id ? "Deleting…" : "Delete"}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </>
+        )}
+      </div>
+    </PageContainer>
+  );
+}

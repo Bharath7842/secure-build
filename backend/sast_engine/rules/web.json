@@ -1,0 +1,32 @@
+[
+  {
+    "id": "password-input-missing-autocomplete",
+    "title": "Password input has no autocomplete attribute",
+    "description": "An <input type=\"password\"> field with no autocomplete attribute at all \u2014 inconsistent with the codebase's own pattern elsewhere (autocomplete=\"new-password\"), and leaves default (unrestricted) browser autofill/caching behavior on a credential field.",
+    "cwe": "CWE-522",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [
+      "html"
+    ],
+    "frameworks": [],
+    "pattern": "<input(?![^>]*autocomplete)[^>]*type=[\"']password[\"'][^>]*>"
+  },
+  {
+    "id": "secret-config-unquoted",
+    "title": "Possible hardcoded secret in config file",
+    "description": "key=value or key: value assignment (no quotes, no placeholder) whose key name suggests a password/secret/token/api key \u2014 common in .properties, .yml, and .env files where secrets are not string-literal quoted",
+    "cwe": "CWE-798",
+    "severity": "HIGH",
+    "category": "secrets",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [
+      "properties",
+      "yaml",
+      "env"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)^\\s*(?![#;])[\\w.\\-]*(password|secret|token|api[_-]?key)[\\w.\\-]*\\s*[=:]\\s*(?!\\$\\{|%\\{|\\{\\{)['\"]?[^\\s'\";]{4,}['\"]?\\s*$"
+  }
+]

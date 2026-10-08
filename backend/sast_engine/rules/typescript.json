@@ -1,0 +1,109 @@
+[
+  {
+    "id": "angular-bypass-security-trust",
+    "title": "Angular sanitizer bypassed",
+    "description": "bypassSecurityTrust* disables Angular's built-in XSS sanitisation for that value. Safe only if the input is genuinely trusted and never attacker-influenced \u2014 verify the value's origin. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-79",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "bypassSecurityTrust(?:Html|Script|Style|Url|ResourceUrl)\\s*\\("
+  },
+  {
+    "id": "dangerously-set-html",
+    "title": "React dangerouslySetInnerHTML",
+    "description": "React XSS sink",
+    "cwe": "CWE-79",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [
+      "React"
+    ],
+    "pattern": "dangerouslySetInnerHTML"
+  },
+  {
+    "id": "innerhtml-assign",
+    "title": "DOM XSS via innerHTML",
+    "description": "Assignment to innerHTML",
+    "cwe": "CWE-79",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "\\.innerHTML\\s*="
+  },
+  {
+    "id": "js-document-write",
+    "title": "document.write with dynamic content",
+    "description": "document.write injects raw markup into the parser. Any interpolated value that is not HTML-escaped becomes DOM XSS. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-79",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "\\bdocument\\s*\\.\\s*write(?:ln)?\\s*\\("
+  },
+  {
+    "id": "js-outerhtml-assign",
+    "title": "Assignment to outerHTML",
+    "description": "Assigning to outerHTML parses the string as markup, exactly like innerHTML \u2014 an unescaped interpolation is DOM XSS. Use textContent, or sanitise first. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-79",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "\\.\\s*outerHTML\\s*=(?!=)"
+  },
+  {
+    "id": "js-non-literal-regexp",
+    "title": "Non-literal RegExp constructor",
+    "description": "new RegExp(variable) \u2014 ReDoS risk (CWE-185), matches eslint.detect-non-literal-regexp.",
+    "cwe": "CWE-185",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A04:2021-Insecure-Design",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "new\\s+RegExp\\s*\\(\\s*[a-zA-Z_$][\\w$]*"
+  },
+  {
+    "id": "token-in-localstorage",
+    "title": "Auth token stored in browser storage",
+    "description": "JWT/auth token persisted to localStorage or sessionStorage, which is readable by any JavaScript on the page \u2014 vulnerable to theft via XSS. Prefer httpOnly cookies. Framework-agnostic (React/Angular/Vue/vanilla JS/TS).",
+    "cwe": "CWE-522",
+    "severity": "MEDIUM",
+    "category": "secrets",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)(localStorage|sessionStorage)\\.setItem\\s*\\(\\s*['\"][^'\"]*(token|jwt|auth)[^'\"]*['\"]"
+  }
+]

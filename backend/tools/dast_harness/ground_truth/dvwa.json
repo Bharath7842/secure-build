@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "target": "dvwa",
+  "image": "ghcr.io/digininja/dvwa@sha256:830037dfb394a98ef408c34eeb5c4f145aff7bd07d1402470c650bba964591d2",
+  "verified": false,
+  "_comment": "DRAFT. Entries come from DVWA's own documentation of its modules and have NOT been checked against the pinned image by running a scan and a manual review, so `verified` stays false and no baseline may be recorded from this file (DAST-16-020 is open until that check is done). Do not tune detectors to this list.",
+  "preconditions": [
+    "DVWA security level set to 'low' (its default is 'impossible', where none of these modules is vulnerable); the scanner cannot set the level, so set it in the browser session the scan uses or in DVWA's config before the run",
+    "database created (dev/practice-targets/reset.sh)"
+  ],
+  "rule_packs": ["owasp-web-top10"],
+  "expected": [
+    {"check_id": "dast-sqli", "endpoint": "GET /vulnerabilities/sqli/", "param": "id", "source": "documentation", "reference": "DVWA module 'SQL Injection' (user id field)"},
+    {"check_id": "dast-xss", "endpoint": "GET /vulnerabilities/xss_r/", "param": "name", "source": "documentation", "reference": "DVWA module 'XSS (Reflected)'"},
+    {"check_id": "dast-cmdi", "endpoint": "POST /vulnerabilities/exec/", "param": "ip", "source": "documentation", "reference": "DVWA module 'Command Injection'", "needs": ["state_changing"]},
+    {"check_id": "dast-xss-dom", "endpoint": "GET /vulnerabilities/xss_d/", "param": "default", "source": "documentation", "reference": "DVWA module 'XSS (DOM)'", "needs": ["browser_probe"]},
+    {"check_id": "dast-xss-stored", "endpoint": "POST /vulnerabilities/xss_s/", "param": "mtxMessage", "source": "documentation", "reference": "DVWA module 'XSS (Stored)'", "needs": ["browser_marker_posts"]}
+  ],
+  "excluded": [
+    {"description": "CSRF, file inclusion, file upload, brute force, CAPTCHA and weak session id modules", "reason": "no catalog check covers them; not misses"},
+    {"description": "Any business-logic or MFA behaviour", "reason": "out of scope for this scanner"}
+  ]
+}

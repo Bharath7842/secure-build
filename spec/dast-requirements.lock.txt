@@ -1,0 +1,46 @@
+# DAST scan type — exact-version backend dependencies
+# Versions are those installed in backend/.venv on 2026-10-06, or (marked NEW) what
+# `pip install --dry-run` resolved against it. See tech-stack.md for how each was checked.
+# Not applied to backend/requirements.txt; that file also carries the SAST-only
+# packages (tree-sitter*, semgrep, networkx, ...), which are unchanged.
+# Python 3.12
+
+# --- API and data ---
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+sqlalchemy==2.0.54
+httpx==0.28.1
+PyYAML==6.0.3
+
+# --- Orchestration ---
+langgraph==1.2.12
+langgraph-checkpoint==4.2.0
+langgraph-prebuilt==1.1.0
+langgraph-sdk==0.4.5
+langchain-core==1.6.6          # was 1.6.4; raised by langchain-anthropic (NEW pin)
+
+# --- Model providers (lazy-imported; only needed when a task routes to them) ---
+langchain-ollama==1.1.0         # default local provider
+langchain-anthropic==1.7.5      # NEW
+anthropic==1.11.0               # NEW (pulled in by langchain-anthropic)
+langchain-openai==1.6.7         # NEW
+openai==3.24.0                  # NEW (pulled in by langchain-openai)
+tiktoken==0.14.0                # NEW (pulled in by langchain-openai)
+boto3==1.43.100                 # Bedrock via Converse API
+
+# --- Discovery (lazy-imported; not needed for the mock engine) ---
+playwright==1.63.0              # then: python -m playwright install chromium
+tldextract==5.3.2
+
+# --- Reporting ---
+reportlab==5.0.1
+openpyxl==3.1.5
+
+# --- Production database (not needed for SQLite dev) ---
+psycopg[binary]==3.3.6          # NEW
+
+# --- Testing ---
+pytest==9.1.1
+pytest-asyncio==1.4.0

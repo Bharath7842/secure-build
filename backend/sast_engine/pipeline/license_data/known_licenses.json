@@ -1,0 +1,262 @@
+{
+  "mit": {
+    "name": "MIT License",
+    "type": "permissive",
+    "spdx_id": "MIT"
+  },
+  "apache-2.0": {
+    "name": "Apache License 2.0",
+    "type": "permissive",
+    "spdx_id": "Apache-2.0"
+  },
+  "bsd-2-clause": {
+    "name": "BSD 2-Clause License",
+    "type": "permissive",
+    "spdx_id": "BSD-2-Clause"
+  },
+  "bsd-3-clause": {
+    "name": "BSD 3-Clause License",
+    "type": "permissive",
+    "spdx_id": "BSD-3-Clause"
+  },
+  "isc": {
+    "name": "ISC License",
+    "type": "permissive",
+    "spdx_id": "ISC"
+  },
+  "unlicense": {
+    "name": "The Unlicense",
+    "type": "public_domain",
+    "spdx_id": "Unlicense"
+  },
+  "0bsd": {
+    "name": "BSD Zero Clause License",
+    "type": "public_domain",
+    "spdx_id": "0BSD"
+  },
+  "cc0-1.0": {
+    "name": "Creative Commons Zero v1.0",
+    "type": "public_domain",
+    "spdx_id": "CC0-1.0"
+  },
+  "cc0-1.0-universal": {
+    "name": "Creative Commons Zero v1.0 Universal",
+    "type": "public_domain",
+    "spdx_id": "CC0-1.0"
+  },
+  "pdm-1.0": {
+    "name": "Public Domain Mark 1.0",
+    "type": "public_domain",
+    "spdx_id": "PDM-1.0"
+  },
+  "wtfpl": {
+    "name": "Do What The F*ck You Want To Public License",
+    "type": "public_domain",
+    "spdx_id": "WTFPL"
+  },
+  "zlib": {
+    "name": "zlib License",
+    "type": "permissive",
+    "spdx_id": "Zlib"
+  },
+  "zlib-2.0": {
+    "name": "zlib License",
+    "type": "permissive",
+    "spdx_id": "Zlib"
+  },
+  "bsl-1.0": {
+    "name": "Boost Software License 1.0",
+    "type": "permissive",
+    "spdx_id": "BSL-1.0"
+  },
+  "artistic-2.0": {
+    "name": "Artistic License 2.0",
+    "type": "permissive",
+    "spdx_id": "Artistic-2.0"
+  },
+  "python-2.0": {
+    "name": "Python License 2.0",
+    "type": "permissive",
+    "spdx_id": "PSF-2.0"
+  },
+  "psf-2.0": {
+    "name": "Python Software Foundation License 2.0",
+    "type": "permissive",
+    "spdx_id": "PSF-2.0"
+  },
+  "ofl-1.1": {
+    "name": "SIL Open Font License 1.1",
+    "type": "permissive",
+    "spdx_id": "OFL-1.1"
+  },
+  "ofl-1.1-no-rfi": {
+    "name": "SIL Open Font License 1.1 without Reserved Font Names",
+    "type": "permissive",
+    "spdx_id": "OFL-1.1-no-RFN"
+  },
+  "cc-by-4.0": {
+    "name": "Creative Commons Attribution 4.0",
+    "type": "permissive",
+    "spdx_id": "CC-BY-4.0"
+  },
+  "cc-by-3.0": {
+    "name": "Creative Commons Attribution 3.0",
+    "type": "permissive",
+    "spdx_id": "CC-BY-3.0"
+  },
+  "cc-by-sa-4.0": {
+    "name": "Creative Commons Attribution-ShareAlike 4.0",
+    "type": "weak_copyleft",
+    "spdx_id": "CC-BY-SA-4.0"
+  },
+  "cc-by-sa-3.0": {
+    "name": "Creative Commons Attribution-ShareAlike 3.0",
+    "type": "weak_copyleft",
+    "spdx_id": "CC-BY-SA-3.0"
+  },
+  "cc-by-nc-4.0": {
+    "name": "Creative Commons Attribution-NonCommercial 4.0",
+    "type": "proprietary",
+    "spdx_id": "CC-BY-NC-4.0"
+  },
+  "cc-by-nc-3.0": {
+    "name": "Creative Commons Attribution-NonCommercial 3.0",
+    "type": "proprietary",
+    "spdx_id": "CC-BY-NC-3.0"
+  },
+  "cc-by-nd-4.0": {
+    "name": "Creative Commons Attribution-NoDerivatives 4.0",
+    "type": "proprietary",
+    "spdx_id": "CC-BY-ND-4.0"
+  },
+  "cc-by-nd-3.0": {
+    "name": "Creative Commons Attribution-NoDerivatives 3.0",
+    "type": "proprietary",
+    "spdx_id": "CC-BY-ND-3.0"
+  },
+  "gpl-2.0": {
+    "name": "GNU General Public License v2.0",
+    "type": "copyleft",
+    "spdx_id": "GPL-2.0-only"
+  },
+  "gpl-2.0-only": {
+    "name": "GNU General Public License v2.0 only",
+    "type": "copyleft",
+    "spdx_id": "GPL-2.0-only"
+  },
+  "gpl-2.0-or-later": {
+    "name": "GNU General Public License v2.0 or later",
+    "type": "copyleft",
+    "spdx_id": "GPL-2.0-or-later"
+  },
+  "gpl-3.0": {
+    "name": "GNU General Public License v3.0",
+    "type": "copyleft",
+    "spdx_id": "GPL-3.0-only"
+  },
+  "gpl-3.0-only": {
+    "name": "GNU General Public License v3.0 only",
+    "type": "copyleft",
+    "spdx_id": "GPL-3.0-only"
+  },
+  "gpl-3.0-or-later": {
+    "name": "GNU General Public License v3.0 or later",
+    "type": "copyleft",
+    "spdx_id": "GPL-3.0-or-later"
+  },
+  "agpl-3.0": {
+    "name": "GNU Affero General Public License v3.0",
+    "type": "copyleft",
+    "spdx_id": "AGPL-3.0-only"
+  },
+  "agpl-3.0-only": {
+    "name": "GNU Affero General Public License v3.0 only",
+    "type": "copyleft",
+    "spdx_id": "AGPL-3.0-only"
+  },
+  "agpl-3.0-or-later": {
+    "name": "GNU Affero General Public License v3.0 or later",
+    "type": "copyleft",
+    "spdx_id": "AGPL-3.0-or-later"
+  },
+  "lgpl-2.1": {
+    "name": "GNU Lesser General Public License v2.1",
+    "type": "weak_copyleft",
+    "spdx_id": "LGPL-2.1-only"
+  },
+  "lgpl-2.1-only": {
+    "name": "GNU Lesser General Public License v2.1 only",
+    "type": "weak_copyleft",
+    "spdx_id": "LGPL-2.1-only"
+  },
+  "lgpl-2.1-or-later": {
+    "name": "GNU Lesser General Public License v2.1 or later",
+    "type": "weak_copyleft",
+    "spdx_id": "LGPL-2.1-or-later"
+  },
+  "lgpl-3.0": {
+    "name": "GNU Lesser General Public License v3.0",
+    "type": "weak_copyleft",
+    "spdx_id": "LGPL-3.0-only"
+  },
+  "lgpl-3.0-only": {
+    "name": "GNU Lesser General Public License v3.0 only",
+    "type": "weak_copyleft",
+    "spdx_id": "LGPL-3.0-only"
+  },
+  "lgpl-3.0-or-later": {
+    "name": "GNU Lesser General Public License v3.0 or later",
+    "type": "weak_copyleft",
+    "spdx_id": "LGPL-3.0-or-later"
+  },
+  "mpl-2.0": {
+    "name": "Mozilla Public License 2.0",
+    "type": "weak_copyleft",
+    "spdx_id": "MPL-2.0"
+  },
+  "epl-1.0": {
+    "name": "Eclipse Public License 1.0",
+    "type": "weak_copyleft",
+    "spdx_id": "EPL-1.0"
+  },
+  "epl-2.0": {
+    "name": "Eclipse Public License 2.0",
+    "type": "weak_copyleft",
+    "spdx_id": "EPL-2.0"
+  },
+  "cddl-1.0": {
+    "name": "Common Development and Distribution License 1.0",
+    "type": "weak_copyleft",
+    "spdx_id": "CDDL-1.0"
+  },
+  "cddl-1.1": {
+    "name": "Common Development and Distribution License 1.1",
+    "type": "weak_copyleft",
+    "spdx_id": "CDDL-1.1"
+  },
+  "cpl-1.0": {
+    "name": "Common Public License 1.0",
+    "type": "weak_copyleft",
+    "spdx_id": "CPL-1.0"
+  },
+  "ecl-2.0": {
+    "name": "Educational Community License 2.0",
+    "type": "weak_copyleft",
+    "spdx_id": "ECL-2.0"
+  },
+  "postgresql": {
+    "name": "PostgreSQL License",
+    "type": "permissive",
+    "spdx_id": "PostgreSQL"
+  },
+  "proprietary": {
+    "name": "Proprietary",
+    "type": "proprietary",
+    "spdx_id": "LicenseRef-proprietary"
+  },
+  "unknown": {
+    "name": "Unknown License",
+    "type": "unknown",
+    "spdx_id": "LicenseRef-unknown"
+  }
+}

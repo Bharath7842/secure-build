@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DAST Login Classifier</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding: 24px 16px 60px;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  .sub { color: var(--muted); margin-top: 0; margin-bottom: 24px; font-size: 0.9rem; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  @media (max-width: 640px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+
+  label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  input[type="text"], input[type="password"], input[type="url"] {
+    width: 100%;
+    background: #0d1117;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    margin-bottom: 14px;
+  }
+  input:focus { outline: 1px solid var(--accent); }
+
+  .field-full { grid-column: 1 / -1; }
+
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .checkbox-row label { margin-bottom: 0; color: var(--text); }
+
+  button {
+    background: var(--accent);
+    color: #04101f;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 0.95rem;
+  }
+  button:disabled { background: #30363d; color: var(--muted); cursor: not-allowed; }
+
+  #status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 12px;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.running { background: var(--yellow); }
+  .dot.ok { background: var(--green); }
+  .dot.fail { background: var(--red); }
+
+  pre#console {
+    background: #010409;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    min-height: 200px;
+    max-height: 480px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: #c9d1d9;
+  }
+
+  #summary { display: none; }
+  #summary .row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 0.88rem; }
+  #summary .row:last-child { border-bottom: none; }
+  #summary .val.ok { color: var(--green); }
+  #summary .val.fail { color: var(--red); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>DAST Login Classifier</h1>
+  <p class="sub">check_connection &rarr; classify_login_type &rarr; login (LangGraph + Playwright + Ollama)</p>
+
+  <div class="panel">
+    <form id="run-form">
+      <div class="grid">
+        <div class="field-full">
+          <label for="url">Target URL</label>
+          <input type="url" id="url" required placeholder="http://localhost:3000" />
+        </div>
+        <div class="field-full">
+          <label for="login_url">Login URL</label>
+          <input type="url" id="login_url" required placeholder="http://localhost:3000/login" />
+        </div>
+        <div>
+          <label for="username">Username / Email</label>
+          <input type="text" id="username" required placeholder="admin@example.com" />
+        </div>
+        <div>
+          <label for="password">Password</label>
+          <input type="password" id="password" required />
+        </div>
+        <div>
+          <label for="ollama_model">Ollama Model</label>
+          <input type="text" id="ollama_model" value="gpt-oss:20b" />
+        </div>
+        <div class="checkbox-row" style="margin-top: 22px;">
+          <input type="checkbox" id="headless" checked />
+          <label for="headless">Run headless</label>
+        </div>
+      </div>
+      <button type="submit" id="run-btn">Run DAST</button>
+      <span id="status"><span class="dot" id="status-dot"></span><span id="status-text">idle</span></span>
+    </form>
+  </div>
+
+  <div class="panel" id="summary">
+    <div class="row"><span>Connection</span><span class="val" id="s-connection">-</span></div>
+    <div class="row"><span>Login type</span><span class="val" id="s-type">-</span></div>
+    <div class="row"><span>Stop reason</span><span class="val" id="s-stop">-</span></div>
+    <div class="row"><span>Login success</span><span class="val" id="s-success">-</span></div>
+  </div>
+
+  <div class="panel">
+    <pre id="console">Fill in the form above and click "Run DAST" to start.</pre>
+  </div>
+</div>
+
+<script>
+const form = document.getElementById("run-form");
+const consoleEl = document.getElementById("console");
+const runBtn = document.getElementById("run-btn");
+const statusDot = document.getElementById("status-dot");
+const statusText = document.getElementById("status-text");
+const summaryEl = document.getElementById("summary");
+
+function setStatus(state, text) {
+  statusDot.className = "dot " + state;
+  statusText.textContent = text;
+}
+
+function appendConsole(text) {
+  consoleEl.textContent += text;
+  consoleEl.scrollTop = consoleEl.scrollHeight;
+}
+
+function renderSummary(result) {
+  summaryEl.style.display = "block";
+  if (result.error) {
+    document.getElementById("s-connection").textContent = "error";
+    document.getElementById("s-connection").className = "val fail";
+    document.getElementById("s-type").textContent = "-";
+    document.getElementById("s-stop").textContent = result.error;
+    document.getElementById("s-success").textContent = "-";
+    return;
+  }
+  const conn = document.getElementById("s-connection");
+  conn.textContent = result.connection_ok ? "OK" : "FAILED";
+  conn.className = "val " + (result.connection_ok ? "ok" : "fail");
+
+  document.getElementById("s-type").textContent = result.login_type || "-";
+  document.getElementById("s-stop").textContent = result.stop_reason || "(none)";
+
+  const succ = document.getElementById("s-success");
+  if (result.login_type === "simple_form") {
+    succ.textContent = result.login_success ? "SUCCESS" : "FAILED";
+    succ.className = "val " + (result.login_success ? "ok" : "fail");
+  } else {
+    succ.textContent = "n/a";
+    succ.className = "val";
+  }
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+
+  const payload = {
+    url: document.getElementById("url").value.trim(),
+    login_url: document.getElementById("login_url").value.trim(),
+    username: document.getElementById("username").value,
+    password: document.getElementById("password").value,
+    ollama_model: document.getElementById("ollama_model").value.trim() || "gpt-oss:20b",
+    headless: document.getElementById("headless").checked,
+  };
+
+  consoleEl.textContent = "";
+  summaryEl.style.display = "none";
+  runBtn.disabled = true;
+  setStatus("running", "running...");
+
+  try {
+    const resp = await fetch("/api/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!resp.ok) {
+      const errBody = await resp.json().catch(() => ({}));
+      appendConsole("Error: " + (errBody.error || resp.statusText) + "\n");
+      setStatus("fail", "error");
+      runBtn.disabled = false;
+      return;
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const parts = buffer.split("\x00");
+      buffer = parts.pop(); // last part may be incomplete
+
+      for (const part of parts) {
+        if (!part) continue;
+        let msg;
+        try {
+          msg = JSON.parse(part);
+        } catch (err) {
+          continue;
+        }
+        if (msg.type === "chunk") {
+          appendConsole(msg.text);
+        } else if (msg.type === "done") {
+          renderSummary(msg.result);
+          if (msg.result && msg.result.error) {
+            setStatus("fail", "error");
+          } else if (msg.result && msg.result.login_type === "simple_form") {
+            setStatus(msg.result.login_success ? "ok" : "fail", msg.result.login_success ? "done" : "done (login failed)");
+          } else {
+            setStatus("ok", "done");
+          }
+        }
+      }
+    }
+  } catch (err) {
+    appendConsole("\nRequest failed: " + err + "\n");
+    setStatus("fail", "error");
+  } finally {
+    runBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

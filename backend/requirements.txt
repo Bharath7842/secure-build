@@ -1,0 +1,56 @@
+# Python 3.12. DAST-relevant packages are pinned to the exact versions in
+# spec/dast-requirements.lock.txt (see spec/tech-stack.md). SAST-only packages
+# (tree-sitter*, semgrep, networkx, ...) keep their original specifiers.
+
+# --- API and data ---
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+sqlalchemy==2.0.54
+httpx==0.28.1
+PyYAML==6.0.3
+
+# --- Orchestration (shared by the SAST and DAST engines) ---
+langgraph==1.2.12
+langgraph-checkpoint==4.2.0
+langgraph-prebuilt==1.1.0
+langgraph-sdk==0.4.5
+langchain-core==1.6.6
+
+# --- Model providers (DAST: lazy-imported, only needed when a task routes to them) ---
+langchain-ollama==1.1.0
+langchain-anthropic==1.7.5
+anthropic==1.11.0
+langchain-openai==1.6.7
+openai==3.24.0
+tiktoken==0.14.0
+boto3==1.43.100
+
+# --- DAST discovery (lazy-imported; not needed for the mock engine) ---
+# One-time browser download after install: python -m playwright install chromium
+playwright==1.63.0
+tldextract==5.3.2
+
+# --- Reporting ---
+reportlab==5.0.1
+openpyxl==3.1.5
+
+# --- Production database (not needed for SQLite dev) ---
+psycopg[binary]==3.3.6
+
+# --- Testing ---
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pypdf==6.19.0  # test-only: tests/test_scan_export.py reads the exported PDFs
+
+# --- SAST-only (unchanged) ---
+requests>=2.32.0
+tree-sitter>=0.23.0
+tree-sitter-java>=0.23.0
+tree-sitter-python>=0.23.0
+tree-sitter-typescript>=0.23.0
+networkx>=3.2
+python-dotenv>=1.0.0
+beautifulsoup4>=4.12.0
+semgrep==1.34.1

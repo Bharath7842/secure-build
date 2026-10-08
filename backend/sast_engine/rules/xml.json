@@ -1,0 +1,142 @@
+[
+  {
+    "id": "webxml-sensitive-url-pattern",
+    "title": "Sensitive URL pattern in web.xml (check authorization)",
+    "description": "url-pattern for admin/api/actuator/console/internal \u2014 confirm AUTHORIZED via auth-constraint roles, not left UNAUTHORIZED/public.",
+    "cwe": "CWE-862",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "xml"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)<url-pattern>\\s*/?(admin|api|actuator|console|manage|internal|rest|services)(/|\\*|\\s|<)"
+  },
+  {
+    "id": "webxml-wildcard-url-pattern",
+    "title": "Wildcard /* URL pattern in web.xml",
+    "description": "Broad /* mapping \u2014 verify whether URLs are AUTHORIZED (auth-constraint) or unintentionally public.",
+    "cwe": "CWE-862",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "xml"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)<url-pattern>\\s*/\\*\\s*</url-pattern>"
+  },
+  {
+    "id": "http-trace-webxml",
+    "title": "HTTP TRACE method in web.xml",
+    "description": "TRACE http-method declared in web.xml (CWE-693 Cross-Site Tracing).",
+    "cwe": "CWE-693",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "xml"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)<http-method>\\s*TRACE\\s*</http-method>"
+  },
+  {
+    "id": "webxml-cors-filter-name",
+    "title": "CORSFilter declared in web.xml",
+    "description": "CORS filter registration \u2014 ensure origin allowlist AUTHORIZES only trusted domains and url-pattern is not overly broad.",
+    "cwe": "CWE-942",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "xml"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)<filter-name>\\s*[^<]*CORS[^<]*</filter-name>"
+  },
+  {
+    "id": "webxml-filter-class-cors",
+    "title": "web.xml filter-class CORSFilter",
+    "description": "Servlet/JBoss web.xml registers CORSFilter class \u2014 review origin allowlist and url-pattern.",
+    "cwe": "CWE-942",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "xml"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)<filter-class>\\s*[^<]*CORSFilter[^<]*</filter-class>"
+  },
+  {
+    "id": "xml-axis2-admin-surface-exposed",
+    "title": "Axis2 admin/service-listing surface mapped",
+    "description": "The Axis2 admin console or service listing is reachable through this descriptor. Both expose deployed service metadata and, for the admin agent, hot-deployment \u2014 restrict or remove them in production. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-284",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "xml"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)(?:AdminAgent|axis2-admin|services/list)"
+  },
+  {
+    "id": "xml-transport-guarantee-none",
+    "title": "Security constraint does not require HTTPS",
+    "description": "<transport-guarantee>NONE</transport-guarantee> lets this constrained resource be served over plaintext HTTP, so credentials and session cookies travel in the clear. Set CONFIDENTIAL. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-319",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "xml"
+    ],
+    "frameworks": [],
+    "pattern": "<transport-guarantee>\\s*NONE\\s*</transport-guarantee>"
+  },
+  {
+    "id": "maven-known-eol-artifact",
+    "title": "Known end-of-life Maven artifact",
+    "description": "pom.xml declares an artifactId with a long track record of being end-of-life / unmaintained in legacy Java stacks (Struts 1.x, Axis/Axis2, Castor, JSch, Drools, Woodstox ASL, WSDL4J, xml-resolver) \u2014 confirm the actual <version> and check for a maintained replacement. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-1104",
+    "severity": "MEDIUM",
+    "category": "dependency",
+    "owasp": "A06:2021-Vulnerable-and-Outdated-Components",
+    "languages": [
+      "xml"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)<artifactId>\\s*(struts|struts-core|struts-taglib|axis2-kernel|axis2|castor-xml|jsch|drools|woodstox-core-asl|wsdl4j|xml-resolver)\\s*</artifactId>"
+  },
+  {
+    "id": "maven-snapshot-version",
+    "title": "SNAPSHOT version in Maven artifact",
+    "description": "A -SNAPSHOT version is used for the module/parent/dependency version. Mutable, non-reproducible artifact versions are a release-hygiene / supply-chain concern if this is what actually gets built and deployed.",
+    "cwe": "",
+    "severity": "LOW",
+    "category": "dependency",
+    "owasp": "A06:2021-Vulnerable-and-Outdated-Components",
+    "languages": [
+      "xml"
+    ],
+    "frameworks": [],
+    "pattern": "<version>[^<]*-SNAPSHOT</version>"
+  },
+  {
+    "id": "xml-session-timeout-excessive",
+    "title": "Session timeout of an hour or more",
+    "description": "<session-timeout> is 60 minutes or longer, widening the window for session hijacking on shared machines. Also check it against the other descriptors in the app \u2014 a mismatch between web.xml and a secured descriptor means the longer value silently wins. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-613",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [
+      "xml"
+    ],
+    "frameworks": [],
+    "pattern": "<session-timeout>\\s*0*(?:[6-9]\\d|\\d{3,})\\s*</session-timeout>"
+  }
+]

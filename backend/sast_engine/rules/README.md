@@ -1,0 +1,139 @@
+# Rule catalog
+
+Deterministic regex patterns, split by language. Loaded by
+`pipeline/regex_scan.py:load_rules`, which reads **every `*.json` in this
+directory except `surfaces.json`** and fails loudly on a duplicate rule id.
+
+| File | Holds |
+|---|---|
+| `common.json` | language-agnostic (secrets, JWT) and cross-language rules |
+| `java.json` | Java, including JSP (`.jsp` maps to the `java` language tag) |
+| `xml.json` | deployment descriptors, `pom.xml`, SOAP/servlet config |
+| `typescript.json` | TypeScript / JavaScript, Angular and React |
+| `python.json` | Python |
+| `web.json` | HTML and `.properties` / `.yaml` / `.env` |
+| `surfaces.json` | the stack → surface → rules map (not a rule file) |
+
+Adding a language is just adding a file — `csharp.json`, `go.json` and friends
+drop straight in, since the loader keys off the directory rather than a list of
+filenames.
+
+## What these patterns gate
+
+Findings come from two passes (`pipeline/llm_file_scan.py`):
+
+- **The top `DEEP_SCAN_FILE_CAP` (100) CRITICAL / HIGH files, by priority** —
+  the LLM scans the whole file. These patterns are only *prompt guidance*
+  there (title/cwe/severity/owasp; the regex itself is never sent), and they
+  never gate: every file that makes it into this tier is scanned whether or
+  not a pattern would match.
+- **MEDIUM / LOW, plus any CRITICAL/HIGH file beyond the cap** — these patterns
+  are the *entire* analysis. In the default `regex_only` triage mode no LLM
+  looks at this tier at all: a file with no hit is skipped, and every hit is
+  published verbatim as a finding with `verdict=unverified`. A CRITICAL/HIGH
+  file routed here keeps its true risk_level for reporting, but is scanned
+  exactly like a MEDIUM/LOW file. (Under the `llm_triage` mode the hits plus a
+  ±10-line window each go to the LLM for a TP/FP ruling instead.)
+
+So at this tier the catalog sets both bounds. A missing pattern is a missed
+finding — for MEDIUM/LOW always, and for CRITICAL/HIGH files past the cap on a
+large repo. An over-broad pattern is now worse than it used to be: with no LLM
+triaging it away, every false hit is a row a human has to read. Prefer specific
+patterns, and prefer no rule to a noisy one.
+
+## Rule fields
+
+```json
+{
+  "id": "java-printstacktrace",
+  "title": "Stack trace printed instead of logged",
+  "description": "Shown to the LLM as guidance; explain the risk and the fix.",
+  "cwe": "CWE-209",
+  "severity": "CRITICAL | HIGH | MEDIUM | LOW | INFO",
+  "category": "code | secrets | dependency",
+  "owasp": "A09:2021-Security-Logging-and-Monitoring-Failures",
+  "languages": ["java"],
+  "frameworks": [],
+  "requires_dependency": [],
+  "pattern": "\\.printStackTrace\\s*\\("
+}
+```
+
+`languages`, `frameworks`, and `requires_dependency` are three independent
+filters, all **empty-means-universal** — an empty list never excludes anything.
+
+- `languages` — tags from `llm_file_scan._EXT_TO_LANG`. Note `.jsp` → `java`,
+  and `.json` has **no** tag, so a rule meant to match `package.json` must
+  leave `languages` empty and rely on a manifest-specific pattern.
+- `frameworks` — must match a label from `pipeline/stack_signatures.py`
+  exactly (e.g. `"Apache Struts (legacy MVC)"`, `"JBoss RESTEasy (JAX-RS)"`).
+- `requires_dependency` — `[{"name": ..., "version_lt": ..., "version_lte": ...}]`,
+  OR-ed. Matched against everything the manifests declare, not just
+  signature-matched frameworks, so plain libraries work. `name` matches either
+  the full coordinate (`org.apache.struts:struts-core`) or the bare artifact
+  (`struts-core`).
+- `group_by_rule` (default `false`) — how unverified findings from this rule
+  collapse in the report/export and during grouped LLM confirmation. Default
+  groups by `(rule_id, matched_text)`, so a hardcoded secret and a test
+  placeholder that trip the same rule stay visibly separate rows. Set `true`
+  when the matched text is *expected* to differ every time (a class name, a
+  variable name) while still describing exactly one issue — e.g.
+  `serializable-missing-svuid` matches `class Foo implements Serializable`,
+  `class Bar implements Serializable`, ... and without this flag each class
+  gets its own row instead of one row listing every affected class.
+
+Patterns containing `[\s\S]` are treated as whole-file searches and report only
+their **first** match per file; everything else runs line by line. Prefer a
+zero-width lookahead (`(?!...)`) over a consuming quantifier for "assert X
+doesn't follow within N chars" — a consuming match pulls that trailing text
+into `matched_text`, which (absent `group_by_rule`) defeats grouping since the
+trailing content varies per occurrence even when the actual issue doesn't.
+
+### Versions fail open
+
+An absent or unparseable version (`null`, `${spring.version}`) makes the
+condition **match**. A missing version must never be the thing that silently
+disables a security rule — better a finding against an unknown version than a
+hidden one. Comparison uses the leading numeric components and ignores
+qualifiers, so `6.0.0.Final`, `1.3.10`, `^2.88.0` and `3.2` all compare sanely.
+
+## `surfaces.json`
+
+Encodes the reasoning the legacy audit docs in `../regex_data/` spell out by
+hand for one project each:
+
+```
+Tech Stack Detected → Known Vulnerability Surface → Targeted Regex
+```
+
+```json
+{
+  "surface": "Deserialization gadget chain",
+  "when": { "dependencies": [{ "name": "commons-collections", "version_lt": "3.2.2" }] },
+  "rules": ["java-objectinputstream", "serializable-missing-svuid"],
+  "rationale": "Serializable types only matter because a gadget-chain library is present"
+}
+```
+
+`when` accepts `languages`, `frameworks`, and `dependencies`; every clause
+present must be satisfied, and a surface with no clauses is always active.
+
+**Surfaces never gate.** Execution is decided solely by `RegexRule.applies_to`,
+so adding or mistyping a surface cannot drop coverage, and a rule named by no
+surface still runs everywhere it applies. Surfaces do two things: narrate the
+scan (one log line per active surface, reproducing the docs' reasoning for
+whatever repo is being scanned) and sort matching rules to the front of the
+prompt catalog so the 60-rule truncation keeps stack-relevant guidance.
+
+## Absence checks belong to the LLM, not here
+
+The source docs lean on checks like *no `@PreAuthorize`*, *missing
+`X-Frame-Options`*, *`ActionForm` without `csrfPreventionSalt`*, *`Cookie`
+without `setHttpOnly`*. **Do not add these as inverted regexes.** A regex
+matches text that is present; "this file never calls X" is not expressible per
+file, and the naive attempts produce either constant false positives or silent
+false negatives.
+
+Those checks belong to the CRITICAL/HIGH LLM pass, which reads the whole file
+and can reason about what is missing — and auth, security, filter, and runtime
+config files already land in those tiers under every stack profile.

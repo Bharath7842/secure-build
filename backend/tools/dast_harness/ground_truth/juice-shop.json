@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "target": "juice-shop",
+  "image": "bkimminich/juice-shop:v20.2.0@sha256:8739101ade29358abb5469ee66ae78e582c97ed0a5543a4ad102e5fa5193526b",
+  "verified": false,
+  "_comment": "DRAFT. Entries come from the OWASP Juice Shop companion guide (its documented challenges) and have NOT been checked against the pinned image by running a scan and a manual review, so `verified` stays false and no baseline may be recorded from this file (DAST-16-020 is open until that check is done). Do not tune detectors to this list.",
+  "preconditions": [
+    "two registered customer accounts, supplied as identities, for the object-level authorization case"
+  ],
+  "rule_packs": ["owasp-api-top10-2023", "owasp-web-top10"],
+  "expected": [
+    {"check_id": "dast-sqli", "endpoint": "GET /rest/products/search", "param": "q", "source": "documentation", "reference": "Juice Shop challenge 'Database Schema' (SQL injection in product search)"},
+    {"check_id": "dast-sqli", "endpoint": "POST /rest/user/login", "param": "email", "source": "documentation", "reference": "Juice Shop challenge 'Login Admin' (SQL injection in login)", "needs": ["state_changing"]},
+    {"check_id": "dast-bola", "endpoint": "GET /rest/basket/{id}", "param": "id", "source": "documentation", "reference": "Juice Shop challenge 'View Basket' (another user's basket)", "needs": ["second_identity"]},
+    {"check_id": "dast-xss-dom", "endpoint": "GET /#/search", "param": "q", "source": "documentation", "reference": "Juice Shop DOM XSS challenge in the search field", "needs": ["browser_probe"]}
+  ],
+  "excluded": [
+    {"description": "Reflected XSS in the track-order page", "reason": "the page reflects an order id; browser confirmation covers a reflection the HTTP stage already failed, and this draft has not been checked on the pinned image"},
+    {"description": "Challenges needing business-logic abuse, MFA bypass, CAPTCHA bypass or file upload tricks", "reason": "out of scope for this scanner"}
+  ]
+}

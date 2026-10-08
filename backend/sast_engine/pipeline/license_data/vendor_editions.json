@@ -1,0 +1,3656 @@
+{
+  "redis": {
+    "vendor": "Redis Ltd.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Core data structures",
+      "Basic replication",
+      "Single node"
+    ],
+    "paid_features": [
+      "High availability",
+      "Cluster mode",
+      "Enterprise support",
+      "Advanced security",
+      "Module system"
+    ]
+  },
+  "mongodb": {
+    "vendor": "MongoDB Inc.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Basic CRUD",
+      "Replica sets",
+      "Basic aggregation"
+    ],
+    "paid_features": [
+      "Advanced security",
+      "LDAP/Kerberos",
+      "Auditing",
+      "Encryption at rest",
+      "BI connector"
+    ]
+  },
+  "elastic": {
+    "vendor": "Elastic N.V.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Full-text search",
+      "Basic analytics",
+      "REST API"
+    ],
+    "paid_features": [
+      "Machine learning",
+      "Graph analytics",
+      "SIEM",
+      "APM",
+      "Enterprise security"
+    ]
+  },
+  "postgresql": {
+    "vendor": "PostgreSQL Global Development Group",
+    "edition": "community_only",
+    "free_features": [
+      "Full ACID compliance",
+      "JSON support",
+      "Full-text search",
+      "Replication"
+    ],
+    "paid_features": []
+  },
+  "mysql": {
+    "vendor": "Oracle Corporation",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Basic SQL",
+      "Replication",
+      "Stored procedures"
+    ],
+    "paid_features": [
+      "Enterprise Monitor",
+      "Enterprise Backup",
+      "Thread Pool",
+      "Authentication Plugin"
+    ]
+  },
+  "mariadb": {
+    "vendor": "MariaDB Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "Full SQL",
+      "Replication",
+      "Galera cluster",
+      "Columnar storage"
+    ],
+    "paid_features": []
+  },
+  "cassandra": {
+    "vendor": "Apache Software Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "Distributed database",
+      "Linear scalability",
+      "Tunable consistency"
+    ],
+    "paid_features": []
+  },
+  "couchdb": {
+    "vendor": "Apache Software Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "Document store",
+      "Replication",
+      "REST API",
+      "Offline sync"
+    ],
+    "paid_features": []
+  },
+  "couchbase": {
+    "vendor": "Couchbase Inc.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Key-value store",
+      "Basic querying",
+      "Replication"
+    ],
+    "paid_features": [
+      "Full-text search",
+      "Analytics",
+      "Eventing",
+      "Enterprise security"
+    ]
+  },
+  "neo4j": {
+    "vendor": "Neo4j Inc.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Graph database",
+      "Cypher queries",
+      "Basic clustering"
+    ],
+    "paid_features": [
+      "Advanced security",
+      "Causal clustering",
+      "Graph data science",
+      "Enterprise support"
+    ]
+  },
+  "memcached": {
+    "vendor": "Danga Interactive",
+    "edition": "community_only",
+    "free_features": [
+      "In-memory caching",
+      "Distributed",
+      "Simple protocol"
+    ],
+    "paid_features": []
+  },
+  "etcd": {
+    "vendor": "CNCF",
+    "edition": "community_only",
+    "free_features": [
+      "Key-value store",
+      "Consensus",
+      "Watch",
+      "Lease"
+    ],
+    "paid_features": []
+  },
+  "clickhouse": {
+    "vendor": "ClickHouse Inc.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Columnar analytics",
+      "SQL interface",
+      "Real-time ingestion"
+    ],
+    "paid_features": [
+      "Cloud managed",
+      "Enterprise security",
+      "Dedicated support"
+    ]
+  },
+  "kubernetes": {
+    "vendor": "CNCF",
+    "edition": "community_only",
+    "free_features": [
+      "Container orchestration",
+      "Service discovery",
+      "Load balancing",
+      "Self-healing"
+    ],
+    "paid_features": []
+  },
+  "docker": {
+    "vendor": "Docker Inc.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Container building",
+      "Basic networking",
+      "Docker Hub (public)"
+    ],
+    "paid_features": []
+  },
+  "jenkins": {
+    "vendor": "CloudBees",
+    "edition": "community_enterprise",
+    "free_features": [
+      "CI/CD pipeline",
+      "Plugin ecosystem",
+      "Distributed builds"
+    ],
+    "paid_features": []
+  },
+  "grafana": {
+    "vendor": "Grafana Labs",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Dashboards",
+      "Basic alerting",
+      "Prometheus integration"
+    ],
+    "paid_features": [
+      "Enterprise plugins",
+      "SAML/SSO",
+      "Audit logging",
+      "Dashboard provisioning"
+    ]
+  },
+  "node": {
+    "vendor": "OpenJS Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "JavaScript runtime",
+      "npm",
+      "Event-driven I/O"
+    ],
+    "paid_features": []
+  },
+  "python": {
+    "vendor": "Python Software Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "Full language",
+      "Standard library",
+      "pip"
+    ],
+    "paid_features": []
+  },
+  "java": {
+    "vendor": "Oracle Corporation",
+    "edition": "community_enterprise",
+    "free_features": [
+      "OpenJDK",
+      "Basic JVM",
+      "Core libraries"
+    ],
+    "paid_features": []
+  },
+  "vscode": {
+    "vendor": "Microsoft",
+    "edition": "community_only",
+    "free_features": [
+      "Full IDE",
+      "Extensions",
+      "Git integration",
+      "Debugging"
+    ],
+    "paid_features": []
+  },
+  "nginx": {
+    "vendor": "F5 Inc.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "HTTP serving",
+      "Reverse proxy",
+      "Load balancing",
+      "SSL termination"
+    ],
+    "paid_features": []
+  },
+  "terraform": {
+    "vendor": "HashiCorp",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Infrastructure as code",
+      "Multi-cloud",
+      "Plan/apply workflow"
+    ],
+    "paid_features": []
+  },
+  "ansible": {
+    "vendor": "Red Hat",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Configuration management",
+      "Playbooks",
+      "Modules",
+      "Galaxy"
+    ],
+    "paid_features": []
+  },
+  "consul": {
+    "vendor": "HashiCorp",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Service discovery",
+      "Health checking",
+      "Key-value store"
+    ],
+    "paid_features": [
+      "Consul Enterprise",
+      "Multi-datacenter",
+      "Sentinel policies",
+      "Audit logging"
+    ]
+  },
+  "vault": {
+    "vendor": "HashiCorp",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Secret management",
+      "Encryption as a service",
+      "Dynamic secrets"
+    ],
+    "paid_features": [
+      "Vault Enterprise",
+      "HSM support",
+      "Sentinel policies",
+      "Replication"
+    ]
+  },
+  "puppet": {
+    "vendor": "Puppet Inc.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Configuration management",
+      "Catalogs",
+      "Facts",
+      "Modules"
+    ],
+    "paid_features": [
+      "Puppet Enterprise",
+      "Continuous reporting",
+      "Compliance enforcement"
+    ]
+  },
+  "chef": {
+    "vendor": "Progress Software",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Configuration management",
+      "Cookbooks",
+      "InSpec",
+      "Habitat"
+    ],
+    "paid_features": []
+  },
+  "prometheus": {
+    "vendor": "CNCF",
+    "edition": "community_only",
+    "free_features": [
+      "Time-series database",
+      "Alerting",
+      "Service discovery",
+      "PromQL"
+    ],
+    "paid_features": []
+  },
+  "elasticsearch": {
+    "vendor": "Elastic N.V.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Full-text search",
+      "Basic analytics",
+      "REST API"
+    ],
+    "paid_features": [
+      "Machine learning",
+      "SIEM",
+      "APM",
+      "Enterprise security"
+    ]
+  },
+  "logstash": {
+    "vendor": "Elastic N.V.",
+    "edition": "community_only",
+    "free_features": [
+      "Log ingestion",
+      "Parsing",
+      "Output plugins"
+    ],
+    "paid_features": []
+  },
+  "kibana": {
+    "vendor": "Elastic N.V.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Visualization",
+      "Dashboards",
+      "Discover"
+    ],
+    "paid_features": [
+      "Spaces",
+      "Security",
+      "Alerting",
+      "Maps"
+    ]
+  },
+  "harbor": {
+    "vendor": "CNCF",
+    "edition": "community_only",
+    "free_features": [
+      "Container registry",
+      "Vulnerability scanning",
+      "RBAC",
+      "Replication"
+    ],
+    "paid_features": []
+  },
+  "argocd": {
+    "vendor": "CNCF",
+    "edition": "community_only",
+    "free_features": [
+      "GitOps",
+      "Auto-sync",
+      "Multi-cluster",
+      "RBAC"
+    ],
+    "paid_features": []
+  },
+  "istio": {
+    "vendor": "CNCF",
+    "edition": "community_only",
+    "free_features": [
+      "Service mesh",
+      "Traffic management",
+      "mTLS",
+      "Observability"
+    ],
+    "paid_features": []
+  },
+  "linkerd": {
+    "vendor": "CNCF",
+    "edition": "community_only",
+    "free_features": [
+      "Service mesh",
+      "mTLS",
+      "Traffic metrics",
+      "Load balancing"
+    ],
+    "paid_features": []
+  },
+  "envoy": {
+    "vendor": "CNCF",
+    "edition": "community_only",
+    "free_features": [
+      "Edge/service proxy",
+      "L4/L7 proxy",
+      "Observability",
+      "gRPC support"
+    ],
+    "paid_features": []
+  },
+  "traefik": {
+    "vendor": "Traefik Labs",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Reverse proxy",
+      "Let's Encrypt",
+      "Docker/K8s integration"
+    ],
+    "paid_features": []
+  },
+  "caddy": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "HTTPS by default",
+      "Reverse proxy",
+      "Static files"
+    ],
+    "paid_features": []
+  },
+  "haproxy": {
+    "vendor": "HAProxy Technologies",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Load balancer",
+      "TCP/HTTP proxy",
+      "Health checks"
+    ],
+    "paid_features": [
+      "Enterprise support",
+      "WAF",
+      "Runtime API",
+      "Stats dashboard"
+    ]
+  },
+  "minio": {
+    "vendor": "MinIO Inc.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "S3-compatible storage",
+      "Erasure coding",
+      "Browser UI"
+    ],
+    "paid_features": [
+      "Enterprise encryption",
+      "IAM",
+      "Bucket notifications",
+      "Lifecycle management"
+    ]
+  },
+  "keycloak": {
+    "vendor": "Red Hat",
+    "edition": "community_only",
+    "free_features": [
+      "SSO",
+      "Identity management",
+      "OAuth2/OIDC",
+      "LDAP/AD"
+    ],
+    "paid_features": []
+  },
+  "sonarqube": {
+    "vendor": "SonarSource",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Code quality analysis",
+      "20+ languages",
+      "Quality gates"
+    ],
+    "paid_features": [
+      "Security hotspots",
+      "Taint analysis",
+      "Portfolio views",
+      "Enterprise support"
+    ]
+  },
+  "selenium": {
+    "vendor": "Selenium Project",
+    "edition": "community_only",
+    "free_features": [
+      "Browser automation",
+      "Multi-browser",
+      "WebDriver API",
+      "Grid"
+    ],
+    "paid_features": []
+  },
+  "cypress": {
+    "vendor": "Cypress.io",
+    "edition": "community_enterprise",
+    "free_features": [
+      "E2E testing",
+      "Time travel",
+      "Debugging",
+      "CI integration"
+    ],
+    "paid_features": []
+  },
+  "playwright": {
+    "vendor": "Microsoft",
+    "edition": "community_only",
+    "free_features": [
+      "Browser automation",
+      "Cross-browser",
+      "Codegen",
+      "Trace viewer"
+    ],
+    "paid_features": []
+  },
+  "pytest": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Testing framework",
+      "Fixtures",
+      "Plugins",
+      "Assertion rewriting"
+    ],
+    "paid_features": []
+  },
+  "jest": {
+    "vendor": "Meta",
+    "edition": "community_only",
+    "free_features": [
+      "JavaScript testing",
+      "Snapshot testing",
+      "Coverage",
+      "Mocking"
+    ],
+    "paid_features": []
+  },
+  "mocha": {
+    "vendor": "OpenJS Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "Test framework",
+      "BDD/TDD",
+      "Async support",
+      "Reporter API"
+    ],
+    "paid_features": []
+  },
+  "datadog": {
+    "vendor": "Datadog Inc.",
+    "edition": "commercial_only",
+    "free_features": [],
+    "paid_features": [
+      "APM",
+      "Log management",
+      "Infrastructure monitoring",
+      "Security monitoring"
+    ]
+  },
+  "newrelic": {
+    "vendor": "New Relic Inc.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "APM (100GB/mo)",
+      "Infrastructure (100 hosts)",
+      "Errors (500GB/mo)"
+    ],
+    "paid_features": []
+  },
+  "splunk": {
+    "vendor": "Splunk Inc.",
+    "edition": "commercial_only",
+    "free_features": [],
+    "paid_features": [
+      "Log analytics",
+      "SIEM",
+      "APM",
+      "IT analytics",
+      "Enterprise security"
+    ]
+  },
+  "nagios": {
+    "vendor": "Nagios Enterprises",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Infrastructure monitoring",
+      "Plugins",
+      "Basic alerting"
+    ],
+    "paid_features": []
+  },
+  "zabbix": {
+    "vendor": "Zabbix SIA",
+    "edition": "community_only",
+    "free_features": [
+      "Enterprise monitoring",
+      "Alerting",
+      "Visualization",
+      "Templates"
+    ],
+    "paid_features": []
+  },
+  "netdata": {
+    "vendor": "Netdata Inc.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Real-time monitoring",
+      "Dashboards",
+      "Alerting"
+    ],
+    "paid_features": []
+  },
+  "hibernate": {
+    "vendor": "Red Hat",
+    "edition": "community_enterprise",
+    "free_features": [
+      "ORM",
+      "JPA implementation",
+      "Query language",
+      "Caching"
+    ],
+    "paid_features": []
+  },
+  "jackson": {
+    "vendor": "FasterXML",
+    "edition": "community_only",
+    "free_features": [
+      "JSON processing",
+      "Data binding",
+      "Data format support",
+      "Module system"
+    ],
+    "paid_features": []
+  },
+  "log4j": {
+    "vendor": "Apache Software Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "Logging framework",
+      "Async logging",
+      "Pattern layout",
+      "Appenders"
+    ],
+    "paid_features": []
+  },
+  "slf4j": {
+    "vendor": "QOS.CH",
+    "edition": "community_only",
+    "free_features": [
+      "Logging facade",
+      "Multiple backend support",
+      "MDC"
+    ],
+    "paid_features": []
+  },
+  "logback": {
+    "vendor": "QOS.CH",
+    "edition": "community_only",
+    "free_features": [
+      "Logging implementation",
+      "Async appender",
+      "Filter support"
+    ],
+    "paid_features": []
+  },
+  "junit": {
+    "vendor": "Eclipse Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "Testing framework",
+      "Assertions",
+      "Test lifecycle",
+      "Extensions"
+    ],
+    "paid_features": []
+  },
+  "mockito": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Mocking framework",
+      "Stubbing",
+      "Verification",
+      "Argument captors"
+    ],
+    "paid_features": []
+  },
+  "testng": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Testing framework",
+      "Annotations",
+      "Parallel execution",
+      "Reporting"
+    ],
+    "paid_features": []
+  },
+  "guava": {
+    "vendor": "Google",
+    "edition": "community_only",
+    "free_features": [
+      "Core libraries",
+      "Collections",
+      "Caching",
+      "Concurrency utilities"
+    ],
+    "paid_features": []
+  },
+  "commons-lang": {
+    "vendor": "Apache Software Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "String utilities",
+      "Object utilities",
+      "Exception handling"
+    ],
+    "paid_features": []
+  },
+  "commons-io": {
+    "vendor": "Apache Software Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "IO utilities",
+      "File filters",
+      "Stream utilities",
+      "File monitors"
+    ],
+    "paid_features": []
+  },
+  "commons-collections": {
+    "vendor": "Apache Software Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "Collection utilities",
+      "Iterators",
+      "Decorators",
+      "Functors"
+    ],
+    "paid_features": []
+  },
+  "netty": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "NIO framework",
+      "Event-driven",
+      "Asynchronous",
+      "Codec support"
+    ],
+    "paid_features": []
+  },
+  "protobuf": {
+    "vendor": "Google",
+    "edition": "community_only",
+    "free_features": [
+      "Serialization",
+      "Schema definition",
+      "Code generation",
+      "Wire format"
+    ],
+    "paid_features": []
+  },
+  "grpc": {
+    "vendor": "CNCF",
+    "edition": "community_only",
+    "free_features": [
+      "RPC framework",
+      "HTTP/2",
+      "Code generation",
+      "Streaming"
+    ],
+    "paid_features": []
+  },
+  "swagger": {
+    "vendor": "SmartBear",
+    "edition": "community_enterprise",
+    "free_features": [
+      "API documentation",
+      "OpenAPI spec",
+      "UI",
+      "Code generation"
+    ],
+    "paid_features": []
+  },
+  "spring": {
+    "vendor": "VMware",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Spring Framework",
+      "Spring Boot",
+      "Spring Cloud (basic)"
+    ],
+    "paid_features": []
+  },
+  "springdoc": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "OpenAPI for Spring",
+      "Swagger UI",
+      "Reactive support"
+    ],
+    "paid_features": []
+  },
+  "lombok": {
+    "vendor": "Project Lombok",
+    "edition": "community_only",
+    "free_features": [
+      "Boilerplate reduction",
+      "Annotations",
+      "IDE support"
+    ],
+    "paid_features": []
+  },
+  "mapstruct": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Object mapping",
+      "Code generation",
+      "Fluent API",
+      "Default values"
+    ],
+    "paid_features": []
+  },
+  "mybatis": {
+    "vendor": "Apache Software Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "SQL mapping",
+      "Dynamic SQL",
+      "XML/annotation config",
+      "Caching"
+    ],
+    "paid_features": []
+  },
+  "flyway": {
+    "vendor": "Redgate",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Database migrations",
+      "Versioned migrations",
+      "CLI"
+    ],
+    "paid_features": [
+      "Flyway Teams/Enterprise",
+      "Undo migrations",
+      "Baseline",
+      "Drift detection"
+    ]
+  },
+  "liquibase": {
+    "vendor": "Datical",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Database migrations",
+      "Changelog",
+      "Rollback",
+      "Diff"
+    ],
+    "paid_features": [
+      "Liquibase Pro",
+      "Policy enforcement",
+      "Quality checks",
+      "Secrets management"
+    ]
+  },
+  "thymeleaf": {
+    "vendor": "Openleaf",
+    "edition": "community_only",
+    "free_features": [
+      "Template engine",
+      "Natural templates",
+      "Spring integration"
+    ],
+    "paid_features": []
+  },
+  "freemarker": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Template engine",
+      "Macros",
+      "Built-in functions"
+    ],
+    "paid_features": []
+  },
+  "itext": {
+    "vendor": "iText Group",
+    "edition": "community_enterprise",
+    "free_features": [
+      "PDF generation (AGPL)",
+      "Basic PDF manipulation"
+    ],
+    "paid_features": [
+      "iText Suite (commercial license)",
+      "PDF signing",
+      "PDF/A compliance"
+    ]
+  },
+  "apache-poi": {
+    "vendor": "Apache Software Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "Office formats",
+      "Excel/Word/PowerPoint",
+      "Read/write"
+    ],
+    "paid_features": []
+  },
+  "opencsv": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "CSV parsing",
+      "Bean binding",
+      "Custom converters"
+    ],
+    "paid_features": []
+  },
+  "httpclient": {
+    "vendor": "Apache Software Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "HTTP client",
+      "Connection pooling",
+      "Authentication",
+      "SSL/TLS"
+    ],
+    "paid_features": []
+  },
+  "retrofit": {
+    "vendor": "Square Inc.",
+    "edition": "community_only",
+    "free_features": [
+      "REST client",
+      "Type-safe",
+      "Converter support",
+      "Interceptors"
+    ],
+    "paid_features": []
+  },
+  "okhttp": {
+    "vendor": "Square Inc.",
+    "edition": "community_only",
+    "free_features": [
+      "HTTP client",
+      "HTTP/2",
+      "Connection pooling",
+      "WebSocket support"
+    ],
+    "paid_features": []
+  },
+  "jjwt": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "JWT creation",
+      "JWT parsing",
+      "JWS/JWE/JWK"
+    ],
+    "paid_features": []
+  },
+  "nimbus-jose": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "JOSE/JWT/JWK/JWE",
+      "JWS signing",
+      "Key management"
+    ],
+    "paid_features": []
+  },
+  "auth0-java": {
+    "vendor": "Okta",
+    "edition": "community_only",
+    "free_features": [
+      "Auth0 SDK",
+      "Authentication",
+      "Token management"
+    ],
+    "paid_features": []
+  },
+  "passay": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Password validation",
+      "Rules",
+      "Character sets"
+    ],
+    "paid_features": []
+  },
+  "react": {
+    "vendor": "Meta",
+    "edition": "community_only",
+    "free_features": [
+      "Full UI library",
+      "Hooks",
+      "Concurrent features"
+    ],
+    "paid_features": []
+  },
+  "angular": {
+    "vendor": "Google",
+    "edition": "community_only",
+    "free_features": [
+      "Full framework",
+      "CLI",
+      "Material UI"
+    ],
+    "paid_features": []
+  },
+  "vue": {
+    "vendor": "Evan You",
+    "edition": "community_only",
+    "free_features": [
+      "Full framework",
+      "Vue Router",
+      "Vuex/Pinia"
+    ],
+    "paid_features": []
+  },
+  "svelte": {
+    "vendor": "Vercel",
+    "edition": "community_only",
+    "free_features": [
+      "Compiler-based framework",
+      "Reactive",
+      "Scoped CSS"
+    ],
+    "paid_features": []
+  },
+  "nextjs": {
+    "vendor": "Vercel",
+    "edition": "community_enterprise",
+    "free_features": [
+      "React framework",
+      "SSR/SSG",
+      "API routes",
+      "File-based routing"
+    ],
+    "paid_features": []
+  },
+  "nuxt": {
+    "vendor": "NuxtLabs",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Vue framework",
+      "SSR/SSG",
+      "Auto-imports",
+      "File-based routing"
+    ],
+    "paid_features": []
+  },
+  "gatsby": {
+    "vendor": "Netlify",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Static site generator",
+      "Plugins",
+      "GraphQL",
+      "Image optimization"
+    ],
+    "paid_features": []
+  },
+  "remix": {
+    "vendor": "Shopify",
+    "edition": "community_only",
+    "free_features": [
+      "Full-stack framework",
+      "Nested routing",
+      "Progressive enhancement"
+    ],
+    "paid_features": []
+  },
+  "astro": {
+    "vendor": "The Astro Technology Company",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Static site generator",
+      "Islands",
+      "Multi-framework"
+    ],
+    "paid_features": []
+  },
+  "tailwindcss": {
+    "vendor": "Tailwind Labs",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Utility-first CSS",
+      "Responsive",
+      "Dark mode",
+      "JIT"
+    ],
+    "paid_features": []
+  },
+  "bootstrap": {
+    "vendor": "Bootstrap Team",
+    "edition": "community_only",
+    "free_features": [
+      "CSS framework",
+      "Grid system",
+      "Components",
+      "JavaScript plugins"
+    ],
+    "paid_features": []
+  },
+  "material-ui": {
+    "vendor": "MUI",
+    "edition": "community_enterprise",
+    "free_features": [
+      "React components",
+      "Material Design",
+      "Customization"
+    ],
+    "paid_features": []
+  },
+  "ant-design": {
+    "vendor": "Alibaba",
+    "edition": "community_only",
+    "free_features": [
+      "Enterprise UI",
+      "Components",
+      "Design system",
+      "Internationalization"
+    ],
+    "paid_features": []
+  },
+  "chakra-ui": {
+    "vendor": "Segun Adebayo",
+    "edition": "community_only",
+    "free_features": [
+      "React components",
+      "Accessibility",
+      "Themeable",
+      "Responsive"
+    ],
+    "paid_features": []
+  },
+  "storybook": {
+    "vendor": "Chromatic",
+    "edition": "community_enterprise",
+    "free_features": [
+      "UI documentation",
+      "Visual testing",
+      "Interaction testing"
+    ],
+    "paid_features": []
+  },
+  "webpack": {
+    "vendor": "OpenJS Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "Module bundler",
+      "Code splitting",
+      "Loaders",
+      "Plugins"
+    ],
+    "paid_features": []
+  },
+  "vite": {
+    "vendor": "Evan You",
+    "edition": "community_only",
+    "free_features": [
+      "Build tool",
+      "HMR",
+      "ESM",
+      "Plugin API"
+    ],
+    "paid_features": []
+  },
+  "rollup": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Module bundler",
+      "Tree shaking",
+      "ESM output",
+      "Plugins"
+    ],
+    "paid_features": []
+  },
+  "esbuild": {
+    "vendor": "Evan Wallace",
+    "edition": "community_only",
+    "free_features": [
+      "JavaScript bundler",
+      "Minifier",
+      "JSX/TSX",
+      "Extremely fast"
+    ],
+    "paid_features": []
+  },
+  "turbo": {
+    "vendor": "Vercel",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Build system",
+      "Caching",
+      "Parallel execution"
+    ],
+    "paid_features": []
+  },
+  "babel": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "JavaScript compiler",
+      "Plugins",
+      "Presets",
+      "Source maps"
+    ],
+    "paid_features": []
+  },
+  "typescript": {
+    "vendor": "Microsoft",
+    "edition": "community_only",
+    "free_features": [
+      "Type system",
+      "Compiler",
+      "IntelliSense",
+      "Strict mode"
+    ],
+    "paid_features": []
+  },
+  "eslint": {
+    "vendor": "OpenJS Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "Linting",
+      "Auto-fix",
+      "Plugins",
+      "Custom rules"
+    ],
+    "paid_features": []
+  },
+  "prettier": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Code formatter",
+      "Multi-language",
+      "Plugins",
+      "Editor integration"
+    ],
+    "paid_features": []
+  },
+  "axios": {
+    "vendor": "Matt Zabriskie",
+    "edition": "community_only",
+    "free_features": [
+      "HTTP client",
+      "Promise-based",
+      "Interceptors",
+      "Cancel tokens"
+    ],
+    "paid_features": []
+  },
+  "lodash": {
+    "vendor": "JD Dalton",
+    "edition": "community_only",
+    "free_features": [
+      "Utility library",
+      "Functions",
+      "Performance",
+      "Modular"
+    ],
+    "paid_features": []
+  },
+  "moment": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Date library",
+      "Parsing",
+      "Formatting",
+      "Localization"
+    ],
+    "paid_features": []
+  },
+  "dayjs": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Date library",
+      "Immutable",
+      "Plugin system",
+      "Tiny size"
+    ],
+    "paid_features": []
+  },
+  "date-fns": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Date utilities",
+      "200+ functions",
+      "Immutable",
+      "Tree-shakeable"
+    ],
+    "paid_features": []
+  },
+  "socket.io": {
+    "vendor": "Automattic",
+    "edition": "community_only",
+    "free_features": [
+      "WebSocket",
+      "Real-time",
+      "Rooms",
+      "Fallbacks"
+    ],
+    "paid_features": []
+  },
+  "ws": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "WebSocket",
+      "Simple API",
+      "Performance",
+      "Extensions"
+    ],
+    "paid_features": []
+  },
+  "passport": {
+    "vendor": "Jared Hanson",
+    "edition": "community_only",
+    "free_features": [
+      "Authentication",
+      "Strategies",
+      "OAuth",
+      "Session support"
+    ],
+    "paid_features": []
+  },
+  "jsonwebtoken": {
+    "vendor": "Auth0",
+    "edition": "community_only",
+    "free_features": [
+      "JWT creation",
+      "JWT verification",
+      "JWS/JWE"
+    ],
+    "paid_features": []
+  },
+  "helmet": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Security headers",
+      "CORS",
+      "HSTS",
+      "CSP"
+    ],
+    "paid_features": []
+  },
+  "cors": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "CORS middleware",
+      "Origins",
+      "Methods",
+      "Headers"
+    ],
+    "paid_features": []
+  },
+  "multer": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "File upload",
+      "Multipart",
+      "Memory/disk storage"
+    ],
+    "paid_features": []
+  },
+  "sharp": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Image processing",
+      "Resize",
+      "Format conversion",
+      "Operations"
+    ],
+    "paid_features": []
+  },
+  "nodemailer": {
+    "vendor": "Andris Reinman",
+    "edition": "community_only",
+    "free_features": [
+      "Email sending",
+      "SMTP",
+      "Templates",
+      "Attachments"
+    ],
+    "paid_features": []
+  },
+  "bull": {
+    "vendor": "OptimalBits",
+    "edition": "community_only",
+    "free_features": [
+      "Job queue",
+      "Redis-backed",
+      "Delay",
+      "Retry",
+      "Rate limiting"
+    ],
+    "paid_features": []
+  },
+  "bullmq": {
+    "vendor": "OptimalBits",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Job queue",
+      "Redis-backed",
+      "Flows",
+      "Workers"
+    ],
+    "paid_features": [
+      "BullMQ Pro",
+      "Groups",
+      "Rate limiting",
+      "Priority"
+    ]
+  },
+  "prisma": {
+    "vendor": "Prisma Data Inc.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "ORM",
+      "Schema",
+      "Migrations",
+      "Client generation"
+    ],
+    "paid_features": []
+  },
+  "typeorm": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "ORM",
+      "Active Record/Data Mapper",
+      "Migrations",
+      "Relations"
+    ],
+    "paid_features": []
+  },
+  "sequelize": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "ORM",
+      "Migrations",
+      "Associations",
+      "Raw queries"
+    ],
+    "paid_features": []
+  },
+  "mongoose": {
+    "vendor": "Automattic",
+    "edition": "community_only",
+    "free_features": [
+      "MongoDB ODM",
+      "Schema",
+      "Validation",
+      "Hooks"
+    ],
+    "paid_features": []
+  },
+  "drizzle": {
+    "vendor": "Drizzle Team",
+    "edition": "community_only",
+    "free_features": [
+      "ORM",
+      "Type-safe",
+      "SQL-like",
+      "Zero dependencies"
+    ],
+    "paid_features": []
+  },
+  "zod": {
+    "vendor": "Colin McDonnell",
+    "edition": "community_only",
+    "free_features": [
+      "Schema validation",
+      "Type inference",
+      "TypeScript-first"
+    ],
+    "paid_features": []
+  },
+  "joi": {
+    "vendor": "Sideway",
+    "edition": "community_only",
+    "free_features": [
+      "Schema validation",
+      "String helpers",
+      "Extensions"
+    ],
+    "paid_features": []
+  },
+  "yup": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Schema validation",
+      "TypeScript support",
+      "Chainable API"
+    ],
+    "paid_features": []
+  },
+  "socket.io-client": {
+    "vendor": "Automattic",
+    "edition": "community_only",
+    "free_features": [
+      "WebSocket client",
+      "Auto-reconnect",
+      "Namespaces"
+    ],
+    "paid_features": []
+  },
+  "tanstack": {
+    "vendor": "Tanner Linsley",
+    "edition": "community_only",
+    "free_features": [
+      "React Query",
+      "React Table",
+      "Form management"
+    ],
+    "paid_features": []
+  },
+  "react-router": {
+    "vendor": "Remix",
+    "edition": "community_only",
+    "free_features": [
+      "Client routing",
+      "Nested routes",
+      "Data loaders"
+    ],
+    "paid_features": []
+  },
+  "redux": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "State management",
+      "Predictable",
+      "DevTools",
+      "Middleware"
+    ],
+    "paid_features": []
+  },
+  "zustand": {
+    "vendor": "Daishi Kato",
+    "edition": "community_only",
+    "free_features": [
+      "State management",
+      "Simple",
+      "Hook-based",
+      "Performance"
+    ],
+    "paid_features": []
+  },
+  "recoil": {
+    "vendor": "Meta",
+    "edition": "community_only",
+    "free_features": [
+      "State management",
+      "Atoms/Selectors",
+      "Concurrent mode"
+    ],
+    "paid_features": []
+  },
+  "jotai": {
+    "vendor": "Daishi Kato",
+    "edition": "community_only",
+    "free_features": [
+      "State management",
+      "Atomic",
+      "Bottom-up",
+      "Async"
+    ],
+    "paid_features": []
+  },
+  "d3": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Data visualization",
+      "SVG/Canvas",
+      "Transitions",
+      "Layouts"
+    ],
+    "paid_features": []
+  },
+  "chart.js": {
+    "vendor": "Chart.js Contributors",
+    "edition": "community_only",
+    "free_features": [
+      "Charts",
+      "Line/Bar/Pie",
+      "Responsive",
+      "Plugins"
+    ],
+    "paid_features": []
+  },
+  "three": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "3D graphics",
+      "WebGL",
+      "Scene graph",
+      "Materials"
+    ],
+    "paid_features": []
+  },
+  "leaflet": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Maps",
+      "Markers",
+      "Popups",
+      "Tile layers"
+    ],
+    "paid_features": []
+  },
+  "framer-motion": {
+    "vendor": "Framer",
+    "edition": "community_only",
+    "free_features": [
+      "Animation",
+      "Gestures",
+      "Layout animation",
+      "Variants"
+    ],
+    "paid_features": []
+  },
+  "gsap": {
+    "vendor": "GreenSock",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Animation",
+      "Timeline",
+      "ScrollTrigger",
+      "Basic features"
+    ],
+    "paid_features": [
+      "Club plugins",
+      "MorphSVG",
+      "DrawSVG",
+      "MotionPath"
+    ]
+  },
+  "tippy": {
+    "vendor": "Atomiks",
+    "edition": "community_only",
+    "free_features": [
+      "Tooltips",
+      "Popovers",
+      "Dropdowns",
+      "Animations"
+    ],
+    "paid_features": []
+  },
+  "inter": {
+    "vendor": "Rasmus Andersson",
+    "edition": "community_only",
+    "free_features": [
+      "Font family",
+      "Variable font",
+      "All weights"
+    ],
+    "paid_features": []
+  },
+  "font-awesome": {
+    "vendor": "Fonticons Inc.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Icons",
+      "2000+ icons",
+      "CSS/SVG"
+    ],
+    "paid_features": [
+      "Pro icons (16000+)",
+      "Pro styles",
+      "Desktop font"
+    ]
+  },
+  "lucide": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Icons",
+      "SVG icons",
+      "Tree-shakeable",
+      "MIT licensed"
+    ],
+    "paid_features": []
+  },
+  "django": {
+    "vendor": "Django Software Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "Full framework",
+      "ORM",
+      "Admin",
+      "Auth"
+    ],
+    "paid_features": []
+  },
+  "flask": {
+    "vendor": "Pallets",
+    "edition": "community_only",
+    "free_features": [
+      "Micro framework",
+      "Extensions",
+      "Jinja2"
+    ],
+    "paid_features": []
+  },
+  "fastapi": {
+    "vendor": "Tiago Baptista",
+    "edition": "community_only",
+    "free_features": [
+      "API framework",
+      "Auto docs",
+      "Validation",
+      "Async support"
+    ],
+    "paid_features": []
+  },
+  "starlette": {
+    "vendor": "Encode",
+    "edition": "community_only",
+    "free_features": [
+      "ASGI framework",
+      "Routing",
+      "WebSocket",
+      "Middleware"
+    ],
+    "paid_features": []
+  },
+  "uvicorn": {
+    "vendor": "Encode",
+    "edition": "community_only",
+    "free_features": [
+      "ASGI server",
+      "HTTP/1.1",
+      "WebSocket",
+      "Auto-reload"
+    ],
+    "paid_features": []
+  },
+  "gunicorn": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "WSGI server",
+      "Pre-fork",
+      "Async workers",
+      "Config"
+    ],
+    "paid_features": []
+  },
+  "celery": {
+    "vendor": "SOLVVE",
+    "edition": "community_only",
+    "free_features": [
+      "Task queue",
+      "Distributed",
+      "Scheduled tasks",
+      "Monitoring"
+    ],
+    "paid_features": []
+  },
+  "redis-py": {
+    "vendor": "Redis Inc.",
+    "edition": "community_only",
+    "free_features": [
+      "Redis client",
+      "Async support",
+      "Pipeline",
+      "Pub/Sub"
+    ],
+    "paid_features": []
+  },
+  "sqlalchemy": {
+    "vendor": "Michael Bayer",
+    "edition": "community_only",
+    "free_features": [
+      "ORM",
+      "Core",
+      "Migrations",
+      "Connection pooling"
+    ],
+    "paid_features": []
+  },
+  "alembic": {
+    "vendor": "Michael Bayer",
+    "edition": "community_only",
+    "free_features": [
+      "Database migrations",
+      "Autogenerate",
+      "Branching",
+      "Rollback"
+    ],
+    "paid_features": []
+  },
+  "pymongo": {
+    "vendor": "MongoDB Inc.",
+    "edition": "community_only",
+    "free_features": [
+      "MongoDB driver",
+      "CRUD",
+      "Aggregation",
+      "GridFS"
+    ],
+    "paid_features": []
+  },
+  "psycopg": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "PostgreSQL adapter",
+      "Async support",
+      "Connection pooling",
+      "COPY"
+    ],
+    "paid_features": []
+  },
+  "pandas": {
+    "vendor": "NumFOCUS",
+    "edition": "community_only",
+    "free_features": [
+      "Data analysis",
+      "DataFrames",
+      "Time series",
+      "I/O"
+    ],
+    "paid_features": []
+  },
+  "numpy": {
+    "vendor": "NumFOCUS",
+    "edition": "community_only",
+    "free_features": [
+      "Array computing",
+      "Linear algebra",
+      "FFT",
+      "Random number generation"
+    ],
+    "paid_features": []
+  },
+  "scipy": {
+    "vendor": "NumFOCUS",
+    "edition": "community_only",
+    "free_features": [
+      "Scientific computing",
+      "Optimization",
+      "Integration",
+      "Interpolation"
+    ],
+    "paid_features": []
+  },
+  "matplotlib": {
+    "vendor": "Matplotlib Development Team",
+    "edition": "community_only",
+    "free_features": [
+      "Plotting",
+      "Static/interactive",
+      "2D/3D",
+      "Export formats"
+    ],
+    "paid_features": []
+  },
+  "seaborn": {
+    "vendor": "Michael Waskom",
+    "edition": "community_only",
+    "free_features": [
+      "Statistical visualization",
+      "Themes",
+      "Palettes",
+      "Statistical plots"
+    ],
+    "paid_features": []
+  },
+  "plotly": {
+    "vendor": "Plotly Technologies",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Interactive charts",
+      "Dashboards",
+      "Web-based",
+      "30+ chart types"
+    ],
+    "paid_features": []
+  },
+  "scikit-learn": {
+    "vendor": "Inria",
+    "edition": "community_only",
+    "free_features": [
+      "ML library",
+      "Classification",
+      "Regression",
+      "Clustering"
+    ],
+    "paid_features": []
+  },
+  "tensorflow": {
+    "vendor": "Google",
+    "edition": "community_only",
+    "free_features": [
+      "Deep learning",
+      "Neural networks",
+      "GPU/TPU",
+      "Keras integration"
+    ],
+    "paid_features": []
+  },
+  "pytorch": {
+    "vendor": "Meta",
+    "edition": "community_only",
+    "free_features": [
+      "Deep learning",
+      "Dynamic graph",
+      "TorchScript",
+      "C++ frontend"
+    ],
+    "paid_features": []
+  },
+  "transformers": {
+    "vendor": "Hugging Face",
+    "edition": "community_enterprise",
+    "free_features": [
+      "NLP models",
+      "100+ architectures",
+      "Tokenizers",
+      "Fine-tuning"
+    ],
+    "paid_features": []
+  },
+  "langchain": {
+    "vendor": "LangChain Inc.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "LLM orchestration",
+      "Chains",
+      "Agents",
+      "Document loading"
+    ],
+    "paid_features": []
+  },
+  "httpx": {
+    "vendor": "Encode",
+    "edition": "community_only",
+    "free_features": [
+      "HTTP client",
+      "Async/sync",
+      "HTTP/2",
+      "WebSocket"
+    ],
+    "paid_features": []
+  },
+  "requests": {
+    "vendor": "Kenneth Reitz",
+    "edition": "community_only",
+    "free_features": [
+      "HTTP client",
+      "Sessions",
+      "Authentication",
+      "JSON support"
+    ],
+    "paid_features": []
+  },
+  "aiohttp": {
+    "vendor": "Andrew Svetlov",
+    "edition": "community_only",
+    "free_features": [
+      "Async HTTP",
+      "WebSocket",
+      "Client/server",
+      "Middleware"
+    ],
+    "paid_features": []
+  },
+  "pydantic": {
+    "vendor": "Samuel Colvin",
+    "edition": "community_only",
+    "free_features": [
+      "Data validation",
+      "Type hints",
+      "Serialization",
+      "Settings management"
+    ],
+    "paid_features": []
+  },
+  "marshmallow": {
+    "vendor": "Steven Loria",
+    "edition": "community_only",
+    "free_features": [
+      "Serialization",
+      "Validation",
+      "Deserialization",
+      "Schema system"
+    ],
+    "paid_features": []
+  },
+  "click": {
+    "vendor": "Pallets",
+    "edition": "community_only",
+    "free_features": [
+      "CLI framework",
+      "Commands",
+      "Arguments",
+      "Help generation"
+    ],
+    "paid_features": []
+  },
+  "typer": {
+    "vendor": "Typer Team",
+    "edition": "community_only",
+    "free_features": [
+      "CLI framework",
+      "Type hints",
+      "Auto-completion",
+      "Nested commands"
+    ],
+    "paid_features": []
+  },
+  "black": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Code formatter",
+      "Opinionated",
+      "Fast",
+      "Jupyter support"
+    ],
+    "paid_features": []
+  },
+  "ruff": {
+    "vendor": "Charliermarsh",
+    "edition": "community_only",
+    "free_features": [
+      "Linter",
+      "Formatter",
+      "Fast",
+      "Rust-based"
+    ],
+    "paid_features": []
+  },
+  "mypy": {
+    "vendor": "Jukka Lehtosalo",
+    "edition": "community_only",
+    "free_features": [
+      "Type checker",
+      "Gradual typing",
+      "Plugin system"
+    ],
+    "paid_features": []
+  },
+  "pylint": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Linter",
+      "Code analysis",
+      "Convention checking",
+      "Refactoring"
+    ],
+    "paid_features": []
+  },
+  "bandit": {
+    "vendor": "PyCQA",
+    "edition": "community_only",
+    "free_features": [
+      "Security linter",
+      "AST-based",
+      "Common vulnerabilities"
+    ],
+    "paid_features": []
+  },
+  "safety": {
+    "vendor": "PyUp",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Dependency checking",
+      "Known vulnerabilities"
+    ],
+    "paid_features": []
+  },
+  "jinja2": {
+    "vendor": "Pallets",
+    "edition": "community_only",
+    "free_features": [
+      "Template engine",
+      "Sandboxing",
+      "Filters",
+      "Macros"
+    ],
+    "paid_features": []
+  },
+  "pillow": {
+    "vendor": "Alex Clark",
+    "edition": "community_only",
+    "free_features": [
+      "Image processing",
+      "Format support",
+      "Transformations",
+      "Filters"
+    ],
+    "paid_features": []
+  },
+  "opencv-python": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Computer vision",
+      "Image processing",
+      "Video",
+      "ML"
+    ],
+    "paid_features": []
+  },
+  "selenium-python": {
+    "vendor": "Selenium Project",
+    "edition": "community_only",
+    "free_features": [
+      "Browser automation",
+      "WebDriver",
+      "Multi-browser"
+    ],
+    "paid_features": []
+  },
+  "beautifulsoup4": {
+    "vendor": "Leonard Richardson",
+    "edition": "community_only",
+    "free_features": [
+      "HTML parsing",
+      "Tree navigation",
+      "Search",
+      "Encoding handling"
+    ],
+    "paid_features": []
+  },
+  "scrapy": {
+    "vendor": "Scrapy Project",
+    "edition": "community_only",
+    "free_features": [
+      "Web scraping",
+      "Middleware",
+      "Pipeline",
+      "Auto-throttle"
+    ],
+    "paid_features": []
+  },
+  "selenium-wire": {
+    "vendor": "Will McGugan",
+    "edition": "community_only",
+    "free_features": [
+      "Selenium extension",
+      "Network interception",
+      "Request modification"
+    ],
+    "paid_features": []
+  },
+  "cryptography": {
+    "vendor": "Python Cryptographic Authority",
+    "edition": "community_only",
+    "free_features": [
+      "Cryptographic recipes",
+      "Primitives",
+      "X.509",
+      "Hazardous materials"
+    ],
+    "paid_features": []
+  },
+  "pyjwt": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "JWT creation",
+      "JWT decoding",
+      "RSA/ECDSA/HMAC"
+    ],
+    "paid_features": []
+  },
+  "python-jose": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "JOSE/JWT/JWK",
+      "RSA/ECDSA",
+      "Encryption"
+    ],
+    "paid_features": []
+  },
+  "paramiko": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "SSH2 client",
+      "Key management",
+      "SFTP",
+      "Agent forwarding"
+    ],
+    "paid_features": []
+  },
+  "fabric": {
+    "vendor": "Jeff Forcier",
+    "edition": "community_only",
+    "free_features": [
+      "Remote execution",
+      "SSH",
+      "Deployment",
+      "Command running"
+    ],
+    "paid_features": []
+  },
+  "invoke": {
+    "vendor": "Jeff Forcier",
+    "edition": "community_only",
+    "free_features": [
+      "Task runner",
+      "Local execution",
+      "Context",
+      "Configuration"
+    ],
+    "paid_features": []
+  },
+  "tox": {
+    "vendor": "Tox Team",
+    "edition": "community_only",
+    "free_features": [
+      "Test automation",
+      "Multiple environments",
+      "Plugin system"
+    ],
+    "paid_features": []
+  },
+  "nox": {
+    "vendor": "Anthony Sottile",
+    "edition": "community_only",
+    "free_features": [
+      "Test automation",
+      "Python-based config",
+      "Session management"
+    ],
+    "paid_features": []
+  },
+  "coverage": {
+    "vendor": "Ned Batchelder",
+    "edition": "community_only",
+    "free_features": [
+      "Code coverage",
+      "Branch coverage",
+      "Reporting",
+      "HTML/XML"
+    ],
+    "paid_features": []
+  },
+  "rich": {
+    "vendor": "Will McGugan",
+    "edition": "community_only",
+    "free_features": [
+      "Rich text",
+      "Tables",
+      "Progress bars",
+      "Syntax highlighting"
+    ],
+    "paid_features": []
+  },
+  "textual": {
+    "vendor": "Will McGugan",
+    "edition": "community_enterprise",
+    "free_features": [
+      "TUI framework",
+      "CSS styling",
+      "Widgets",
+      "Reactive"
+    ],
+    "paid_features": []
+  },
+  "loguru": {
+    "vendor": "Delgan",
+    "edition": "community_only",
+    "free_features": [
+      "Logging",
+      "Rotation",
+      "Compression",
+      "Colors"
+    ],
+    "paid_features": []
+  },
+  "structlog": {
+    "vendor": "Hynek Schlawack",
+    "edition": "community_only",
+    "free_features": [
+      "Structured logging",
+      "Processors",
+      "Context",
+      "Standard library"
+    ],
+    "paid_features": []
+  },
+  "python-dotenv": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Environment variables",
+      ".env files",
+      "Override"
+    ],
+    "paid_features": []
+  },
+  "pyyaml": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "YAML parser",
+      "Load/dump",
+      "Full YAML 1.1",
+      "Round-trip"
+    ],
+    "paid_features": []
+  },
+  "toml": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "TOML parser",
+      "Dump",
+      "Types",
+      "Datetime support"
+    ],
+    "paid_features": []
+  },
+  "orjson": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "JSON parser",
+      "Fast",
+      "Type support",
+      "Serialization"
+    ],
+    "paid_features": []
+  },
+  "msgpack": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "MessagePack",
+      "Binary format",
+      "Streaming",
+      "NumPy support"
+    ],
+    "paid_features": []
+  },
+  "protobuf-python": {
+    "vendor": "Google",
+    "edition": "community_only",
+    "free_features": [
+      "Serialization",
+      "Schema definition",
+      "Code generation"
+    ],
+    "paid_features": []
+  },
+  "grpcio": {
+    "vendor": "Google",
+    "edition": "community_only",
+    "free_features": [
+      "gRPC",
+      "Async support",
+      "Streaming",
+      "Interceptors"
+    ],
+    "paid_features": []
+  },
+  "python-ldap": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "LDAP client",
+      "Authentication",
+      "Schema",
+      "Search"
+    ],
+    "paid_features": []
+  },
+  "python-social-auth": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "OAuth",
+      "Social login",
+      "Multiple providers"
+    ],
+    "paid_features": []
+  },
+  "allauth": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Authentication",
+      "Registration",
+      "Social auth",
+      "Email verification"
+    ],
+    "paid_features": []
+  },
+  "dj-rest-auth": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "REST API auth",
+      "JWT",
+      "Password reset",
+      "Email verification"
+    ],
+    "paid_features": []
+  },
+  "channels": {
+    "vendor": "Django Software Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "WebSocket",
+      "Async views",
+      "Channel layers",
+      "Consumers"
+    ],
+    "paid_features": []
+  },
+  "django-rest-framework": {
+    "vendor": "Encode",
+    "edition": "community_only",
+    "free_features": [
+      "REST API",
+      "Serializers",
+      "ViewSets",
+      "Authentication"
+    ],
+    "paid_features": []
+  },
+  "strawberry": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "GraphQL",
+      "Type-safe",
+      "Async",
+      "Federation"
+    ],
+    "paid_features": []
+  },
+  "ariadne": {
+    "vendor": "Mirumee",
+    "edition": "community_only",
+    "free_features": [
+      "GraphQL",
+      "Schema-first",
+      "ASGI",
+      "Subscriptions"
+    ],
+    "paid_features": []
+  },
+  "gql": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "GraphQL client",
+      "Async",
+      "WebSockets",
+      "HTTP"
+    ],
+    "paid_features": []
+  },
+  "tortoise-orm": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Async ORM",
+      "Django-like",
+      "Migrations",
+      "Relations"
+    ],
+    "paid_features": []
+  },
+  "beanie": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "MongoDB ODM",
+      "Async",
+      "Pydantic",
+      "Migrations"
+    ],
+    "paid_features": []
+  },
+  "sqlmodel": {
+    "vendor": "FastAPI Team",
+    "edition": "community_only",
+    "free_features": [
+      "ORM + validation",
+      "SQLAlchemy + Pydantic",
+      "Type-safe"
+    ],
+    "paid_features": []
+  },
+  "gin": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "HTTP framework",
+      "Routing",
+      "Middleware",
+      "JSON validation"
+    ],
+    "paid_features": []
+  },
+  "echo": {
+    "vendor": "Labstack",
+    "edition": "community_only",
+    "free_features": [
+      "HTTP framework",
+      "Routing",
+      "Middleware",
+      "Template engine"
+    ],
+    "paid_features": []
+  },
+  "fiber": {
+    "vendor": "Fiber Team",
+    "edition": "community_only",
+    "free_features": [
+      "HTTP framework",
+      "Fasthttp",
+      "Routing",
+      "WebSocket"
+    ],
+    "paid_features": []
+  },
+  "chi": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "HTTP router",
+      "Composable",
+      "Middleware",
+      "URL patterns"
+    ],
+    "paid_features": []
+  },
+  "mux": {
+    "vendor": "Gorilla",
+    "edition": "community_only",
+    "free_features": [
+      "HTTP router",
+      "URL variables",
+      "Path prefix",
+      "Methods"
+    ],
+    "paid_features": []
+  },
+  "gorm": {
+    "vendor": "Jinzhu",
+    "edition": "community_only",
+    "free_features": [
+      "ORM",
+      "Associations",
+      "Auto-migrate",
+      "Hooks"
+    ],
+    "paid_features": []
+  },
+  "ent": {
+    "vendor": "Facebook",
+    "edition": "community_only",
+    "free_features": [
+      "Entity framework",
+      "Code generation",
+      "Graph API",
+      "Schema"
+    ],
+    "paid_features": []
+  },
+  "sqlx": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "SQL extensions",
+      "Named queries",
+      "Struct scanning",
+      "Transactions"
+    ],
+    "paid_features": []
+  },
+  "cobra": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "CLI framework",
+      "Commands",
+      "Subcommands",
+      "Help generation"
+    ],
+    "paid_features": []
+  },
+  "viper": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Configuration",
+      "Multiple formats",
+      "Environment variables",
+      "Watch"
+    ],
+    "paid_features": []
+  },
+  "zap": {
+    "vendor": "Uber",
+    "edition": "community_only",
+    "free_features": [
+      "Logging",
+      "Structured",
+      "High performance",
+      "Sampling"
+    ],
+    "paid_features": []
+  },
+  "zerolog": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Logging",
+      "Zero allocation",
+      "JSON output",
+      "Context fields"
+    ],
+    "paid_features": []
+  },
+  "logrus": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Logging",
+      "Structured",
+      "Hooks",
+      "Levels"
+    ],
+    "paid_features": []
+  },
+  "jwt-go": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "JWT",
+      "Parse/validate",
+      "Signing methods",
+      "Claims"
+    ],
+    "paid_features": []
+  },
+  "pgx": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "PostgreSQL driver",
+      "Connection pool",
+      "COPY",
+      "Notifications"
+    ],
+    "paid_features": []
+  },
+  "go-redis": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Redis client",
+      "Cluster",
+      "Sentinel",
+      "Pipeline"
+    ],
+    "paid_features": []
+  },
+  "go-mongo-driver": {
+    "vendor": "MongoDB Inc.",
+    "edition": "community_only",
+    "free_features": [
+      "MongoDB driver",
+      "CRUD",
+      "Aggregation",
+      "GridFS"
+    ],
+    "paid_features": []
+  },
+  "protobuf-go": {
+    "vendor": "Google",
+    "edition": "community_only",
+    "free_features": [
+      "Serialization",
+      "Code generation",
+      "gRPC support"
+    ],
+    "paid_features": []
+  },
+  "grpc-go": {
+    "vendor": "Google",
+    "edition": "community_only",
+    "free_features": [
+      "gRPC",
+      "Streaming",
+      "Interceptors",
+      "Load balancing"
+    ],
+    "paid_features": []
+  },
+  "go-kit": {
+    "vendor": "Peter Bourgon",
+    "edition": "community_only",
+    "free_features": [
+      "Microservices toolkit",
+      "Transport",
+      "Service",
+      "Logging"
+    ],
+    "paid_features": []
+  },
+  "go-micro": {
+    "vendor": "Asim Aslam",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Microservices framework",
+      "Service discovery",
+      "Load balancing"
+    ],
+    "paid_features": []
+  },
+  "wire": {
+    "vendor": "Google",
+    "edition": "community_only",
+    "free_features": [
+      "Dependency injection",
+      "Code generation",
+      "Compile-time"
+    ],
+    "paid_features": []
+  },
+  "fx": {
+    "vendor": "Uber",
+    "edition": "community_only",
+    "free_features": [
+      "Dependency injection",
+      "Lifecycle",
+      "Modules",
+      "Logging"
+    ],
+    "paid_features": []
+  },
+  "goconvey": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Testing",
+      "BDD assertions",
+      "Live reload",
+      "Coverage"
+    ],
+    "paid_features": []
+  },
+  "testify": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Testing",
+      "Assertions",
+      "Mocking",
+      "Suites"
+    ],
+    "paid_features": []
+  },
+  "gomock": {
+    "vendor": "Google",
+    "edition": "community_only",
+    "free_features": [
+      "Mocking",
+      "Code generation",
+      "Interface-based"
+    ],
+    "paid_features": []
+  },
+  "goquery": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "HTML parsing",
+      "jQuery-like API",
+      "Selectors",
+      "Traversal"
+    ],
+    "paid_features": []
+  },
+  "colly": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Scraping",
+      "Parallel",
+      "Cache",
+      "Rate limiting"
+    ],
+    "paid_features": []
+  },
+  "chromedp": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Chrome DevTools",
+      "Headless browsing",
+      "Screenshots",
+      "PDF generation"
+    ],
+    "paid_features": []
+  },
+  "websocket-go": {
+    "vendor": "Gorilla",
+    "edition": "community_only",
+    "free_features": [
+      "WebSocket",
+      "Server/Client",
+      "Compression",
+      "Ping/pong"
+    ],
+    "paid_features": []
+  },
+  "nhooyr-websocket": {
+    "vendor": "Nathan Youngman",
+    "edition": "community_only",
+    "free_features": [
+      "WebSocket",
+      "Cancel context",
+      "Compression",
+      "JSON messages"
+    ],
+    "paid_features": []
+  },
+  "go-swagger": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Swagger",
+      "Code generation",
+      "Server/Client",
+      "Validation"
+    ],
+    "paid_features": []
+  },
+  "go-openapi": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "OpenAPI",
+      "Schema",
+      "Validation",
+      "Serialization"
+    ],
+    "paid_features": []
+  },
+  "go-playground-validator": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Validation",
+      "Struct tags",
+      "Custom validators",
+      "Cross-field"
+    ],
+    "paid_features": []
+  },
+  "mapstructure": {
+    "vendor": "HashiCorp",
+    "edition": "community_only",
+    "free_features": [
+      "Map-to-struct",
+      "Decode",
+      "Tags",
+      "Hooks"
+    ],
+    "paid_features": []
+  },
+  "go-cmp": {
+    "vendor": "Google",
+    "edition": "community_only",
+    "free_features": [
+      "Deep equality",
+      "Diff",
+      "Transformers",
+      "Comparers"
+    ],
+    "paid_features": []
+  },
+  "go-spew": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Pretty printing",
+      "Deep dump",
+      "Tolerance"
+    ],
+    "paid_features": []
+  },
+  "go-flags": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "CLI flags",
+      "INI config",
+      "Env vars",
+      "POSIX style"
+    ],
+    "paid_features": []
+  },
+  "go-pg": {
+    "vendor": "GoReleaser",
+    "edition": "community_only",
+    "free_features": [
+      "PostgreSQL ORM",
+      "Relations",
+      "Hooks",
+      "Auto-migrations"
+    ],
+    "paid_features": []
+  },
+  "go-cache": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "In-memory cache",
+      "Expiration",
+      "Purge",
+      "Statistics"
+    ],
+    "paid_features": []
+  },
+  "singleflight": {
+    "vendor": "Go Team",
+    "edition": "community_only",
+    "free_features": [
+      "Request coalescing",
+      "Deduplication",
+      "Stdlib"
+    ],
+    "paid_features": []
+  },
+  "errgroup": {
+    "vendor": "Go Team",
+    "edition": "community_only",
+    "free_features": [
+      "Error handling",
+      "Goroutine management",
+      "Context",
+      "Stdlib"
+    ],
+    "paid_features": []
+  },
+  "semaphore": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Rate limiting",
+      "Concurrency control",
+      "Buffered channel"
+    ],
+    "paid_features": []
+  },
+  "pool": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Connection pooling",
+      "Min/max size",
+      "Health checks"
+    ],
+    "paid_features": []
+  },
+  "kafka": {
+    "vendor": "Confluent",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Event streaming",
+      "Topics",
+      "Consumer groups",
+      "Basic clustering"
+    ],
+    "paid_features": []
+  },
+  "rabbitmq": {
+    "vendor": "VMware",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Message broker",
+      "AMQP",
+      "Exchanges",
+      "Queues"
+    ],
+    "paid_features": []
+  },
+  "nats": {
+    "vendor": "Synadia",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Messaging",
+      "JetStream",
+      "Key-Value",
+      "Object Store"
+    ],
+    "paid_features": []
+  },
+  "pulsar": {
+    "vendor": "Apache Software Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "Messaging",
+      "Multi-tenancy",
+      "Geo-replication",
+      "Functions"
+    ],
+    "paid_features": []
+  },
+  "activemq": {
+    "vendor": "Apache Software Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "Message broker",
+      "JMS",
+      "Queue/Topic",
+      "Clustering"
+    ],
+    "paid_features": []
+  },
+  "zeromq": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Messaging library",
+      "Patterns",
+      "Low latency",
+      "No broker"
+    ],
+    "paid_features": []
+  },
+  "mosquitto": {
+    "vendor": "Eclipse Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "MQTT broker",
+      "QoS",
+      "Retained messages",
+      "WebSockets"
+    ],
+    "paid_features": []
+  },
+  "wordpress": {
+    "vendor": "Automattic",
+    "edition": "community_enterprise",
+    "free_features": [
+      "CMS",
+      "Themes",
+      "Plugins",
+      "Basic editing"
+    ],
+    "paid_features": []
+  },
+  "drupal": {
+    "vendor": "Drupal Association",
+    "edition": "community_only",
+    "free_features": [
+      "CMS",
+      "Content types",
+      "Taxonomy",
+      "Views"
+    ],
+    "paid_features": []
+  },
+  "strapi": {
+    "vendor": "Strapi Solutions",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Headless CMS",
+      "Content types",
+      "REST/GraphQL",
+      "Admin panel"
+    ],
+    "paid_features": []
+  },
+  "meilisearch": {
+    "vendor": "Meilisearch SAS",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Full-text search",
+      "Typo tolerance",
+      "Faceting",
+      "Filtering"
+    ],
+    "paid_features": []
+  },
+  "typesense": {
+    "vendor": "Typesense Inc.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Search",
+      "Typo tolerance",
+      "Vector search",
+      "Faceting"
+    ],
+    "paid_features": []
+  },
+  "opensearch": {
+    "vendor": "Amazon Web Services",
+    "edition": "community_only",
+    "free_features": [
+      "Search",
+      "Analytics",
+      "Dashboards",
+      "Alerting"
+    ],
+    "paid_features": []
+  },
+  "sphinx": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Full-text search",
+      "Indexing",
+      "Ranking",
+      "Suggestion"
+    ],
+    "paid_features": []
+  },
+  "lunr": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Client-side search",
+      "Indexing",
+      "Stemming",
+      "Boosting"
+    ],
+    "paid_features": []
+  },
+  "fuse": {
+    "vendor": "Kirollos Risk",
+    "edition": "community_only",
+    "free_features": [
+      "Fuzzy search",
+      "Client-side",
+      "Weighted",
+      "Threshold"
+    ],
+    "paid_features": []
+  },
+  "jquery": {
+    "vendor": "JS Foundation",
+    "edition": "community_only",
+    "free_features": [
+      "DOM manipulation",
+      "AJAX",
+      "Events",
+      "Animations"
+    ],
+    "paid_features": []
+  },
+  "underscore": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Utility library",
+      "Functions",
+      "Objects",
+      "Collections"
+    ],
+    "paid_features": []
+  },
+  "ramda": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Functional utility",
+      "Currying",
+      "Immutability",
+      "Composition"
+    ],
+    "paid_features": []
+  },
+  "rxjs": {
+    "vendor": "Community",
+    "edition": "community_only",
+    "free_features": [
+      "Reactive extensions",
+      "Observables",
+      "Operators",
+      "Scheduling"
+    ],
+    "paid_features": []
+  },
+  "highcharts": {
+    "vendor": "Highsoft",
+    "edition": "commercial_only",
+    "free_features": [],
+    "paid_features": [
+      "Charts",
+      "Stock",
+      "Maps",
+      "Dashboards"
+    ]
+  },
+  "dhtmlx": {
+    "vendor": "DHTMLX",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Grid",
+      "Scheduler",
+      "Gantt",
+      "Vault"
+    ],
+    "paid_features": []
+  },
+  "ag-grid": {
+    "vendor": "AG Grid Ltd.",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Data grid",
+      "Filtering",
+      "Sorting",
+      "Pagination"
+    ],
+    "paid_features": [
+      "Enterprise row model",
+      "Server-side row model",
+      "Charts",
+      "Excel export"
+    ]
+  },
+  "handsontable": {
+    "vendor": "Handsoncode",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Spreadsheet",
+      "Data grid",
+      "Basic editing"
+    ],
+    "paid_features": [
+      "Pro features",
+      "Enterprise support",
+      "Multiple grids"
+    ]
+  },
+  "tinymce": {
+    "vendor": "Tiny Technologies",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Rich text editor",
+      "Basic plugins",
+      "Toolbar"
+    ],
+    "paid_features": [
+      "Premium plugins",
+      "Cloud hosting",
+      "Enterprise support"
+    ]
+  },
+  "quill": {
+    "vendor": "Slab",
+    "edition": "community_only",
+    "free_features": [
+      "Rich text editor",
+      "Delta format",
+      "Themes",
+      "Modules"
+    ],
+    "paid_features": []
+  },
+  "prosemirror": {
+    "vendor": "Marijn Haverbeke",
+    "edition": "community_only",
+    "free_features": [
+      "Editor toolkit",
+      "Schema",
+      "Transformations",
+      "Collaboration"
+    ],
+    "paid_features": []
+  },
+  "tiptap": {
+    "vendor": "Uproarious",
+    "edition": "community_enterprise",
+    "free_features": [
+      "Headless editor",
+      "Extensions",
+      "Collaboration",
+      "ProseMirror"
+    ],
+    "paid_features": []
+  },
+  "dragula": {
+    "vendor": "Nicolas Gallagher",
+    "edition": "community_only",
+    "free_features": [
+      "Drag and drop",
+      "Simple API",
+      "Handles",
+      "Containers"
+    ],
+    "paid_features": []
+  },
+  "sortablejs": {
+    "vendor": "Sammy Howe",
+    "edition": "community_only",
+    "free_features": [
+      "Drag and drop",
+      "Touch support",
+      "Animation",
+      "Nested lists"
+    ],
+    "paid_features": []
+  },
+  "dropzone": {
+    "vendor": "Matias Meno",
+    "edition": "community_only",
+    "free_features": [
+      "File upload",
+      "Drag and drop",
+      "Preview",
+      "Progress"
+    ],
+    "paid_features": []
+  },
+  "filepond": {
+    "vendor": "Pqina",
+    "edition": "community_enterprise",
+    "free_features": [
+      "File upload",
+      "Drag and drop",
+      "Preview",
+      "Crop"
+    ],
+    "paid_features": [
+      "Image editor",
+      "PDF preview",
+      "Office preview"
+    ]
+  },
+  "cropperjs": {
+    "vendor": "Chen Fengyuan",
+    "edition": "community_only",
+    "free_features": [
+      "Image cropping",
+      "Zoom",
+      "Rotate",
+      "Aspect ratio"
+    ],
+    "paid_features": []
+  },
+  "tui-image-editor": {
+    "vendor": "NHN",
+    "edition": "community_only",
+    "free_features": [
+      "Image editor",
+      "Drawing",
+      "Filters",
+      "Crop/Resize"
+    ],
+    "paid_features": []
+  },
+  "signature_pad": {
+    "vendor": "Szymon Nowak",
+    "edition": "community_only",
+    "free_features": [
+      "Signature capture",
+      "SVG output",
+      "Smooth drawing"
+    ],
+    "paid_features": []
+  },
+  "imask": {
+    "vendor": "IMask.io",
+    "edition": "community_only",
+    "free_features": [
+      "Input masking",
+      "Pattern",
+      "Number",
+      "Date/DateTime"
+    ],
+    "paid_features": []
+  },
+  "cleave": {
+    "vendor": "Nosir",
+    "edition": "community_only",
+    "free_features": [
+      "Input formatting",
+      "Credit card",
+      "Phone",
+      "Date"
+    ],
+    "paid_features": []
+  },
+  "lazysizes": {
+    "vendor": "Alexander Farkas",
+    "edition": "community_only",
+    "free_features": [
+      "Lazy loading",
+      "Responsive images",
+      "Native lazy loading"
+    ],
+    "paid_features": []
+  },
+  "lozad": {
+    "vendor": "Apoorv Saxena",
+    "edition": "community_only",
+    "free_features": [
+      "Lazy loading",
+      "Intersection Observer",
+      "Tiny size"
+    ],
+    "paid_features": []
+  },
+  "progressive-image": {
+    "vendor": "Dan Bentley",
+    "edition": "community_only",
+    "free_features": [
+      "Progressive loading",
+      "Low quality placeholder",
+      "Fade in"
+    ],
+    "paid_features": []
+  },
+  "nprogress": {
+    "vendor": "Rico Sta. Cruz",
+    "edition": "community_only",
+    "free_features": [
+      "Progress bar",
+      "Slim",
+      "Configurable",
+      "No dependencies"
+    ],
+    "paid_features": []
+  },
+  "animate.css": {
+    "vendor": "Daniel Eden",
+    "edition": "community_only",
+    "free_features": [
+      "CSS animations",
+      "Bounce",
+      "Fade",
+      "Slide"
+    ],
+    "paid_features": []
+  },
+  "aos": {
+    "vendor": "Micha\u0142 Sajn\u00f3g",
+    "edition": "community_only",
+    "free_features": [
+      "Animate on scroll",
+      "12+ animations",
+      "Duration",
+      "Offset"
+    ],
+    "paid_features": []
+  },
+  "wowjs": {
+    "vendor": "Matt Lawson",
+    "edition": "community_only",
+    "free_features": [
+      "Animate on scroll",
+      "CSS animations",
+      "Box reveal"
+    ],
+    "paid_features": []
+  },
+  "typed": {
+    "vendor": "Matt Boldt",
+    "edition": "community_only",
+    "free_features": [
+      "Typewriter effect",
+      "Looping",
+      "Backspace",
+      "Cursor"
+    ],
+    "paid_features": []
+  },
+  "particles": {
+    "vendor": "Vincent Garreau",
+    "edition": "community_only",
+    "free_features": [
+      "Particle system",
+      "Links",
+      "Repulse",
+      "Bubble"
+    ],
+    "paid_features": []
+  },
+  "sweetalert2": {
+    "vendor": "Sweetalert2",
+    "edition": "community_only",
+    "free_features": [
+      "Popup/alert",
+      "Customizable",
+      "Timer",
+      "Queue"
+    ],
+    "paid_features": []
+  },
+  "notyf": {
+    "vendor": "Carlos Caballero",
+    "edition": "community_only",
+    "free_features": [
+      "Toast notifications",
+      "Stacking",
+      "Dismissible",
+      "Types"
+    ],
+    "paid_features": []
+  },
+  "toastify": {
+    "vendor": "Apvarun",
+    "edition": "community_only",
+    "free_features": [
+      "Toast notifications",
+      "Colors",
+      "Progress bar",
+      "Positioning"
+    ],
+    "paid_features": []
+  },
+  "floating-ui": {
+    "vendor": "Atomiks",
+    "edition": "community_only",
+    "free_features": [
+      "Positioning",
+      "Tooltips",
+      "Popovers",
+      "Context menu"
+    ],
+    "paid_features": []
+  },
+  "popper": {
+    "vendor": "Federico Zivolo",
+    "edition": "community_only",
+    "free_features": [
+      "Positioning engine",
+      "Tooltips",
+      "Popovers",
+      "Placement"
+    ],
+    "paid_features": []
+  },
+  "tooltipster": {
+    "vendor": "C\u00e9dric Michael Bley",
+    "edition": "community_only",
+    "free_features": [
+      "Tooltips",
+      "Themes",
+      "Interact",
+      "Follow cursor"
+    ],
+    "paid_features": []
+  },
+  "shepherd": {
+    "vendor": "Shipshape",
+    "edition": "community_only",
+    "free_features": [
+      "User onboarding",
+      "Tour steps",
+      "Modals",
+      "Progress"
+    ],
+    "paid_features": []
+  },
+  "intro.js": {
+    "vendor": "Intro.js",
+    "edition": "community_enterprise",
+    "free_features": [
+      "User onboarding",
+      "Steps",
+      "Highlights",
+      "Bubbles"
+    ],
+    "paid_features": [
+      "Commercial license",
+      "Priority support"
+    ]
+  },
+  "walkme": {
+    "vendor": "WalkMe",
+    "edition": "commercial_only",
+    "free_features": [],
+    "paid_features": [
+      "Digital adoption",
+      "Guided walkthroughs",
+      "Analytics",
+      "Self-service"
+    ]
+  }
+}

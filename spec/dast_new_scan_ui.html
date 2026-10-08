@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DAST Scanner — New Scan</title>
+<style>
+  :root{
+    --bg:#f4f6fb; --surface:#ffffff; --surface2:#f8fafc; --border:#dbe1ea;
+    --text:#0f172a; --muted:#64748b; --accent:#4f46e5; --accent-weak:#eef2ff;
+    --ok:#15803d; --okbg:#dcfce7; --warn:#b45309; --warnbg:#fef3c7;
+    --danger:#b91c1c; --crit:#7f1d1d;
+    --admin:#7c3aed; --adminbg:#ede9fe; --user:#2563eb; --userbg:#dbeafe;
+    --viewer:#0891b2; --viewerbg:#cffafe; --anon:#64748b; --anonbg:#e2e8f0;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0b1120; --surface:#111827; --surface2:#0f172a; --border:#1f2a3b;
+      --text:#e5eaf2; --muted:#93a0b4; --accent:#818cf8; --accent-weak:#1e2544;
+      --ok:#4ade80; --okbg:#0f2a1a; --warn:#fbbf24; --warnbg:#2a2110;
+      --danger:#f87171; --crit:#fca5a5;
+      --adminbg:#2a1d4d; --userbg:#17294d; --viewerbg:#0b3540; --anonbg:#1f2a3b;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:14px;line-height:1.5}
+  .app{display:flex;min-height:100vh}
+  /* nav */
+  .rail{width:210px;background:var(--surface);border-right:1px solid var(--border);
+    padding:18px 12px;flex-shrink:0}
+  .brand{font-weight:800;font-size:16px;padding:6px 10px 16px;letter-spacing:.2px}
+  .brand span{color:var(--accent)}
+  .nav a{display:block;padding:9px 12px;border-radius:8px;color:var(--muted);
+    text-decoration:none;margin-bottom:2px;font-weight:500}
+  .nav a.active{background:var(--accent-weak);color:var(--accent);font-weight:700}
+  /* main */
+  .main{flex:1;padding:26px 30px;max-width:980px}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 22px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;
+    padding:20px 22px;margin-bottom:18px}
+  .card h2{font-size:15px;margin:0 0 2px;display:flex;align-items:center;gap:8px}
+  .card .hint{color:var(--muted);font-size:12.5px;margin:0 0 16px}
+  .step{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;
+    border-radius:50%;background:var(--accent);color:#fff;font-size:12px;font-weight:700}
+  label{display:block;font-weight:600;font-size:12.5px;margin:0 0 5px}
+  input[type=text],input[type=url],input[type=password],select,textarea{
+    width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:9px;
+    background:var(--surface2);color:var(--text);font-size:13.5px;font-family:inherit}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:0;border-color:transparent}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+  .field{margin-bottom:14px}
+  .row{display:flex;gap:14px;flex-wrap:wrap}
+  .callout{display:flex;gap:10px;background:var(--accent-weak);border:1px solid var(--border);
+    border-radius:10px;padding:11px 13px;font-size:12.5px;color:var(--text);margin-top:4px}
+  .callout b{color:var(--accent)}
+  /* identity cards */
+  .idcard{border:1px solid var(--border);border-radius:12px;padding:15px 16px;margin-bottom:12px;
+    background:var(--surface2)}
+  .idhead{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .idhead input{flex:1}
+  .badge{font-size:11px;font-weight:800;padding:3px 9px;border-radius:20px;white-space:nowrap}
+  .b-admin{background:var(--adminbg);color:var(--admin)}
+  .b-user{background:var(--userbg);color:var(--user)}
+  .b-viewer{background:var(--viewerbg);color:var(--viewer)}
+  .b-anon{background:var(--anonbg);color:var(--anon)}
+  .b-custom{background:var(--warnbg);color:var(--warn)}
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden;margin-bottom:12px}
+  .seg button{border:0;background:var(--surface);color:var(--muted);padding:7px 13px;font-size:12.5px;
+    font-weight:600;cursor:pointer;border-right:1px solid var(--border)}
+  .seg button:last-child{border-right:0}
+  .seg button.on{background:var(--accent);color:#fff}
+  .xbtn{border:1px solid var(--border);background:var(--surface);color:var(--muted);
+    border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:15px;line-height:1}
+  .addbtn{border:1px dashed var(--accent);background:transparent;color:var(--accent);
+    border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;width:100%;font-size:13px}
+  .authblock{display:none}
+  .authblock.on{display:block}
+  .toggle{display:flex;align-items:center;gap:9px;margin:6px 0}
+  .toggle input{width:auto}
+  .presets{display:flex;gap:10px;flex-wrap:wrap}
+  .preset{flex:1;min-width:150px;border:1px solid var(--border);border-radius:10px;padding:12px 14px;
+    cursor:pointer;background:var(--surface2)}
+  .preset.on{border-color:var(--accent);background:var(--accent-weak)}
+  .preset b{display:block;margin-bottom:2px}
+  .preset span{color:var(--muted);font-size:12px}
+  .foot{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-top:6px}
+  .primary{background:var(--accent);color:#fff;border:0;border-radius:10px;padding:12px 26px;
+    font-weight:800;font-size:14px;cursor:pointer}
+  .ghost{background:transparent;border:1px solid var(--border);color:var(--text);border-radius:10px;
+    padding:12px 20px;font-weight:600;cursor:pointer}
+  .matrix{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+  .matrix th,.matrix td{border:1px solid var(--border);padding:7px 9px;text-align:center}
+  .matrix th{background:var(--surface2);font-weight:700}
+  .matrix td.y{color:var(--ok);font-weight:700}
+  .mut{color:var(--muted)}
+  @media(max-width:720px){
+    .rail{display:none}.main{padding:18px 16px}
+    .grid2,.grid3{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail">
+    <div class="brand">DAST<span>·</span>Scanner</div>
+    <div class="nav">
+      <a href="#">Dashboard</a>
+      <a href="#" class="active">New Scan</a>
+      <a href="#">Scans</a>
+      <a href="#">Findings</a>
+      <a href="#">Reports</a>
+      <a href="#">Settings</a>
+    </div>
+  </nav>
+
+  <main class="main">
+    <h1>New Scan</h1>
+    <p class="sub">Configure a dynamic security scan. Add one identity per role so the engine can test authorization across roles.</p>
+
+    <!-- 1. Target -->
+    <div class="card">
+      <h2><span class="step">1</span> Target</h2>
+      <p class="hint">The engine fingerprints the target (classic site, SPA, or API-only) and adapts automatically.</p>
+      <div class="field">
+        <label>Target URL</label>
+        <input type="url" value="https://app.example.com" placeholder="https://host or https://host/api">
+      </div>
+      <div class="toggle">
+        <input type="checkbox" id="authz" checked>
+        <label for="authz" style="margin:0">I am authorized to test this target. Active tests will be confined to this host.</label>
+      </div>
+    </div>
+
+    <!-- 2. Identities / roles -->
+    <div class="card">
+      <h2><span class="step">2</span> Identities &amp; roles</h2>
+      <p class="hint">Add an identity for each role. Multiple roles unlock cross-role authorization testing (BOLA / BFLA) — e.g. can a Viewer reach an Admin function, or User A read User B's data?</p>
+
+      <div id="identities"></div>
+      <button class="addbtn" onclick="addIdentity()">+ Add identity</button>
+
+      <div class="callout">
+        <div>🔐</div>
+        <div><b>Credentials are never stored.</b> They are held in memory only for the duration of the scan and redacted from all logs. An <b>Anonymous</b> identity (no credentials) is always included as the no-session baseline.</div>
+      </div>
+
+      <div style="margin-top:16px">
+        <label>Authorization test matrix (auto-generated from the roles above)</label>
+        <table class="matrix">
+          <thead><tr><th>Acting as ↓ / Resource of →</th><th>Admin</th><th>User</th><th>Viewer</th></tr></thead>
+          <tbody>
+            <tr><th>Admin</th><td class="mut">—</td><td class="y">test</td><td class="y">test</td></tr>
+            <tr><th>User</th><td class="y">test</td><td class="mut">own</td><td class="y">test</td></tr>
+            <tr><th>Viewer</th><td class="y">test</td><td class="y">test</td><td class="mut">own</td></tr>
+            <tr><th>Anonymous</th><td class="y">test</td><td class="y">test</td><td class="y">test</td></tr>
+          </tbody>
+        </table>
+        <p class="hint" style="margin-top:8px">Each “test” cell = replay a lower/other role against this role’s objects and functions; success where access should be denied is a finding.</p>
+      </div>
+    </div>
+
+    <!-- 3. Scope & safety -->
+    <div class="card">
+      <h2><span class="step">3</span> Scope &amp; safety</h2>
+      <div class="grid2">
+        <div class="field">
+          <label>Test intensity</label>
+          <div class="presets">
+            <div class="preset" onclick="pick(this)"><b>Light</b><span>Passive + quick checks</span></div>
+            <div class="preset on" onclick="pick(this)"><b>Standard</b><span>Balanced coverage</span></div>
+            <div class="preset" onclick="pick(this)"><b>Deep</b><span>Max checks per target</span></div>
+          </div>
+        </div>
+        <div>
+          <div class="field">
+            <label>Request method policy</label>
+            <select>
+              <option>Safe mode — read-only (GET/HEAD) only</option>
+              <option>Allow state-changing methods (POST/PUT/DELETE) — I accept data may change</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Rate limit (requests / second)</label>
+            <input type="text" value="5">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. Model -->
+    <div class="card">
+      <h2><span class="step">4</span> Model</h2>
+      <p class="hint">The engine is LLM-agnostic. Pick the provider per the sensitive <em>ruling</em> step; planning and narration can stay local.</p>
+      <div class="grid2">
+        <div class="field">
+          <label>Provider</label>
+          <select>
+            <option>Ollama — gpt-oss:20b (local, default)</option>
+            <option>AWS Bedrock — Claude Haiku</option>
+            <option>OpenAI — gpt-4o-mini</option>
+            <option>Anthropic — Claude Haiku</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Fine-tuned / few-shot profile</label>
+          <select>
+            <option>Base + few-shot examples</option>
+            <option>dast-tuned (LoRA adapter)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <span class="mut">The engine will test each endpoint and form, then cross-test every role pair above.</span>
+      <div style="display:flex;gap:10px">
+        <button class="ghost">Save draft</button>
+        <button class="primary">Start scan</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- identity row template -->
+<template id="idtpl">
+  <div class="idcard">
+    <div class="idhead">
+      <input type="text" class="idlabel" placeholder="Identity label (e.g. Alice)">
+      <select class="idrole" onchange="setBadge(this)">
+        <option value="admin">Admin</option>
+        <option value="user" selected>User</option>
+        <option value="viewer">Viewer</option>
+        <option value="anon">Anonymous</option>
+        <option value="custom">Custom…</option>
+      </select>
+      <span class="badge b-user">USER</span>
+      <button class="xbtn" title="Remove" onclick="this.closest('.idcard').remove()">×</button>
+    </div>
+    <div class="seg">
+      <button type="button" class="on" onclick="auth(this,0)">Form login</button>
+      <button type="button" onclick="auth(this,1)">Token / API key</button>
+      <button type="button" onclick="auth(this,2)">Pre-auth state</button>
+    </div>
+    <div class="authblock on">
+      <div class="grid3">
+        <div class="field"><label>Login URL</label><input type="url" placeholder="https://app.example.com/login"></div>
+        <div class="field"><label>Username</label><input type="text" placeholder="user@example.com"></div>
+        <div class="field"><label>Password</label><input type="password" placeholder="••••••••"></div>
+      </div>
+    </div>
+    <div class="authblock">
+      <div class="grid2">
+        <div class="field"><label>Header name</label><input type="text" value="Authorization"></div>
+        <div class="field"><label>Token value (Bearer / JWT / API key)</label><input type="password" placeholder="Bearer eyJ…"></div>
+      </div>
+    </div>
+    <div class="authblock">
+      <div class="field"><label>Pre-authenticated state (storage-state JSON) — for SSO / MFA sessions</label>
+      <textarea rows="2" placeholder="Paste exported browser storage-state, or choose a file…"></textarea></div>
+    </div>
+  </div>
+</template>
+
+<script>
+  const roleName={admin:"ADMIN",user:"USER",viewer:"VIEWER",anon:"ANON",custom:"CUSTOM"};
+  const roleClass={admin:"b-admin",user:"b-user",viewer:"b-viewer",anon:"b-anon",custom:"b-custom"};
+  function setBadge(sel){
+    const b=sel.parentElement.querySelector('.badge');
+    const v=sel.value; b.textContent=roleName[v];
+    b.className='badge '+roleClass[v];
+  }
+  function auth(btn,i){
+    const card=btn.closest('.idcard');
+    card.querySelectorAll('.seg button').forEach((x,j)=>x.classList.toggle('on',j===i));
+    card.querySelectorAll('.authblock').forEach((x,j)=>x.classList.toggle('on',j===i));
+  }
+  function addIdentity(role){
+    const node=document.getElementById('idtpl').content.cloneNode(true);
+    document.getElementById('identities').appendChild(node);
+    const card=document.getElementById('identities').lastElementChild;
+    if(role){const sel=card.querySelector('.idrole');sel.value=role;setBadge(sel);}
+    return card;
+  }
+  function pick(el){el.parentElement.querySelectorAll('.preset').forEach(p=>p.classList.remove('on'));el.classList.add('on');}
+  // seed with two roles so multi-identity is visible immediately
+  (function(){
+    const admin=addIdentity('admin'); admin.querySelector('.idlabel').value='Administrator';
+    const user=addIdentity('user');  user.querySelector('.idlabel').value='Standard user';
+  })();
+</script>
+</body>
+</html>

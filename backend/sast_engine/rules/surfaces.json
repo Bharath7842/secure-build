@@ -1,0 +1,215 @@
+[
+  {
+    "surface": "SQL injection via JDBC",
+    "when": { "languages": ["java"] },
+    "rules": [
+      "java-sql-error-detail-exposed"
+    ],
+    "rationale": "Java + JDBC detected -> unparameterised statements and string-concatenated SQL are the primary injection surface"
+  },
+  {
+    "surface": "Command injection",
+    "when": { "languages": ["java"] },
+    "rules": ["java-runtime-exec", "java-processbuilder-concat", "java-scriptengine-eval"],
+    "rationale": "Runtime.exec / ProcessBuilder present -> shell metacharacter injection from any interpolated argument"
+  },
+  {
+    "surface": "Request-driven redirection and header injection",
+    "when": { "languages": ["java"] },
+    "rules": ["java-open-redirect", "java-header-from-request", "java-ldap-injection"],
+    "rationale": "Request values reaching redirect targets, response headers, or directory filters -> open redirect, response splitting, LDAP injection"
+  },
+  {
+    "surface": "Python injection sinks",
+    "when": { "languages": ["python"] },
+    "rules": ["exec-call", "eval-call", "os-system", "subprocess-shell"],
+    "rationale": "Python detected -> eval/exec and shell=True subprocess calls execute any interpolated input"
+  },
+  {
+    "surface": "Python deserialization and config",
+    "when": { "languages": ["python"] },
+    "rules": ["pickle-loads", "yaml-unsafe-load", "debug-enabled", "md5-hash", "python-ssl-verify-false"],
+    "rationale": "Python detected -> pickle and yaml.load construct arbitrary objects, and debug mode leaks tracebacks to clients"
+  },
+  {
+    "surface": "XXE and SOAP request forgery",
+    "when": { "frameworks": ["Apache Axis2 SOAP", "Apache Axis SOAP", "Apache CXF SOAP/REST"] },
+    "rules": [
+      "java-xxe-xmlinputfactory",
+      "java-xxe-documentbuilder",
+      "java-xxe-sax-factory",
+      "ssrf-endpoint-from-config-property",
+      "java-ssrf-url-request",
+      "java-hardcoded-local-endpoint",
+      "xml-axis2-admin-surface-exposed"
+    ],
+    "rationale": "SOAP stack detected -> XML parsers default to resolving external entities, and endpoint URLs are typically config-driven"
+  },
+  {
+    "surface": "Deserialization gadget chain",
+    "when": {
+      "dependencies": [
+        { "name": "commons-collections", "version_lt": "3.2.2" },
+        { "name": "commons-beanutils", "version_lt": "1.9.4" },
+        { "name": "commons-collections4", "version_lt": "4.1" }
+      ]
+    },
+    "rules": [
+      "java-objectinputstream",
+      "java-xmldecoder",
+      "java-jackson-default-typing",
+      "castor-unmarshaller-untrusted",
+      "serializable-missing-svuid"
+    ],
+    "rationale": "A gadget-chain library is on the classpath at a vulnerable version -> Serializable types and readObject() become a remote code execution surface rather than a code-style note"
+  },
+  {
+    "surface": "Rules-engine injection",
+    "when": { "frameworks": ["Drools rules engine", "KIE / Drools rules engine", "jBPM workflow engine"] },
+    "rules": ["drools-rule-external-load", "java-class-forname"],
+    "rationale": "Drools/KIE detected -> rules loaded from an external or configurable path execute MVEL/Java expressions"
+  },
+  {
+    "surface": "Legacy MVC request handling",
+    "when": { "frameworks": ["Apache Struts (legacy MVC)"] },
+    "rules": [
+      "struts-formfile-upload-handling",
+      "java-upload-extension-only-check",
+      "jsp-raw-request-expression",
+      "java-xss-jsp-servlet",
+      "csrf-disabled",
+      "java-path-file-constructor"
+    ],
+    "rationale": "Struts 1.x ActionForms detected -> request parameters reach business logic directly, uploads have no built-in type check, and CSRF protection is opt-in per form"
+  },
+  {
+    "surface": "REST exception and CORS exposure",
+    "when": {
+      "frameworks": [
+        "JBoss RESTEasy (JAX-RS)", "JAX-RS", "JAX-RS (Jakarta)",
+        "Spring Boot", "Spring Framework", "Spring Security"
+      ]
+    },
+    "rules": [
+      "jaxrs-exception-in-response-entity",
+      "spring-exception-message-in-response-body",
+      "jaxrs-permit-all",
+      "jaxrs-path-sensitive",
+      "jaxrs-container-response-cors",
+      "resteasy-corsfilter-allowed-origins-star",
+      "cors-wildcard-with-credentials",
+      "cors-allow-origin-reflect",
+      "sensitive-endpoint-permit-all",
+      "csrf-disabled"
+    ],
+    "rationale": "REST framework detected -> serialized exceptions leak stack traces into JSON responses, CORS is configured per-resource, and Spring apps commonly disable CSRF protection wholesale for REST APIs"
+  },
+  {
+    "surface": "Servlet security headers and cookies",
+    "when": { "languages": ["java", "xml"] },
+    "rules": [
+      "java-insecure-cookie",
+      "clickjacking-frameoptions-disabled",
+      "servlet-cors-allow-origin-star",
+      "servlet-corsfilter-class",
+      "corsfilter-reflect-origin",
+      "webxml-cors-filter-name",
+      "webxml-filter-class-cors",
+      "xml-transport-guarantee-none",
+      "http-trace-webxml",
+      "webxml-wildcard-url-pattern",
+      "webxml-sensitive-url-pattern"
+    ],
+    "rationale": "Servlet container detected -> transport guarantee, cookie flags, and response headers are all descriptor/filter driven"
+  },
+  {
+    "surface": "Session and authentication weaknesses",
+    "when": { "languages": ["java", "xml"] },
+    "rules": [
+      "java-session-never-expires",
+      "xml-session-timeout-excessive",
+      "java-config-default-credential",
+      "custom-account-status-grants-auth",
+      "auth-exception-message-concat",
+      "spring-any-request-permit-all",
+      "spring-sensitive-url-permit-all"
+    ],
+    "rationale": "Server-side auth detected -> session lifetime, lockout, and credential defaults are the recurring weak points"
+  },
+  {
+    "surface": "SSH/SFTP credential exposure",
+    "when": { "dependencies": [{ "name": "jsch" }] },
+    "rules": ["jsch-stricthostkeychecking-disabled", "secret-password-assign"],
+    "rationale": "JSch detected -> disabled host-key checking allows MITM on SFTP, and credentials are commonly inlined"
+  },
+  {
+    "surface": "Weak cryptography",
+    "when": { "languages": ["java"] },
+    "rules": [
+      "java-weak-pbe-md5-des",
+      "java-weak-messagedigest",
+      "java-weak-cipher-des",
+      "java-weak-cipher-ecb",
+      "java-deskeyspec",
+      "java-static-iv-from-key",
+      "java-secretkeyspec-string-literal",
+      "java-insecure-random-security",
+      "java-sslcontext-ssl",
+      "java-trust-all-hostname",
+      "java-empty-trust-check"
+    ],
+    "rationale": "javax.crypto in use -> broken algorithms, static IVs, and hardcoded keys are the standard failure modes"
+  },
+  {
+    "surface": "JWT signing-key handling",
+    "when": { "frameworks": ["JWT (jsonwebtoken)", "Spring Security", "JBoss RESTEasy (JAX-RS)"] },
+    "rules": ["jwt-none-alg", "java-secretkeyspec-string-literal", "secret-api-key-token", "token-in-localstorage"],
+    "rationale": "JWT detected -> a hardcoded or weak signing key lets an attacker mint arbitrary tokens"
+  },
+  {
+    "surface": "Frontend XSS and token storage",
+    "when": { "frameworks": ["Angular", "React", "Vue.js", "Next.js"] },
+    "rules": [
+      "angular-bypass-security-trust",
+      "innerhtml-assign",
+      "js-outerhtml-assign",
+      "js-document-write",
+      "dangerously-set-html",
+      "token-in-localstorage"
+    ],
+    "rationale": "SPA framework detected -> sanitiser bypasses are the XSS surface, and tokens in web storage are readable by any injected script"
+  },
+  {
+    "surface": "Outdated and end-of-life components",
+    "when": {},
+    "rules": ["maven-known-eol-artifact", "maven-snapshot-version", "npm-deprecated-package"],
+    "rationale": "Any dependency manifest -> audit declared versions against upstream end-of-life"
+  },
+  {
+    "surface": "Hardcoded secrets",
+    "when": {},
+    "rules": [
+      "secret-private-key-pem",
+      "secret-aws-key",
+      "secret-api-key-token",
+      "secret-bearer-token",
+      "secret-password-assign",
+      "secret-config-unquoted"
+    ],
+    "rationale": "Applies to every stack -> credentials committed to source stay valid until rotated, regardless of language"
+  },
+  {
+    "surface": "Logging and error disclosure",
+    "when": {},
+    "rules": [
+      "java-printstacktrace",
+      "java-stdout-debug-print",
+      "java-empty-catch-block",
+      "java-sensitive-data-in-logs",
+      "logger-exception-tostring",
+      "java-log-injection-unsanitized-input",
+      "debug-enabled"
+    ],
+    "rationale": "Applies to every stack -> swallowed exceptions blind monitoring, stack traces reaching the client aid reconnaissance, and unsanitized exception/request data reaching a logger call enables log injection/forging"
+  }
+]

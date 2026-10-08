@@ -1,0 +1,196 @@
+[
+  {
+    "id": "csrf-disabled",
+    "title": "CSRF protection disabled",
+    "description": "CSRF protection explicitly disabled. Matches Spring Security (.csrf...disable, including the Spring Security 6 lambda DSL wrapped across multiple lines by a formatter, e.g. .csrf(csrf ->\\n csrf.disable())), Django (@csrf_exempt), and Flask-WTF (WTF_CSRF_ENABLED = False).",
+    "cwe": "CWE-352",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "java",
+      "python"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)(\\.csrf\\s*\\([\\s\\S]{0,200}?disable|@csrf_exempt|WTF_CSRF_ENABLED\\s*=\\s*False|CSRF_ENABLED\\s*=\\s*False)"
+  },
+  {
+    "id": "sensitive-endpoint-permit-all",
+    "title": "Sensitive endpoint exposed without authentication",
+    "description": "Admin/debug endpoint (H2 console, actuator, swagger, admin path) is allowed without authentication \u2014 checks for a permissive keyword near the sensitive path, independent of framework.",
+    "cwe": "CWE-284",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [],
+    "frameworks": [],
+    "pattern": "(?i)(h2-console|actuator|swagger|admin|/debug)[^\\n]{0,60}(permitAll|allowany|allow_any|public\\(\\)|noauth|skipauth|authenticate\\s*[:=]\\s*false)"
+  },
+  {
+    "id": "eval-call",
+    "title": "Dynamic code evaluation",
+    "description": "Use of eval()",
+    "cwe": "CWE-94",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "python",
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "\\beval\\s*\\("
+  },
+  {
+    "id": "entire-file-block-commented",
+    "title": "Entire source file is a single block comment (dead/disabled class)",
+    "description": "The whole file content is wrapped in /* ... */ with no live code \u2014 a class was disabled or never finished. Worth checking whether the capability it implies (e.g. token revocation/lookup) is provided elsewhere, or is simply missing.",
+    "cwe": "CWE-561",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A04:2021-Insecure-Design",
+    "languages": [
+      "java",
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "^\\s*/\\*[\\s\\S]*\\*/\\s*$"
+  },
+  {
+    "id": "clickjacking-frameoptions-disabled",
+    "title": "Clickjacking protection disabled",
+    "description": "X-Frame-Options / frame-embedding protection explicitly disabled or loosened, allowing the app to be embedded in an iframe. Matches Java/Spring frameOptions, Django X_FRAME_OPTIONS, and Express/helmet frameguard config.",
+    "cwe": "CWE-1021",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java",
+      "python",
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)(frameOptions\\s*\\(.*disable|X[-_]FRAME[-_]OPTIONS\\s*[=:]\\s*['\"]?(ALLOW-FROM|ALLOWALL|ALLOW)\\b|frameguard\\s*:\\s*false)"
+  },
+  {
+    "id": "cors-wildcard-with-credentials",
+    "title": "CORS wildcard origin",
+    "description": "CORS configuration allows any origin (wildcard pattern) \u2014 dangerous when combined with allowCredentials/supports_credentials, since it lets any site make authenticated cross-origin requests. Matches Java/Spring, Express (cors pkg), Flask-CORS, and Django settings.",
+    "cwe": "CWE-942",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java",
+      "typescript",
+      "javascript",
+      "python"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)(addAllowedOriginPattern\\s*\\([^)]*['\"]\\*['\"]|setAllowedOrigins\\s*\\([^)]*['\"]\\*['\"]|(allow(ed)?[-_]?)?origins?\\s*[:=]\\s*['\"]\\*['\"]|CORS_ORIGIN_ALLOW_ALL\\s*=\\s*True|CORS_ALLOW_ALL_ORIGINS\\s*=\\s*True|access-control-allow-origin['\"]?\\s*[:,]\\s*['\"]\\*['\"])"
+  },
+  {
+    "id": "npm-deprecated-package",
+    "title": "Deprecated or end-of-life npm package declared",
+    "description": "package.json declares a package that is deprecated or past end-of-life upstream (AngularJS, request, node-uuid, tslint, istanbul), so it receives no security fixes. Confirm the declared version and move to the maintained replacement. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-1104",
+    "severity": "MEDIUM",
+    "category": "dependency",
+    "owasp": "A06:2021-Vulnerable-and-Outdated-Components",
+    "languages": [],
+    "frameworks": [],
+    "pattern": "\"(?:angularjs|angular-route|angular-sanitize|request|node-uuid|tslint|istanbul)\"\\s*:\\s*\""
+  },
+  {
+    "id": "jwt-none-alg",
+    "title": "JWT algorithm none",
+    "description": "JWT signed with alg none",
+    "cwe": "CWE-347",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [],
+    "frameworks": [],
+    "pattern": "(?i)['\"]alg['\"]\\s*:\\s*['\"]none['\"]"
+  },
+  {
+    "id": "secret-api-key-token",
+    "title": "Possible hardcoded API key or token",
+    "description": "api_key / secret_key / access_token assigned to a long literal",
+    "cwe": "CWE-798",
+    "severity": "HIGH",
+    "category": "secrets",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [],
+    "frameworks": [],
+    "pattern": "(?i)(api[_-]?key|secret[_-]?key|access[_-]?token)\\s*=\\s*[\"'][A-Za-z0-9_\\-]{16,}[\"']"
+  },
+  {
+    "id": "secret-aws-key",
+    "title": "Possible AWS access key",
+    "description": "Hardcoded AWS access key pattern",
+    "cwe": "CWE-798",
+    "severity": "HIGH",
+    "category": "secrets",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [],
+    "frameworks": [],
+    "pattern": "AKIA[0-9A-Z]{16}"
+  },
+  {
+    "id": "secret-bearer-token",
+    "title": "Hardcoded Bearer authorization token",
+    "description": "Authorization: Bearer <token> literal",
+    "cwe": "CWE-798",
+    "severity": "HIGH",
+    "category": "secrets",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [],
+    "frameworks": [],
+    "pattern": "(?i)Authorization:\\s*Bearer\\s+[A-Za-z0-9\\-._~+/]+"
+  },
+  {
+    "id": "secret-password-assign",
+    "title": "Possible hardcoded password",
+    "description": "password/pwd/passwd assigned to a quoted literal",
+    "cwe": "CWE-798",
+    "severity": "HIGH",
+    "category": "secrets",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [],
+    "frameworks": [],
+    "pattern": "(?i)(?<!url_)(?<!path_)(?<!route_)(password|pwd|passwd)\\s*=\\s*[\"'][^\"']{3,}[\"']"
+  },
+  {
+    "id": "secret-private-key-pem",
+    "title": "Hardcoded PEM private key",
+    "description": "BEGIN PRIVATE KEY block embedded in source",
+    "cwe": "CWE-798",
+    "severity": "CRITICAL",
+    "category": "secrets",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [],
+    "frameworks": [],
+    "pattern": "-----BEGIN (RSA |EC |DSA )?PRIVATE KEY-----"
+  },
+  {
+    "id": "java-sensitive-data-in-logs",
+    "title": "Sensitive data in logs",
+    "description": "logger info/debug/error/warn call includes password/ssn/credit/secret/token",
+    "cwe": "CWE-532",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A09:2021-Security-Logging-and-Monitoring-Failures",
+    "languages": [
+      "java",
+      "typescript",
+      "javascript",
+      "python"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)log(ger)?\\.(info|debug|error|warn)\\s*\\([^)]*\\b(password|ssn|credit|secret|token|cvv)\\b"
+  }
+]

@@ -1,0 +1,882 @@
+[
+  {
+    "id": "java-open-redirect",
+    "title": "Open redirect from request parameter",
+    "description": "sendRedirect / Location header fed from getParameter (CWE-601).",
+    "cwe": "CWE-601",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)(sendRedirect\\s*\\(\\s*[^)]*getParameter\\s*\\(|setHeader\\s*\\(\\s*[\"']Location[\"']\\s*,\\s*[^)]*getParameter\\s*\\()"
+  },
+  {
+    "id": "java-path-file-constructor",
+    "title": "Java file path from variable",
+    "description": "new File / FileInputStream / Paths.get with a non-literal argument (CWE-22 path traversal heuristic).",
+    "cwe": "CWE-22",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)(new\\s+File(InputStream|OutputStream|Reader|Writer)?\\s*\\(\\s*[a-zA-Z_][\\w.]*\\s*\\)|Paths\\.get\\s*\\(\\s*[a-zA-Z_][\\w.]*\\s*\\))",
+    "group_by_rule": true
+  },
+  {
+    "id": "jaxrs-path-sensitive",
+    "title": "JAX-RS sensitive @Path",
+    "description": "@Path for admin/api/internal/manage/console \u2014 confirm @RolesAllowed AUTHORIZATION.",
+    "cwe": "CWE-862",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "JBoss RESTEasy (JAX-RS)",
+      "JAX-RS",
+      "JAX-RS (Jakarta)"
+    ],
+    "pattern": "(?i)@Path\\s*\\(\\s*[\"'][^\"']*/?(admin|api|internal|manage|console|rest|services)(/|['\"])"
+  },
+  {
+    "id": "jaxrs-permit-all",
+    "title": "JAX-RS @PermitAll (public/UNAUTHORIZED)",
+    "description": "@PermitAll on RESTEasy/JAX-RS resource \u2014 endpoint is explicitly unauthenticated.",
+    "cwe": "CWE-862",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "JBoss RESTEasy (JAX-RS)",
+      "JAX-RS",
+      "JAX-RS (Jakarta)"
+    ],
+    "pattern": "@PermitAll\\b"
+  },
+  {
+    "id": "spring-any-request-permit-all",
+    "title": "Spring Security anyRequest//** permitAll",
+    "description": "UNAUTHORIZED: Spring allows all URLs without authentication (anyRequest or /** permitAll).",
+    "cwe": "CWE-862",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Spring Security"
+    ],
+    "pattern": "(?i)(anyRequest\\s*\\(\\s*\\)\\s*\\.\\s*permitAll|requestMatchers\\s*\\(\\s*[\"']\\/\\*\\*[\"']|antMatchers\\s*\\(\\s*[\"']\\/\\*\\*[\"'])[^;]{0,40}permitAll"
+  },
+  {
+    "id": "spring-sensitive-url-permit-all",
+    "title": "Spring sensitive URL permitAll",
+    "description": "UNAUTHORIZED sensitive path (admin/api/actuator/console/internal) marked permitAll \u2014 should be AUTHORIZED.",
+    "cwe": "CWE-862",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Spring Security"
+    ],
+    "pattern": "(?i)(requestMatchers|antMatchers|mvcMatchers)\\s*\\(\\s*[\"']\\/(admin|api|actuator|console|manage|internal|rest|services|h2-console|swagger)[^\"']*[\"'][^;]{0,60}permitAll"
+  },
+  {
+    "id": "java-deskeyspec",
+    "title": "DESKeySpec weak key material",
+    "description": "new DESKeySpec \u2014 DES is cryptographically weak",
+    "cwe": "CWE-327",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "new\\s+DESKeySpec"
+  },
+  {
+    "id": "java-empty-trust-check",
+    "title": "Empty TrustManager checkServerTrusted",
+    "description": "checkServerTrusted(...) { } \u2014 empty trust check disables cert validation",
+    "cwe": "CWE-295",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "checkServerTrusted\\s*\\([^)]*\\)\\s*\\{\\s*\\}"
+  },
+  {
+    "id": "java-insecure-random-security",
+    "title": "Insecure Random in security context",
+    "description": "java.util.Random used near token/session/password/otp/nonce variables",
+    "cwe": "CWE-330",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)((token|session|password|otp|nonce)\\w*[^\\n]{0,80}new\\s+(java\\.util\\.)?Random\\s*\\(|new\\s+(java\\.util\\.)?Random\\s*\\([^\\n]{0,80}(token|session|password|otp|nonce))"
+  },
+  {
+    "id": "java-secretkeyspec-string-literal",
+    "title": "Symmetric key built from a hardcoded string literal",
+    "description": "SecretKeySpec constructed from a literal string means the encryption/JWT-signing key ships in the source and in every built artifact. Rotate it and load from environment or a secrets manager. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-798",
+    "severity": "HIGH",
+    "category": "secrets",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "new\\s+SecretKeySpec\\s*\\(\\s*\"[^\"]{4,}\"\\s*\\.\\s*getBytes\\s*\\("
+  },
+  {
+    "id": "java-sslcontext-ssl",
+    "title": "SSLContext with obsolete SSL protocol",
+    "description": "SSLContext.getInstance(\"SSL\") \u2014 protocol too old; use TLSv1.2+",
+    "cwe": "CWE-326",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "SSLContext\\.getInstance\\s*\\(\\s*\"SSL\"\\s*\\)"
+  },
+  {
+    "id": "java-static-iv-from-key",
+    "title": "Cipher IV derived from the key material",
+    "description": "The CBC/GCM initialisation vector is built from the key (or password/secret) bytes, so it is static across every encryption. A fixed IV defeats CBC entirely and is catastrophic for GCM \u2014 derive the IV from SecureRandom per message and store it alongside the ciphertext. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-329",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "new\\s+IvParameterSpec\\s*\\(\\s*\\w*(?:[Kk]ey|[Ss]ecret|[Pp]assword|[Pp]ass)\\w*\\s*\\.\\s*getBytes\\s*\\("
+  },
+  {
+    "id": "java-trust-all-hostname",
+    "title": "HostnameVerifier always returns true",
+    "description": "HostnameVerifier verify method returns true unconditionally (CWE-295).",
+    "cwe": "CWE-295",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)(HostnameVerifier.{0,80}return\\s+true|verify\\s*\\([^)]*\\)\\s*\\{[^}]{0,40}return\\s+true)"
+  },
+  {
+    "id": "java-weak-cipher-des",
+    "title": "Weak cipher DES/AES-ECB",
+    "description": "Cipher.getInstance uses DES or AES/ECB (CWE-327).",
+    "cwe": "CWE-327",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "Cipher\\.getInstance\\s*\\(\\s*\"(DES|AES/ECB)"
+  },
+  {
+    "id": "java-weak-cipher-ecb",
+    "title": "Cipher ECB mode",
+    "description": "Cipher algorithm string includes /ECB/ (CWE-327).",
+    "cwe": "CWE-327",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)Cipher\\.getInstance\\s*\\(\\s*[\"'][^\"']*/ECB/"
+  },
+  {
+    "id": "java-weak-messagedigest",
+    "title": "Weak MessageDigest algorithm (MD5/SHA-1)",
+    "description": "MessageDigest.getInstance(\"MD5\"|\"SHA-1\"|\"SHA1\")",
+    "cwe": "CWE-328",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "MessageDigest\\.getInstance\\s*\\(\\s*\"(MD5|SHA-1|SHA1)\"\\s*\\)"
+  },
+  {
+    "id": "java-weak-pbe-md5-des",
+    "title": "Broken password-based encryption (PBEWithMD5AndDES)",
+    "description": "PBE scheme combining MD5 with single/triple DES. Both primitives are broken and the KDF iteration count is far below modern guidance \u2014 use PBKDF2WithHmacSHA256 or Argon2 with AES-256. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-327",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "PBEWith(?:MD5|SHA1)And(?:Triple)?DES(?:ede)?"
+  },
+  {
+    "id": "jsch-stricthostkeychecking-disabled",
+    "title": "JSch StrictHostKeyChecking disabled",
+    "description": "JSch/SSH session configured with StrictHostKeyChecking=no \u2014 accepts any host key, enabling MITM on SFTP/SSH connections. Generalized from a legacy-audit pattern (regex_data/NPG-SECURITY_SCAN_PATTERNS.md).",
+    "cwe": "CWE-295",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)StrictHostKeyChecking[\"']?\\s*[,:=]\\s*[\"']?no[\"']?"
+  },
+  {
+    "id": "drools-rule-external-load",
+    "title": "Drools rule resource loaded from a variable path",
+    "description": "addResource/newFileSystemResource called with a non-literal path \u2014 if that path is externally influenced, arbitrary rule logic could be injected into the KIE session. Generalized from a legacy-audit pattern (regex_data/NPG-SECURITY_SCAN_PATTERNS.md).",
+    "cwe": "CWE-94",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Drools rules engine",
+      "KIE / Drools rules engine"
+    ],
+    "pattern": "(?i)(newFileSystemResource|\\.addResource)\\s*\\(\\s*[a-zA-Z_]\\w*\\s*[,)]"
+  },
+  {
+    "id": "java-class-forname",
+    "title": "Reflection Class.forName with variable",
+    "description": "Class.forName(variable) \u2014 reflection with potentially user-controlled input",
+    "cwe": "CWE-470",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "Class\\.forName\\s*\\(\\s*[a-zA-Z_]\\w*\\s*\\)"
+  },
+  {
+    "id": "java-header-from-request",
+    "title": "HTTP header set from request input",
+    "description": "Response header written from getParameter/getHeader (CWE-113 HTTP response splitting / reflected CORS).",
+    "cwe": "CWE-113",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)(setHeader|addHeader)\\s*\\(\\s*[^,]+,\\s*[^)]*get(Parameter|Header)\\s*\\("
+  },
+  {
+    "id": "java-ldap-injection",
+    "title": "LDAP filter with string concatenation",
+    "description": "InitialDirContext / DirContext search with concatenated filter argument",
+    "cwe": "CWE-90",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)(InitialDirContext|DirContext|search\\s*\\([^)]*\\+)[^\\n]{0,120}\\+|InitialDirContext[^\\n]*\\+"
+  },
+  {
+    "id": "java-processbuilder-concat",
+    "title": "ProcessBuilder with string concatenation",
+    "description": "new ProcessBuilder(...) with concatenated argument \u2014 command injection risk",
+    "cwe": "CWE-78",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "new\\s+ProcessBuilder\\s*\\([^)]*\\+"
+  },
+  {
+    "id": "java-runtime-exec",
+    "title": "Java Runtime.exec command execution",
+    "description": "Runtime.getRuntime().exec(...) \u2014 OS command injection risk (CWE-78)",
+    "cwe": "CWE-78",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "Runtime\\.getRuntime\\(\\)\\.exec\\s*\\("
+  },
+  {
+    "id": "java-scriptengine-eval",
+    "title": "ScriptEngine.eval dynamic script",
+    "description": "ScriptEngine.eval usage (CWE-94 code injection).",
+    "cwe": "CWE-94",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)(ScriptEngine|getEngineByName\\s*\\([^)]*\\)\\s*;)[^;\\n]{0,120}\\.eval\\s*\\("
+  },
+  {
+    "id": "java-xss-jsp-servlet",
+    "title": "XSS via JSP/servlet output of request data",
+    "description": "response.getWriter().write or out.println writing request-sourced data",
+    "cwe": "CWE-79",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Java Servlet/JSP"
+    ],
+    "pattern": "(response\\.getWriter\\(\\)\\.write|out\\.println)\\s*\\([^)]*request"
+  },
+  {
+    "id": "jsp-raw-request-expression",
+    "title": "Request data written straight into a JSP",
+    "description": "A scriptlet expression or Struts <bean:write> emits request/parameter data into the page. Unless the tag escapes by default (Struts 1 <bean:write> only does with filter=\"true\"), this is reflected XSS. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-79",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Java Servlet/JSP"
+    ],
+    "pattern": "<%=\\s*(?:request\\b|param\\b)|<bean:write\\b"
+  },
+  {
+    "id": "java-upload-extension-only-check",
+    "title": "Uploaded file type decided from the filename string",
+    "description": "The upload's type is derived by slicing the client-supplied filename, with no MIME or magic-byte check. An attacker renames a payload to .jpg and the server accepts it \u2014 validate content, not the name, and never reuse the original name on disk. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-434",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A04:2021-Insecure-Design",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)\\bgetFileName\\s*\\(\\s*\\)\\s*\\.\\s*(?:substring|replaceAll|split|lastIndexOf|endsWith)\\s*\\("
+  },
+  {
+    "id": "jaxrs-exception-in-response-entity",
+    "title": "Exception object set into a REST response DTO",
+    "description": ".setException(ex) on a status/response DTO \u2014 if that DTO is later serialized into the HTTP response body, the client receives the full stack trace and internal class names. Generalized from legacy-audit patterns (regex_data/NPG-*.md, regex_data/NPC-*.md).",
+    "cwe": "CWE-209",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A04:2021-Insecure-Design",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "JBoss RESTEasy (JAX-RS)",
+      "JAX-RS",
+      "JAX-RS (Jakarta)"
+    ],
+    "pattern": "\\.setException\\s*\\(\\s*\\w+\\s*\\)"
+  },
+  {
+    "id": "spring-exception-message-in-response-body",
+    "title": "Exception message returned directly in HTTP response body",
+    "description": "ex.getMessage()/FieldError.getDefaultMessage() passed into a ResponseEntity .body()/.ok() call, or set on a response DTO's message/error field via a builder or setter (e.g. ErrorResponse.builder().message(ex.getMessage())...build(), later returned via new ResponseEntity<>(dto, status) — not just the .body()/.ok() fluent form) — directly, or first assigned to a local variable and returned a few lines later (the most common GlobalExceptionHandler/@ControllerAdvice idiom). If unescaped, this reflects exception text (which can carry a rejected field value from a validation failure, or internal class/stack detail) straight into the HTTP response, enabling reflected XSS or information disclosure.",
+    "cwe": "CWE-79",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Spring Boot",
+      "Spring Framework"
+    ],
+    "pattern": "(?i)(\\.(body|ok)\\s*\\([^)]*\\.getMessage\\(\\)|\\.getMessage\\(\\)[\\s\\S]{0,200}?\\.(body|ok)\\s*\\(|\\.(message|setMessage|error|setError)\\s*\\([^)]*\\.get(Message|DefaultMessage)\\(\\))"
+  },
+  {
+    "id": "java-log-injection-unsanitized-input",
+    "title": "Unsanitized exception/request data logged directly",
+    "description": "logger call embeds ex.getMessage(), request.getRequestURI()/getRequestURL()/getQueryString(), or a raw request.getParameter()/getHeader() value directly — anywhere in the call's argument list, not just the first argument (parameterized logging with multiple args, e.g. log.warn(\"... {} {}\", request.getRequestURI(), ex.getMessage()), is the common real-world shape). If the underlying value carries attacker-controlled newlines or control characters, this enables log injection/forging (CWE-117): forged log entries, fake timestamps, or corrupted log parsing. Distinct from java-sensitive-data-in-logs (keyword-based secret detection) and logger-exception-tostring (info-disclosure from discarding the stack trace, not injection).",
+    "cwe": "CWE-117",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A09:2021-Security-Logging-and-Monitoring-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)log(ger)?\\.(info|warn|error|debug)\\s*\\([\\s\\S]{0,200}?(\\.getMessage\\(\\)|request\\.get(Parameter|Header|RequestURI|RequestURL|QueryString)\\s*\\()"
+  },
+  {
+    "id": "logger-exception-tostring",
+    "title": "Exception logged via toString() instead of the exception object",
+    "description": "logger.error/warn/info/debug(..., ex.toString()) \u2014 coercing the exception to a string discards the stack trace and can expose internal class names/paths in log output without the diagnostic value a real exception argument would give. Generalized from a legacy-audit pattern (regex_data/NPG-SECURITY_SCAN_PATTERNS.md).",
+    "cwe": "CWE-209",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A04:2021-Insecure-Design",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)log(ger)?\\.(error|warn|info|debug)\\s*\\([^)]*\\b\\w+\\.toString\\s*\\(\\s*\\)",
+    "group_by_rule": true
+  },
+  {
+    "id": "struts-formfile-upload-handling",
+    "title": "Struts 1.x FormFile upload handling",
+    "description": "Struts 1.x FormFile has no built-in content-type or size validation, and the framework is end-of-life. Review the surrounding code for magic-byte validation, a size cap, and a server-generated storage name. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-434",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A04:2021-Insecure-Design",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "requires_dependency": [
+      {
+        "name": "struts"
+      },
+      {
+        "name": "struts-core"
+      },
+      {
+        "name": "struts-taglib"
+      }
+    ],
+    "pattern": "\\bFormFile\\b"
+  },
+  {
+    "id": "cors-allow-origin-reflect",
+    "title": "CORS Allow-Origin from request or wildcard",
+    "description": "Access-Control-Allow-Origin set to * or from request input (CWE-942 permissive CORS).",
+    "cwe": "CWE-942",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)(Access-Control-Allow-Origin['\"]?\\s*[,)]\\s*['\"]\\*|Access-Control-Allow-Origin['\"]?\\s*[,)]\\s*[^)\\n]*get(Header|Parameter)|addAllowedOrigin(Pattern)?\\s*\\(\\s*['\"]\\*['\"])"
+  },
+  {
+    "id": "corsfilter-reflect-origin",
+    "title": "CORSFilter reflects Origin header",
+    "description": "Access-Control-Allow-Origin set from getHeader(\"Origin\") \u2014 UNAUTHORIZED unless allowlist-checked first.",
+    "cwe": "CWE-942",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)(Access-Control-Allow-Origin[\"']?\\s*[,)]\\s*[^)\\n]*getHeader\\s*\\(\\s*[\"']Origin[\"']|getHeader\\s*\\(\\s*[\"']Origin[\"']\\s*\\)[^;\\n]{0,120}Access-Control-Allow-Origin)"
+  },
+  {
+    "id": "java-insecure-cookie",
+    "title": "Cookie created \u2014 verify setSecure/setHttpOnly",
+    "description": "new Cookie(...) \u2014 confirm nearby .setSecure(true) / .setHttpOnly(true)",
+    "cwe": "CWE-614",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "new\\s+Cookie\\s*\\("
+  },
+  {
+    "id": "java-xxe-documentbuilder",
+    "title": "DocumentBuilderFactory without XXE hardening nearby",
+    "description": "DocumentBuilderFactory.newInstance \u2014 confirm FEATURE_SECURE_PROCESSING / external-entity disable is set nearby",
+    "cwe": "CWE-611",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "DocumentBuilderFactory\\.newInstance\\s*\\(\\s*\\)"
+  },
+  {
+    "id": "java-xxe-sax-factory",
+    "title": "SAXParserFactory without XXE hardening nearby",
+    "description": "SAXParserFactory.newInstance usage (CWE-611). Confirm disallow-doctype-decl / external entity features are set.",
+    "cwe": "CWE-611",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "SAXParserFactory\\.newInstance\\s*\\("
+  },
+  {
+    "id": "java-xxe-xmlinputfactory",
+    "title": "XMLInputFactory without XXE hardening nearby",
+    "description": "XMLInputFactory.newInstance \u2014 confirm external entity / DTD support is disabled",
+    "cwe": "CWE-611",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "XMLInputFactory\\.newInstance\\s*\\("
+  },
+  {
+    "id": "jaxrs-container-response-cors",
+    "title": "JAX-RS ContainerResponseFilter CORS headers",
+    "description": "ContainerResponseFilter adding Access-Control-Allow-Origin \u2014 confirm allowlist AUTHORIZATION.",
+    "cwe": "CWE-942",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "JBoss RESTEasy (JAX-RS)",
+      "JAX-RS",
+      "JAX-RS (Jakarta)"
+    ],
+    "pattern": "(?i)(ContainerResponseFilter|getHeaders\\s*\\(\\s*\\)\\s*\\.\\s*(add|putSingle)\\s*\\(\\s*[\"']Access-Control-Allow-Origin)"
+  },
+  {
+    "id": "resteasy-corsfilter-allowed-origins-star",
+    "title": "RESTEasy CorsFilter allowedOrigins *",
+    "description": "JBoss RESTEasy CorsFilter getAllowedOrigins().add(\"*\") \u2014 all origins AUTHORIZED for CORS.",
+    "cwe": "CWE-942",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "JBoss RESTEasy (JAX-RS)"
+    ],
+    "pattern": "(?i)(getAllowedOrigins\\s*\\(\\s*\\)\\s*\\.\\s*add\\s*\\(\\s*[\"']\\*[\"']|allowedOrigins\\s*\\.\\s*add\\s*\\(\\s*[\"']\\*[\"']|new\\s+CorsFilter\\s*\\()"
+  },
+  {
+    "id": "servlet-cors-allow-origin-star",
+    "title": "Servlet Access-Control-Allow-Origin *",
+    "description": "setHeader/addHeader Access-Control-Allow-Origin to * in servlet/filter code.",
+    "cwe": "CWE-942",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)(setHeader|addHeader)\\s*\\(\\s*[\"']Access-Control-Allow-Origin[\"']\\s*,\\s*[\"']\\*[\"']"
+  },
+  {
+    "id": "servlet-corsfilter-class",
+    "title": "Servlet CORSFilter class (javax/jakarta)",
+    "description": "Hand-written Servlet Filter named CORSFilter \u2014 review Allow-Origin allowlist (JBoss/Tomcat, not Spring-only).",
+    "cwe": "CWE-942",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)(class\\s+\\w*CORSFilter\\w*|implements\\s+(javax\\.|jakarta\\.)?servlet\\.Filter)"
+  },
+  {
+    "id": "auth-exception-message-concat",
+    "title": "Auth exception message built from concatenated user input",
+    "description": "UsernameNotFoundException/BadCredentialsException message is built by concatenating the submitted identifier. If this message reaches an HTTP response or is distinguishable from a wrong-password error, it enables username/email enumeration.",
+    "cwe": "CWE-203",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Spring Security"
+    ],
+    "pattern": "new\\s+(UsernameNotFoundException|BadCredentialsException)\\s*\\([^)]*\\+"
+  },
+  {
+    "id": "custom-account-status-grants-auth",
+    "title": "isEnabled() grants login to a non-active/pending status",
+    "description": "UserDetails.isEnabled() (or similar account-status check) returns true for a status containing PENDING, alongside the active status \u2014 unverified/onboarding accounts can authenticate before activation completes.",
+    "cwe": "CWE-287",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Spring Security"
+    ],
+    "pattern": "isEnabled\\s*\\(\\s*\\)\\s*\\{[\\s\\S]{0,300}?PENDING"
+  },
+  {
+    "id": "java-config-default-credential",
+    "title": "Config lookup falls back to a hardcoded credential",
+    "description": "A credential/secret is read from config with a literal default, so the application still starts \u2014 with a known password \u2014 when the setting is missing. Require the value explicitly and fail closed. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-1188",
+    "severity": "HIGH",
+    "category": "secrets",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)\\bget(?:String|Property)\\s*\\(\\s*\"[^\"]*(?:password|passwd|pwd|secret|token|apikey|api_key)[^\"]*\"\\s*,\\s*\"[^\"]+\"\\s*\\)"
+  },
+  {
+    "id": "java-session-never-expires",
+    "title": "Session expiry disabled or set extremely high",
+    "description": "setMaxInactiveInterval(-1) disables session expiry entirely; a five-digit value is over 2.7 hours. Long-lived sessions extend the window for hijacking. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-613",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "setMaxInactiveInterval\\s*\\(\\s*(?:-\\s*1|\\d{5,})\\s*\\)"
+  },
+  {
+    "id": "castor-unmarshaller-untrusted",
+    "title": "Castor XML deserialization",
+    "description": "org.exolab.castor.xml (Castor) in use \u2014 its Unmarshaller performs type-confusion-prone XML deserialization and the library is long EOL. Generalized from a legacy-audit pattern (regex_data/NPG-PAK-SECURITY_SCAN_PATTERNS.md).",
+    "cwe": "CWE-502",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A08:2021-Software-and-Data-Integrity-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "org\\.exolab\\.castor\\.xml"
+  },
+  {
+    "id": "java-jackson-default-typing",
+    "title": "Jackson polymorphic default typing enabled",
+    "description": "Default typing makes Jackson instantiate classes named in the JSON itself, turning any deserialized untrusted document into a gadget-chain entry point (the Jackson equivalent of the commons-collections chain). Use explicit @JsonTypeInfo with a closed allow-list. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-502",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A08:2021-Software-and-Data-Integrity-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?:enableDefaultTyping|activateDefaultTyping)\\s*\\(|DefaultTyping\\s*\\.\\s*(?:NON_FINAL|OBJECT_AND_NON_CONCRETE|EVERYTHING)"
+  },
+  {
+    "id": "java-objectinputstream",
+    "title": "Java insecure deserialization (ObjectInputStream)",
+    "description": "new ObjectInputStream(...) \u2014 flag especially when .readObject() follows",
+    "cwe": "CWE-502",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A08:2021-Software-and-Data-Integrity-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "new\\s+ObjectInputStream\\s*\\("
+  },
+  {
+    "id": "java-xmldecoder",
+    "title": "Java insecure deserialization (XMLDecoder)",
+    "description": "new XMLDecoder(...) \u2014 insecure deserialization sink",
+    "cwe": "CWE-502",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A08:2021-Software-and-Data-Integrity-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "new\\s+XMLDecoder\\s*\\("
+  },
+  {
+    "id": "serializable-missing-svuid",
+    "title": "Serializable class without serialVersionUID",
+    "description": "A class implements Serializable with no serialVersionUID declared nearby \u2014 worth a look if a vulnerable deserialization gadget-chain library (e.g. an old commons-collections) is also on the classpath. Generalized from legacy-audit patterns (regex_data/NPG-*.md).",
+    "cwe": "CWE-502",
+    "severity": "INFO",
+    "category": "code",
+    "owasp": "A08:2021-Software-and-Data-Integrity-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "group_by_rule": true,
+    "pattern": "class\\s+\\w+[^{]{0,120}implements\\s+(java\\.io\\.)?Serializable\\b(?!(?:(?!serialVersionUID)[\\s\\S]){0,250}serialVersionUID)"
+  },
+  {
+    "id": "java-empty-catch-block",
+    "title": "Exception silently swallowed",
+    "description": "An empty catch block discards the exception, so the failure is invisible to logging and monitoring \u2014 a security-relevant error (failed authz, crypto error) leaves no trace. Log it or rethrow. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-390",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A09:2021-Security-Logging-and-Monitoring-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "catch\\s*\\([^)]*\\)\\s*\\{[\\s\\S]{0,4}\\}"
+  },
+  {
+    "id": "java-printstacktrace",
+    "title": "Stack trace printed instead of logged",
+    "description": "printStackTrace() writes to stdout/stderr, bypassing the logging pipeline \u2014 the trace is missing from centralised logs and may surface to the client on some containers. Use logger.error(\"msg\", e). Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-209",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A09:2021-Security-Logging-and-Monitoring-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\.printStackTrace\\s*\\("
+  },
+  {
+    "id": "java-sql-error-detail-exposed",
+    "title": "Database error codes read for propagation",
+    "description": "SQLState/vendor error codes describe the schema and database product. Returning them to a caller hands an attacker a fingerprinting and SQLi-tuning oracle \u2014 log them server-side and return a generic error. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-209",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A09:2021-Security-Logging-and-Monitoring-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\.\\s*get(?:SQLState|ErrorCode|VendorCode)\\s*\\(\\s*\\)"
+  },
+  {
+    "id": "java-stdout-debug-print",
+    "title": "Debug output written to stdout/stderr",
+    "description": "System.out/System.err writes bypass the logging pipeline and its redaction, so whatever is interpolated (often request or user data) lands unfiltered in container output. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-532",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A09:2021-Security-Logging-and-Monitoring-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\bSystem\\s*\\.\\s*(?:out|err)\\s*\\.\\s*print(?:ln|f)?\\s*\\("
+  },
+  {
+    "id": "java-hardcoded-local-endpoint",
+    "title": "Hardcoded localhost or file: endpoint",
+    "description": "A loopback or file: URL baked into source. Beyond being environment-specific, these leak deployment paths and often mark a spot where an endpoint should have been configurable and allow-listed. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
+    "cwe": "CWE-1188",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A10:2021-Server-Side-Request-Forgery",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)\"(?:https?://(?:localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0)|file:/)"
+  },
+  {
+    "id": "java-ssrf-url-request",
+    "title": "URL/URI from request parameter",
+    "description": "new URL/URI built from getParameter (CWE-918 SSRF heuristic).",
+    "cwe": "CWE-918",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A10:2021-Server-Side-Request-Forgery",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)new\\s+(URL|URI)\\s*\\(\\s*[^)]*getParameter\\s*\\("
+  },
+  {
+    "id": "ssrf-endpoint-from-config-property",
+    "title": "SSRF via config-sourced SOAP/HTTP endpoint",
+    "description": "A URL/URI or SOAP endpoint reference (setTargetEPR/EndpointReference) is built from a config property value \u2014 verify the property's source can't be externally influenced, or that the resolved host is checked against an allowlist. Generalized from legacy-audit patterns (regex_data/NPG-*.md).",
+    "cwe": "CWE-918",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A10:2021-Server-Side-Request-Forgery",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Apache CXF SOAP/REST",
+      "Apache Axis2 SOAP",
+      "Apache Axis SOAP"
+    ],
+    "pattern": "(getProperty\\s*\\([^)]*\\)[\\s\\S]{0,120}new\\s+(URL|URI)\\s*\\(|setTargetEPR\\s*\\(|new\\s+EndpointReference\\s*\\()"
+  }
+]
