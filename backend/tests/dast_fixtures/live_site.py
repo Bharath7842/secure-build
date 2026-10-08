@@ -30,6 +30,7 @@ PAGES = {
     ),
     "/home": """<html><head><title>Dashboard</title></head><body>
 <a href='/account'>Account</a>
+<a href='/delete-all'>Delete everything</a>
 <button id='en' type='button'>EN</button>
 <button id='fr' type='button'>FR</button>
 <button id='logout' type='button'>Logout</button>
