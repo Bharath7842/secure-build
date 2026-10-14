@@ -167,9 +167,6 @@ def _run_light_migrations(engine) -> None:
         if "llm_api_key" not in existing_cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE projects ADD COLUMN llm_api_key VARCHAR(500)"))
-        if "learned_rules" not in existing_cols:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE projects ADD COLUMN learned_rules JSON"))
         if "llm_data_policy" not in existing_cols:
             with engine.begin() as conn:
                 conn.execute(

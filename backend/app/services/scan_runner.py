@@ -19,7 +19,7 @@ from app.config import settings
 from app.models import DAST_SETTINGS_SNAPSHOT_KEY, UNVERIFIED_VERDICT, Finding, Scan
 from app.dast.domain.identities import identity_from_public
 from app.dast.domain.redaction import redact_json, redact_text
-from app.services import agent_bridge, engine_adapter, git_token, git_workspace, learned_rules, scan_log
+from app.services import agent_bridge, engine_adapter, git_token, git_workspace, scan_log
 from app.services.credential_holder import InMemoryCredentialHolder
 from app.services.dast_findings import DastFindingsWriter
 from app.services.finding_rows import build_evidence_row, build_finding_row
@@ -230,19 +230,6 @@ def _resolve_scan_root(workspace: Path, repo_path: str | None) -> Path:
     return candidate if candidate.is_dir() else root
 
 
-def _remember_learned_rules(scan: Scan, discovery: dict | None) -> None:
-    """Merge this scan's promoted hunt patterns into the project so later
-    scans run them with the catalog (caller commits)."""
-    project = scan.project
-    if project is None:
-        return
-    merged = learned_rules.merge_promoted_rules(project.learned_rules, discovery, scan_id=scan.id)
-    if merged is not None:
-        project.learned_rules = merged
-        new = len(learned_rules.promoted_rules(discovery))
-        scan_log.log(scan.id, f"Agentic hunt: {new} learned rule(s) promoted for future scans of this project.")
-
-
 def reconcile_unverified_findings(scan_id: str, *, capped: bool = False) -> None:
     """Best-effort, idempotent, one-shot LLM confirmation sweep for any
     `Finding` rows still stuck at `verdict="unverified"` once a scan reaches
@@ -290,10 +277,9 @@ def reconcile_unverified_findings(scan_id: str, *, capped: bool = False) -> None
             .filter(
                 Finding.scan_id == scan_id,
                 Finding.verdict == UNVERIFIED_VERDICT,
-                # Agentic-hunt findings are unverified *by design* when their
-                # evidence fell short of graph-resolved proof (or the
-                # independent verifier disagreed); a context-free re-judge here
-                # would defeat that cap.
+                # Legacy agentic-hunt rows (the hunt was removed) are
+                # unverified *by design* — an evidence cap, not a pending
+                # judgement — so a manual re-run on an old scan leaves them be.
                 or_(Finding.kind.is_(None), Finding.kind != "hunt"),
             )
             .all()
@@ -1188,7 +1174,6 @@ def execute_scan(scan_id: str) -> None:
                 if scan is None:
                     return
 
-                _remember_learned_rules(scan, discovery)
                 scan.status = "success"
                 scan.progress = 100
                 scan.message = None

@@ -54,9 +54,6 @@ class Project(Base):
     # "allow_external" or "local_only" — the latter refuses any provider that
     # would send repository code off localhost/private networks.
     llm_data_policy: Mapped[str] = mapped_column(String(20), default="allow_external")
-    # Agentic-hunt patterns promoted on earlier scans (app/services/learned_rules.py),
-    # run with the regex catalog on later scans unless "learned-hunt-rules" is off.
-    learned_rules: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # After spend hits the soft cutoff, continue on this provider/model;
     # "none" stops LLM work and leaves the rest unverified. Ignored when
     # llm_provider is ollama.

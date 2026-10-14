@@ -138,13 +138,10 @@ Those checks belong to the CRITICAL/HIGH LLM pass, which reads the whole file
 and can reason about what is missing — and auth, security, filter, and runtime
 config files already land in those tiers under every stack profile.
 
-## Ripgrep and the agentic hunt
+## Ripgrep prefilter
 
-The catalog is matched with Python `re` (`regex_scan.py`). The agentic hunt
-(`pipeline/hunt/`) instead searches with ripgrep, whose default engine is
-Rust's `regex` crate: no look-around and no backreferences, `\b`/`\d`/`\w`
-are Unicode-aware, and `(?P<name>...)` is accepted but `\Z` is not. Hunt
-seed patterns are therefore written separately (`pipeline/hunt/catalog.py`,
-derived from `joern/taint_spec.json`), not copied from these rules — a rule
-pattern here never has to be rg-compatible.
+The catalog is matched with Python `re` (`regex_scan.py`). The optional
+ripgrep prefilter (`pipeline/rg_prefilter.py`) only searches for a fixed-string
+literal extracted from each pattern's Python parse, and Python still decides
+every hit. A rule pattern here therefore never has to be rg-compatible.
 

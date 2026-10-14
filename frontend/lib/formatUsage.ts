@@ -31,6 +31,7 @@ export function stepLabel(step: string): string {
     derive_runtime_rules: "Runtime-derived regex",
     scan_triage_files: "Regex triage",
     group_confirm_triage_findings: "Grouped triage confirmation",
+    // The agentic hunt was removed; kept for usage summaries on older scans.
     hunt_plan: "Agentic hunt — planning",
     hunt_investigate: "Agentic hunt — investigation",
     hunt_verify: "Agentic hunt — independent verification",

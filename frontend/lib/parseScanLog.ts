@@ -26,6 +26,7 @@ const LLM_RESPONSE_BOUNDARY_RES = [
   /^LLM chunk \d+\/\d+ for /,
   /^Scanning deep-risk file \d+\/\d+: /,
   /^Regex-scanning triage-risk file \d+\/\d+: /,
+  // Removed agentic hunt, kept for historical scan logs.
   /^Hunting hypothesis \d+\/\d+: /,
   // Pre-rename per-file progress lines, kept for historical scan logs.
   /^Scanning CRITICAL file \d+\/\d+: /,

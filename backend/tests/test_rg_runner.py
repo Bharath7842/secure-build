@@ -13,8 +13,8 @@ _ENGINE_DIR = Path(__file__).resolve().parents[1] / "sast_engine"
 if str(_ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(_ENGINE_DIR))
 
-from pipeline.hunt import rg_runner  # noqa: E402
-from pipeline.hunt.rg_runner import PatternRejected, RgRunner, check_glob, check_pattern_policy  # noqa: E402
+from pipeline import rg_runner  # noqa: E402
+from pipeline.rg_runner import PatternRejected, RgRunner, check_glob, check_pattern_policy  # noqa: E402
 
 RG = rg_runner.find_rg_binary()
 needs_rg = pytest.mark.skipif(RG is None, reason="ripgrep (rg) is not installed")

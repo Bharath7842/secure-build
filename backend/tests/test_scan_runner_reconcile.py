@@ -245,6 +245,29 @@ def test_happy_path_confirms_findings_and_marks_attempted(SessionLocal, monkeypa
         db.close()
 
 
+def test_legacy_hunt_findings_are_not_reconfirmed(SessionLocal, monkeypatch, tmp_path):
+    """Old scans can hold kind=hunt rows from the removed agentic hunt; their
+    unverified verdict is an evidence cap, so a re-run leaves them alone."""
+    _disable_mock_engine(monkeypatch)
+    _seed_scan(SessionLocal)
+    _add_finding(SessionLocal)
+    _add_finding(SessionLocal, kind="hunt", rule_id="hunt-cwe-89", line=20)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(git_workspace, "ensure_workspace", lambda *a, **k: workspace)
+    monkeypatch.setattr(agent_bridge, "_load_agent_module", lambda: _make_fake_agent())
+
+    scan_runner.reconcile_unverified_findings("s1")
+
+    db = SessionLocal()
+    try:
+        verdicts = {f.kind: f.verdict for f in db.query(Finding).filter(Finding.scan_id == "s1")}
+        assert verdicts == {"regex": "true_positive", "hunt": "unverified"}
+    finally:
+        db.close()
+
+
 def test_capped_true_passes_triage_confirm_group_cap(SessionLocal, monkeypatch, tmp_path):
     _disable_mock_engine(monkeypatch)
     _seed_scan(SessionLocal)

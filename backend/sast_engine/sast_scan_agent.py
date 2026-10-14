@@ -51,7 +51,7 @@ import uuid
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -303,7 +303,6 @@ STEP_LABELS = {
     10: "Generating report",
     11: "Building Joern code property graph",
     12: "Running Joern queries",
-    13: "Hunting vulnerabilities (agentic)",
 }
 
 DEFAULT_RECURSION_LIMIT = 500
@@ -434,29 +433,11 @@ class SastState(TypedDict, total=False):
     joern_work_dir: str
     joern: Dict[str, Any]                # node_build_joern_cpg output (holds the session)
     joern_scan_results: Dict[str, Any]   # node_joern_scan output
-    # Agentic hunt (pipeline/hunt/). "agentic" turns it on (limitations id
-    # "agentic-security-hunt", CLI --hunt); anything else is a logged no-op,
-    # as is a host without ripgrep or a scan without LLM use. hunt_profile
-    # "benchmark" includes test/generated paths. hunt_max_* and
-    # hunt_budget_usd bound the hunt; None uses the engine defaults.
-    hunt_mode: str
-    hunt_profile: str
-    hunt_max_hypotheses: int
-    hunt_max_steps: int
-    hunt_workers: int
-    hunt_budget_usd: Optional[float]
-    hunt_test_paths: str
-    hunt_generated_paths: str
-    hunt_scan_results: Dict[str, Any]    # node_hunt_security output
     # ripgrep literal prefilter for the triage catalog pass (default False:
     # measured slower than the plain Python pass on a ~1k-file repo, roughly
     # break-even extrapolated to 30k; limitations id
     # "ripgrep-catalog-prefilter", CLI --catalog-prefilter).
     catalog_prefilter: bool
-    # Agentic-hunt patterns promoted on earlier scans of this project (rule
-    # dicts, app/services/learned_rules.py); run with the catalog via
-    # _scan_context. Limitations id "learned-hunt-rules".
-    learned_rules: List[Dict[str, Any]]
     # Runtime regex derived from this scan's analysis (call-graph wrappers +
     # optional LLM pass). Default on; CLI --no-derived-regex / limitations id
     # "runtime-derived-regex". Merged onto the static catalog in _scan_context.
@@ -1466,8 +1447,6 @@ def _scan_context(state: SastState) -> tuple:
     rules_path = Path(state.get("regex_rules_path") or (_ENGINE_DIR / "rules"))
     static_rules = regex_scan.load_rules(rules_path)
     derived_rules = list(state.get("derived_rules") or [])
-    learned = _learned_rules(state, {r.id for r in static_rules} | {r.id for r in derived_rules})
-    derived_rules = derived_rules + learned
     rules = static_rules + derived_rules
     llm_analysis = state.get("llm_analysis") or {}
     dependency_summary = llm_analysis.get("dependency_summary") or {}
@@ -1481,24 +1460,6 @@ def _scan_context(state: SastState) -> tuple:
     usage = state.get("usage") or init_usage(state.get("llm_provider"), state.get("llm_model"))
     return (root, rules, active_frameworks, dependency_index,
             priority_rule_ids, stack_context, usage)
-
-
-def _learned_rules(state: SastState, taken_ids: Set[str]) -> List[regex_scan.RegexRule]:
-    """state["learned_rules"] compiled to catalog rules. A pattern that no
-    longer compiles, or an id already in use, is skipped — never fatal."""
-    out: List[regex_scan.RegexRule] = []
-    for raw in state.get("learned_rules") or []:
-        if not isinstance(raw, dict) or not raw.get("id") or not raw.get("pattern"):
-            continue
-        if raw["id"] in taken_ids:
-            continue
-        try:
-            rule = regex_scan.RegexRule({**raw, "derived": True})
-        except (re.error, KeyError, TypeError):
-            continue
-        taken_ids.add(rule.id)
-        out.append(rule)
-    return out
 
 
 def _tree_sitter_graph_enabled(state: SastState) -> bool:
@@ -2300,110 +2261,6 @@ def node_joern_scan(state: SastState) -> dict:
 
 
 # ===========================================================================
-# STEP 13 — node_hunt_security
-#   Agentic hunt (pipeline/hunt/): an LLM investigator plans vulnerability
-#   hypotheses from a deterministic repo dossier, searches with ripgrep, reads
-#   only the code it needs, follows data across methods via the call graph,
-#   and publishes kind=hunt findings only with evidence it was actually shown.
-#   Seeds from the non-CRITICAL tier (triage_scan_paths) but may trace into,
-#   and publish in, any file of the inventory; findings matching one another
-#   tier already wrote are counted as corroboration, not re-published.
-# ===========================================================================
-
-HUNT_MODE_AGENTIC = "agentic"
-
-
-def node_hunt_security(state: SastState) -> dict:
-    tracer: AgentTrace = state["_tracer"]
-    if (state.get("hunt_mode") or "off") != HUNT_MODE_AGENTIC:
-        # Say so: a silent skip reads as "the hunt ran and found nothing".
-        tracer.log(13, "hunt_security", "Agentic hunt is off for this scan",
-                    narrative="Agentic hunt is off for this project — enable \"Agentic Security Hunt\" "
-                              "under the project's Settings → Scan limitations (CLI: --hunt).")
-        return {}
-    if not state.get("use_llm", True):
-        tracer.log(13, "hunt_security", "Agentic hunt skipped: LLM use is off for this scan",
-                    narrative="Skipping the agentic hunt — this scan runs without an LLM.")
-        return {}
-
-    from pipeline.hunt import engine as hunt_engine
-    from pipeline.hunt.rg_runner import find_rg_binary
-
-    if find_rg_binary() is None:
-        tracer.log(13, "hunt_security", "Agentic hunt skipped: ripgrep (rg) is not installed",
-                    narrative="Skipping the agentic hunt — ripgrep is not installed on this host "
-                              "(pip install ripgrep, or set RG_PATH).")
-        return {"hunt_scan_results": {"skipped_reason": "ripgrep (rg) is not installed", "files": []}}
-
-    (root, _rules, active_frameworks, _dep_index, _priority, stack_context, usage) = _scan_context(state)
-    scan = state.get("scan") or {}
-    inventory = [f["path"] for f in scan.get("files") or [] if f.get("path")]
-    module_plan = state.get("module_plan") or {}
-    seed_entries = llm_file_scan.files_for_paths(module_plan, module_plan.get("triage_scan_paths") or [])
-    rules_path = Path(state.get("regex_rules_path") or (_ENGINE_DIR / "rules"))
-    surfaces = _resolve_active_surfaces(state, rules_path)
-    triage_files = list((state.get("triage_scan_results") or {}).get("files") or [])
-    catalog_hits = Counter(
-        f.get("rule_id") for fr in triage_files for f in fr.get("findings") or [] if f.get("rule_id")
-    )
-    packed = state.get("call_graph") or {}
-    graph = packed.get("_graph") if packed.get("_graph_lang") == "java" else None
-    existing = []
-    for key in ("scan_results", "triage_scan_results", "flow_scan_results", "joern_scan_results"):
-        existing.extend((state.get(key) or {}).get("files") or [])
-
-    options = hunt_engine.HuntOptions(
-        max_hypotheses=state.get("hunt_max_hypotheses") or hunt_engine.DEFAULT_MAX_HYPOTHESES,
-        max_steps=state.get("hunt_max_steps") or hunt_engine.DEFAULT_MAX_STEPS,
-        workers=state.get("hunt_workers") or hunt_engine.DEFAULT_WORKERS,
-        max_usd=state.get("hunt_budget_usd"),
-        test_paths=state.get("hunt_test_paths") or hunt_engine.POLICY_DEPRIORITIZE,
-        generated_paths=state.get("hunt_generated_paths") or hunt_engine.POLICY_EXCLUDE,
-        profile=state.get("hunt_profile") or hunt_engine.PROFILE_DEFAULT,
-        suppress_no_cwe=state.get("suppress_no_cwe_findings", True),
-        suppress_http_findings=state.get("suppress_http_findings", False),
-        suppress_low_confidence_false_positives=state.get("suppress_low_confidence_false_positives", False),
-    )
-    tracer.log(13, "hunt_security",
-                f"Agentic hunt over {len(inventory)} file(s), seeded from {len(seed_entries)} non-CRITICAL file(s)",
-                narrative=f"Starting the agentic hunt: planning vulnerability hypotheses for {len(inventory)} "
-                          f"file(s) and investigating each with ripgrep searches and targeted reads.")
-    results = hunt_engine.run_hunt(
-        root=root,
-        inventory=inventory,
-        seed_entries=seed_entries,
-        stack=stack_context,
-        frameworks=sorted(active_frameworks),
-        surfaces=surfaces,
-        catalog_hits=dict(catalog_hits),
-        flow_candidates=state.get("flow_candidates") or [],
-        graph=graph,
-        java_paths=call_graph.java_paths_from_scan(scan) if graph is None else (),
-        existing_file_results=existing,
-        usage=usage,
-        llm_provider=state.get("llm_provider"),
-        llm_model=state.get("llm_model"),
-        findings_writer=state.get("findings_writer"),
-        options=options,
-        on_event=lambda msg: tracer.say(msg),
-    )
-    status = results.get("hypothesis_status") or {}
-    budget = results.get("budget") or {}
-    tracer.log(13, "hunt_security",
-                f"Agentic hunt: {results.get('published', 0)} published "
-                f"({results['tp_count']} TP, {results['unverified_count']} unverified), "
-                f"{results.get('corroborated', 0)} corroborated, {results.get('hallucinated_dropped', 0)} "
-                f"ungrounded dropped; hypotheses {status}",
-                detail=f"evidence_levels={results.get('evidence_levels')}; rg_calls={budget.get('rg_calls')}; "
-                       f"llm_calls={budget.get('llm_calls')}; spent=${budget.get('spent_usd', 0):.4f}"
-                       + (f"; stopped: {budget.get('exhausted_reason')}" if budget.get("exhausted_reason") else ""),
-                narrative=f"Agentic hunt finished — {results['tp_count']} confirmed and "
-                          f"{results['unverified_count']} needs-review finding(s); "
-                          f"{results.get('corroborated', 0)} matched findings other stages already reported.")
-    return {"hunt_scan_results": results, "usage": usage}
-
-
-# ===========================================================================
 # STEP 9 — node_group_triage_findings
 #   Groups unverified findings (MEDIUM/LOW plus any CRITICAL/HIGH overflow
 #   routed into this tier) by construct and reports the collapse — no LLM
@@ -2520,15 +2377,9 @@ def node_generate_report(state: SastState) -> dict:
     triage_files = list((state.get("triage_scan_results") or {}).get("files") or [])
     flow_files = list((state.get("flow_scan_results") or {}).get("files") or [])
     joern_files = list((state.get("joern_scan_results") or {}).get("files") or [])
-    hunt_results = state.get("hunt_scan_results") or {}
-    hunt_files = list(hunt_results.get("files") or [])
     report = llm_file_scan.build_report_from_file_results(
-        deep_files + triage_files + flow_files + joern_files + hunt_files
+        deep_files + triage_files + flow_files + joern_files
     )
-    # Only when the hunt actually ran — scans without it keep the report
-    # shape they always had.
-    if hunt_results.get("hypotheses") is not None and not hunt_results.get("skipped_reason"):
-        report["hunt"] = {k: v for k, v in hunt_results.items() if k != "files"}
     joern_state = state.get("joern") or {}
     # Only when a CPG build was actually attempted — a host without Joern
     # keeps exactly the report shape it had before Joern support existed.
@@ -2675,7 +2526,6 @@ def build_graph():
     graph.add_node("generate_report", node_generate_report)
     graph.add_node("build_joern_cpg", node_build_joern_cpg)
     graph.add_node("joern_scan", node_joern_scan)
-    graph.add_node("hunt_security", node_hunt_security)
 
     graph.add_edge(START, "scan_directory")
     graph.add_edge("scan_directory", "analyze_tech_stack")
@@ -2689,8 +2539,7 @@ def build_graph():
     graph.add_edge("verify_flow_slices", "scan_deep_files")
     graph.add_edge("scan_deep_files", "scan_triage_files")
     graph.add_edge("scan_triage_files", "joern_scan")
-    graph.add_edge("joern_scan", "hunt_security")
-    graph.add_edge("hunt_security", "group_triage_findings")
+    graph.add_edge("joern_scan", "group_triage_findings")
     graph.add_edge("group_triage_findings", "confirm_triage_groups")
     graph.add_edge("confirm_triage_groups", "generate_report")
     graph.add_edge("generate_report", END)
@@ -2803,17 +2652,6 @@ def main() -> None:
     parser.add_argument("--catalog-prefilter", action="store_true",
                          help="Narrow the triage catalog pass with a ripgrep literal prefilter (same findings; "
                               "pays off only when most rules have a literal and the repo is large)")
-    parser.add_argument("--hunt", action="store_true",
-                         help="Run the agentic hunt after the catalog/Joern passes (needs an LLM and ripgrep)")
-    parser.add_argument("--hunt-profile", choices=["default", "benchmark"], default=None,
-                         help="'benchmark' also hunts in test-like and generated paths (OWASP Benchmark, Juliet)")
-    parser.add_argument("--hunt-max-hypotheses", type=int, default=None)
-    parser.add_argument("--hunt-max-steps", type=int, default=None,
-                         help="Tool-call steps per hypothesis")
-    parser.add_argument("--hunt-workers", type=int, default=None,
-                         help="Hypotheses investigated in parallel")
-    parser.add_argument("--hunt-budget-usd", type=float, default=None,
-                         help="USD ceiling for the hunt (default: 30%% of the cost cutoff left when it starts)")
     args = parser.parse_args()
 
     use_llm = not args.no_llm
@@ -2855,17 +2693,6 @@ def main() -> None:
         "catalog_prefilter": args.catalog_prefilter,
         "_tracer": tracer,
     }
-    if args.hunt:
-        initial_state["hunt_mode"] = HUNT_MODE_AGENTIC
-        for key, value in (
-            ("hunt_profile", args.hunt_profile),
-            ("hunt_max_hypotheses", args.hunt_max_hypotheses),
-            ("hunt_max_steps", args.hunt_max_steps),
-            ("hunt_workers", args.hunt_workers),
-            ("hunt_budget_usd", args.hunt_budget_usd),
-        ):
-            if value is not None:
-                initial_state[key] = value
     if args.joern_timeout is not None:
         initial_state["joern_timeout_sec"] = args.joern_timeout
     if args.flow_verify_cap is not None:

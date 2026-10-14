@@ -184,25 +184,6 @@ class UpdateLimitationsPayload(BaseModel):
     enabled_ids: list[str]
 
 
-@router.delete("/{project_id}/learned-rules/{rule_id}", response_model=ProjectOut)
-def delete_learned_rule(
-    project_id: str,
-    rule_id: str,
-    db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
-):
-    """Stop running one agentic-hunt learned rule on future scans."""
-    project = _get_project_or_404(db, project_id)
-    rules = list(project.learned_rules or [])
-    kept = [r for r in rules if r.get("id") != rule_id]
-    if len(kept) == len(rules):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learned rule not found")
-    project.learned_rules = kept
-    db.commit()
-    db.refresh(project)
-    return project
-
-
 @router.patch("/{project_id}/limitations", response_model=ProjectOut)
 def update_project_limitations(
     project_id: str,

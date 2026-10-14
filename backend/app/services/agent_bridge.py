@@ -7,7 +7,7 @@ never needs boto3 / langgraph installed.
 Pipeline: scan_directory -> analyze_tech_stack -> categorize_files ->
 map_modules_and_risk -> build_joern_cpg -> build_call_graph -> derive_runtime_rules
 -> discover_flows -> verify_flow_slices -> scan_deep_files -> scan_triage_files
--> joern_scan -> hunt_security -> group_triage_findings -> confirm_triage_groups
+-> joern_scan -> group_triage_findings -> confirm_triage_groups
 -> generate_report.
 
 `scan_deep_files` runs the full LLM scan over CRITICAL/HIGH files;
@@ -192,9 +192,6 @@ def run_real_scan(
         else agent.llm_file_scan.TRIAGE_MODE_REGEX_ONLY
     )
     catalog_prefilter = enabled("ripgrep-catalog-prefilter")
-    learned = list(getattr(project, "learned_rules", None) or []) if enabled("learned-hunt-rules") else []
-    # The hunt needs LLM use; without it the node is a logged no-op anyway.
-    hunt_mode = "agentic" if use_llm and enabled("agentic-security-hunt") else "off"
     max_derived = getattr(project, "max_derived_regex_rules", None)
     if max_derived is None:
         max_derived = 50
@@ -227,9 +224,7 @@ def run_real_scan(
         "joern_scan_queries": joern_scan_queries,
         "deep_scan_critical_only": deep_scan_critical_only,
         "triage_mode": triage_mode,
-        "hunt_mode": hunt_mode,
         "catalog_prefilter": catalog_prefilter,
-        "learned_rules": learned,
         "max_derived_regex_rules": max_derived,
         "findings_writer": findings_writer,
         "discovery_writer": discovery_writer,

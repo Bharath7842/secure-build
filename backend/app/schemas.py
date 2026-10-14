@@ -157,13 +157,6 @@ class ProjectOut(ProjectBase):
     git_provider: str | None = None
     git_connected: bool = False
     llm_api_key_set: bool = False
-    # Read-only here; entries are removed via DELETE /projects/{id}/learned-rules/{rule_id}.
-    learned_rules: list[dict[str, Any]] = Field(default_factory=list)
-
-    @field_validator("learned_rules", mode="before")
-    @classmethod
-    def _learned_none_to_list(cls, value):
-        return value or []
 
 
 class ProjectDeleteOut(BaseModel):

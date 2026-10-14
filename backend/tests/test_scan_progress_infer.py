@@ -57,7 +57,6 @@ def test_tier_banners_resolve_whatever_tiers_they_name():
     assert infer_progress_from_lines(["### Scanning CRITICAL files (deep scan)"]) == 85
     assert infer_progress_from_lines(["### Scanning CRITICAL/HIGH files (deep scan)"]) == 85
     assert infer_progress_from_lines(["### Scanning HIGH/MEDIUM/LOW files (triage)"]) == 97
-    assert infer_progress_from_lines(["### Hunting vulnerabilities (agentic)"]) == 97
     assert infer_progress_from_lines(["### Grouping HIGH/MEDIUM/LOW findings"]) == 98
     # Persisted logs from before the banners named the tiers.
     assert infer_progress_from_lines(["### Scanning MEDIUM/LOW files"]) == 97
