@@ -1,0 +1,157 @@
+[
+  {
+    "id": "angular-innerhtml-binding",
+    "title": "[innerHTML] template binding",
+    "description": "Angular sanitizes [innerHTML] bindings, but the bound value is still rendered as HTML; paired with bypassSecurityTrustHtml it is XSS. Prefer text interpolation.",
+    "cwe": "CWE-79",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "html",
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "Angular"
+    ],
+    "pattern": "\\[(?:innerHTML|outerHTML)\\]\\s*=\\s*[\\\"']",
+    "examples": {
+      "match": [
+        {
+          "code": "<div [innerHTML]=\"article.body\"></div>",
+          "path": "article.component.html"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "<div>{{ article.body }}</div>",
+          "path": "article.component.html"
+        }
+      ]
+    }
+  },
+  {
+    "id": "vue-v-html",
+    "title": "v-html directive",
+    "description": "v-html renders its value as raw HTML with no escaping \u2014 XSS if the value is user-controlled. Prefer {{ }} interpolation.",
+    "cwe": "CWE-79",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "html",
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [
+      "Vue.js"
+    ],
+    "pattern": "\\bv-html\\s*=\\s*[\\\"']",
+    "examples": {
+      "match": [
+        {
+          "code": "<div v-html=\"comment.body\"></div>",
+          "path": "Comment.vue"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "<div>{{ comment.body }}</div>",
+          "path": "Comment.vue"
+        }
+      ]
+    }
+  },
+  {
+    "id": "js-target-blank-no-noopener",
+    "title": "target=_blank link without rel=noopener",
+    "description": "A target=\"_blank\" link without rel=\"noopener\" lets the opened page navigate this one (reverse tabnabbing) in older browsers.",
+    "cwe": "CWE-1022",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A04:2021-Insecure-Design",
+    "languages": [
+      "html",
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [],
+    "pattern": "^(?!.*\\brel\\s*=\\s*[\\\"'{][^\\\"'}]*noopener).*?target\\s*=\\s*[\\\"']_blank[\\\"']",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        {
+          "code": "<a href=\"https://example.com\" target=\"_blank\">Docs</a>",
+          "path": "page.html"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "<a href=\"https://example.com\" target=\"_blank\" rel=\"noopener noreferrer\">Docs</a>",
+          "path": "page.html"
+        },
+        {
+          "code": "<a rel=\"noopener\" target=\"_blank\" href=\"x\">Docs</a>",
+          "path": "page.html"
+        }
+      ]
+    }
+  },
+  {
+    "id": "html-inline-event-handler-template",
+    "title": "Template value interpolated inside an inline event handler",
+    "description": "An {{ }} expression inside an on* attribute is interpolated into JavaScript, where HTML escaping doesn't protect it.",
+    "cwe": "CWE-79",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "html",
+      "javascript",
+      "typescript"
+    ],
+    "frameworks": [],
+    "pattern": "\\son\\w+\\s*=\\s*(?:\\\"[^\\\"]*|'[^']*)\\{\\{",
+    "examples": {
+      "match": [
+        {
+          "code": "<button onclick=\"select('{{ item.name }}')\">Pick</button>",
+          "path": "list.html"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "<button (click)=\"select(item)\">Pick</button>",
+          "path": "list.html"
+        }
+      ]
+    }
+  },
+  {
+    "id": "js-npm-insecure-registry",
+    "title": "npm packages fetched over plain http",
+    "description": "A lockfile or .npmrc resolves packages over http://, so a network attacker can swap package contents.",
+    "cwe": "CWE-829",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A08:2021-Software-and-Data-Integrity-Failures",
+    "languages": [],
+    "frameworks": [],
+    "pattern": "\\\"resolved\\\"\\s*:\\s*\\\"http://|^\\s*registry\\s*=\\s*http://",
+    "examples": {
+      "match": [
+        {
+          "code": "\"resolved\": \"http://registry.example.com/lodash/-/lodash-4.17.21.tgz\",",
+          "path": "package-lock.json"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "\"resolved\": \"https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz\",",
+          "path": "package-lock.json"
+        }
+      ]
+    }
+  }
+]

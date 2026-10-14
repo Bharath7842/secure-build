@@ -1,22 +1,28 @@
 [
   {
-    "surface": "SQL injection via JDBC",
+    "surface": "SQL injection (JDBC/JPA/Spring Data)",
     "when": { "languages": ["java"] },
     "rules": [
-      "java-sql-error-detail-exposed"
+      "java-sql-error-detail-exposed",
+      "java-sql-string-concat",
+      "java-jdbc-prepare-concat",
+      "java-jdbc-statement-exec-variable",
+      "jpa-query-concat",
+      "spring-jdbctemplate-concat",
+      "java-sql-orderby-param"
     ],
-    "rationale": "Java + JDBC detected -> unparameterised statements and string-concatenated SQL are the primary injection surface"
+    "rationale": "Java detected -> SQL, JPQL/HQL and JdbcTemplate statements built by concatenation (or executed from a variable) are the primary injection surface; framework-specific rules only fire when JPA/Hibernate/Spring is detected"
   },
   {
     "surface": "Command injection",
     "when": { "languages": ["java"] },
-    "rules": ["java-runtime-exec", "java-processbuilder-concat", "java-scriptengine-eval"],
+    "rules": ["java-runtime-exec", "java-processbuilder-concat", "java-scriptengine-eval", "java-exec-string-concat", "java-processbuilder-shell"],
     "rationale": "Runtime.exec / ProcessBuilder present -> shell metacharacter injection from any interpolated argument"
   },
   {
     "surface": "Request-driven redirection and header injection",
     "when": { "languages": ["java"] },
-    "rules": ["java-open-redirect", "java-header-from-request", "java-ldap-injection"],
+    "rules": ["java-open-redirect", "java-header-from-request", "java-ldap-injection", "java-cookie-from-request-value", "java-unvalidated-content-disposition"],
     "rationale": "Request values reaching redirect targets, response headers, or directory filters -> open redirect, response splitting, LDAP injection"
   },
   {
@@ -100,7 +106,18 @@
       "cors-wildcard-with-credentials",
       "cors-allow-origin-reflect",
       "sensitive-endpoint-permit-all",
-      "csrf-disabled"
+      "csrf-disabled",
+      "jaxrs-exception-message-in-response",
+      "spring-responsestatus-exception-message",
+      "spring-cors-wildcard-credentials",
+      "spring-crossorigin-wildcard",
+      "spring-requestparam-redirect",
+      "java-client-supplied-authz",
+      "spring-mass-assignment-entity",
+      "spring-security-ignoring-all",
+      "spring-actuator-exposed",
+      "spring-h2-console-enabled",
+      "spring-debug-or-trace-enabled"
     ],
     "rationale": "REST framework detected -> serialized exceptions leak stack traces into JSON responses, CORS is configured per-resource, and Spring apps commonly disable CSRF protection wholesale for REST APIs"
   },
@@ -118,7 +135,8 @@
       "xml-transport-guarantee-none",
       "http-trace-webxml",
       "webxml-wildcard-url-pattern",
-      "webxml-sensitive-url-pattern"
+      "webxml-sensitive-url-pattern",
+      "java-cookie-secure-false"
     ],
     "rationale": "Servlet container detected -> transport guarantee, cookie flags, and response headers are all descriptor/filter driven"
   },
@@ -132,7 +150,13 @@
       "custom-account-status-grants-auth",
       "auth-exception-message-concat",
       "spring-any-request-permit-all",
-      "spring-sensitive-url-permit-all"
+      "spring-sensitive-url-permit-all",
+      "java-plaintext-password-equals",
+      "java-password-stored-base64",
+      "java-unsalted-hash-password",
+      "java-insecure-random-security-context",
+      "java-ldap-anonymous-or-simple",
+      "java-bearer-substring-indexof"
     ],
     "rationale": "Server-side auth detected -> session lifetime, lockout, and credential defaults are the recurring weak points"
   },
@@ -156,14 +180,24 @@
       "java-insecure-random-security",
       "java-sslcontext-ssl",
       "java-trust-all-hostname",
-      "java-empty-trust-check"
+      "java-empty-trust-check",
+      "java-key-from-password-no-kdf",
+      "java-aes-cbc-unauthenticated",
+      "java-cipher-default-mode",
+      "java-rsa-no-oaep",
+      "java-weak-key-size",
+      "java-legacy-base64-or-xor-cipher",
+      "java-tls-protocol-weak",
+      "java-trustmanager-trustall-alt",
+      "java-cleartext-protocol-url",
+      "java-plain-socket"
     ],
     "rationale": "javax.crypto in use -> broken algorithms, static IVs, and hardcoded keys are the standard failure modes"
   },
   {
     "surface": "JWT signing-key handling",
     "when": { "frameworks": ["JWT (jsonwebtoken)", "Spring Security", "JBoss RESTEasy (JAX-RS)"] },
-    "rules": ["jwt-none-alg", "java-secretkeyspec-string-literal", "secret-api-key-token", "token-in-localstorage"],
+    "rules": ["jwt-none-alg", "java-secretkeyspec-string-literal", "secret-api-key-token", "token-in-localstorage", "java-jwt-parse-unsigned", "java-jwt-hardcoded-secret"],
     "rationale": "JWT detected -> a hardcoded or weak signing key lets an attacker mint arbitrary tokens"
   },
   {
@@ -175,14 +209,23 @@
       "js-outerhtml-assign",
       "js-document-write",
       "dangerously-set-html",
-      "token-in-localstorage"
+      "token-in-localstorage",
+      "angular-innerhtml-binding",
+      "angular-elementref-nativeelement-html",
+      "angular-renderer-setproperty-innerhtml",
+      "angular-http-interceptor-token-to-any-url",
+      "angular-debug-logger",
+      "react-href-javascript-or-variable",
+      "react-ref-innerhtml",
+      "vue-v-html",
+      "vue-dynamic-component-template"
     ],
     "rationale": "SPA framework detected -> sanitiser bypasses are the XSS surface, and tokens in web storage are readable by any injected script"
   },
   {
     "surface": "Outdated and end-of-life components",
     "when": {},
-    "rules": ["maven-known-eol-artifact", "maven-snapshot-version", "npm-deprecated-package"],
+    "rules": ["maven-known-eol-artifact", "maven-snapshot-version", "npm-deprecated-package", "js-npm-insecure-registry"],
     "rationale": "Any dependency manifest -> audit declared versions against upstream end-of-life"
   },
   {
@@ -194,7 +237,9 @@
       "secret-api-key-token",
       "secret-bearer-token",
       "secret-password-assign",
-      "secret-config-unquoted"
+      "secret-config-unquoted",
+      "java-jdbc-url-inline-credentials",
+      "js-hardcoded-api-key"
     ],
     "rationale": "Applies to every stack -> credentials committed to source stay valid until rotated, regardless of language"
   },
@@ -208,8 +253,84 @@
       "java-sensitive-data-in-logs",
       "logger-exception-tostring",
       "java-log-injection-unsanitized-input",
-      "debug-enabled"
+      "debug-enabled",
+      "java-sql-in-log",
+      "java-exception-object-serialized"
     ],
     "rationale": "Applies to every stack -> swallowed exceptions blind monitoring, stack traces reaching the client aid reconnaissance, and unsanitized exception/request data reaching a logger call enables log injection/forging"
+  },
+  {
+    "surface": "Path traversal from request values",
+    "when": { "languages": ["java"] },
+    "rules": [
+      "java-path-file-constructor",
+      "java-file-from-request-getter",
+      "java-file-path-concat",
+      "spring-requestparam-to-file",
+      "jaxrs-param-to-file"
+    ],
+    "rationale": "Java detected -> request parameters and DTO getters reaching File/Path constructors let '../' escape the intended directory"
+  },
+  {
+    "surface": "Expression, template and lookup injection",
+    "when": { "languages": ["java"] },
+    "rules": [
+      "spring-spel-parse-variable",
+      "java-el-createvalueexpression-variable",
+      "java-xpath-concat",
+      "java-jndi-lookup-variable",
+      "java-reflection-invoke-variable",
+      "java-template-injection"
+    ],
+    "rationale": "Java detected -> SpEL/EL/XPath/JNDI/reflection/template APIs that interpret a string turn any user-controlled part of it into code or query injection"
+  },
+  {
+    "surface": "XML parser hardening (XXE)",
+    "when": { "languages": ["java"] },
+    "rules": [
+      "java-xxe-documentbuilder",
+      "java-xxe-sax-factory",
+      "java-xxe-xmlinputfactory",
+      "java-xxe-transformerfactory",
+      "java-xxe-schemafactory",
+      "java-xxe-xmlreader",
+      "java-xxe-domparser",
+      "java-jaxb-unmarshal-unhardened"
+    ],
+    "rationale": "Any Java XML parsing -> a factory created without disabling DTDs/external entities resolves attacker-supplied entities (file read, SSRF)"
+  },
+  {
+    "surface": "Unsafe deserialization libraries",
+    "when": { "dependencies": [{ "name": "xstream" }, { "name": "snakeyaml" }, { "name": "kryo" }] },
+    "rules": [
+      "java-xstream-fromxml",
+      "java-snakeyaml-unsafe",
+      "java-kryo-registration-off"
+    ],
+    "rationale": "XStream / SnakeYAML / Kryo declared -> each can instantiate arbitrary classes from untrusted input unless restricted to an allow-list"
+  },
+  {
+    "surface": "Frontend DOM XSS and client trust",
+    "when": { "languages": ["javascript", "typescript"] },
+    "rules": [
+      "innerhtml-assign",
+      "js-outerhtml-assign",
+      "js-document-write",
+      "js-insertadjacenthtml",
+      "jquery-html-sink",
+      "js-function-constructor-or-string-timer",
+      "js-location-assign-variable",
+      "js-postmessage-wildcard",
+      "js-message-listener-no-origin",
+      "js-target-blank-no-noopener",
+      "html-inline-event-handler-template",
+      "token-in-localstorage",
+      "js-document-cookie-write",
+      "js-hardcoded-http-endpoint",
+      "js-prototype-pollution-merge",
+      "js-jwt-decode-trust",
+      "js-non-literal-regexp"
+    ],
+    "rationale": "Any JavaScript/TypeScript (framework or plain jQuery) -> DOM sinks, navigation, cross-window messaging and client-side token handling decide whether user data becomes script"
   }
 ]

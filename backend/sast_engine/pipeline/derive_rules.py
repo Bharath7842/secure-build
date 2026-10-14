@@ -68,6 +68,17 @@ _SINK_KIND_SEVERITY = {
     "files": "MEDIUM",
 }
 
+# Wrapper candidates are ranked by sink severity before the cap, so on a large
+# repo the slots go to SQL/command wrappers (selectCount(String), runScript)
+# rather than whichever kind the graph happened to list first. Unknown kinds
+# rank last.
+_SINK_KIND_RANK = {
+    "sql": 0, "jpa": 0, "jdbc_template": 0,
+    "command": 1,
+    "deser": 2,
+    "files": 3,
+}
+
 _NESTED_QUANTIFIERS = re.compile(r"[*+][+*]")
 _LEADING_FLAGS = re.compile(r"^\(\?[aiLmsux]+\)")
 
@@ -118,7 +129,9 @@ def _sanitize_id_fragment(name: str) -> str:
 
 
 def wrappers_from_graph(graph: Optional[GraphAdapter]) -> List[Dict[str, Any]]:
-    """Pass A: one Kind-A rule dict per distinct (wrapper name, sink kind)."""
+    """Pass A: one Kind-A rule dict per distinct (wrapper name, sink kind),
+    most severe sink kind first, then by name (a stable order keeps the
+    derived set — and the prompts that embed it — identical across reruns)."""
     if graph is None:
         return []
     language = getattr(graph, "language", "java") or "java"
@@ -161,7 +174,9 @@ def wrappers_from_graph(graph: Optional[GraphAdapter]) -> List[Dict[str, Any]]:
             "group_by_rule": True,
             "derived": True,
             "wrapper_name": name,
+            "sink_kind": kind,
         })
+    raw.sort(key=lambda r: (_SINK_KIND_RANK.get(r["sink_kind"], len(_SINK_KIND_RANK)), r["wrapper_name"].lower()))
     return raw
 
 

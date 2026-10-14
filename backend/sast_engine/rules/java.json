@@ -540,7 +540,16 @@
       "java"
     ],
     "frameworks": [],
-    "pattern": "new\\s+Cookie\\s*\\("
+    "pattern": "new\\s+Cookie\\s*\\((?!(?=[\\s\\S]{0,300}?\\.setSecure\\(\\s*true\\s*\\))(?=[\\s\\S]{0,300}?\\.setHttpOnly\\(\\s*true\\s*\\)))",
+    "examples": {
+      "match": [
+        "Cookie c = new Cookie(\"sid\", id);\nresponse.addCookie(c);",
+        "Cookie c = new Cookie(\"sid\", id);\nc.setSecure(true);\nresponse.addCookie(c);"
+      ],
+      "no_match": [
+        "Cookie c = new Cookie(\"sid\", id);\nc.setSecure(true);\nc.setHttpOnly(true);"
+      ]
+    }
   },
   {
     "id": "java-xxe-documentbuilder",
@@ -554,7 +563,15 @@
       "java"
     ],
     "frameworks": [],
-    "pattern": "DocumentBuilderFactory\\.newInstance\\s*\\(\\s*\\)"
+    "pattern": "DocumentBuilderFactory\\.newInstance\\s*\\(\\s*\\)(?![\\s\\S]{0,400}?(?:disallow-doctype-decl|external-general-entities|FEATURE_SECURE_PROCESSING|ACCESS_EXTERNAL_DTD|ACCESS_EXTERNAL_SCHEMA|SUPPORT_DTD|IS_SUPPORTING_EXTERNAL_ENTITIES|setExpandEntityReferences\\(\\s*false))",
+    "examples": {
+      "match": [
+        "DocumentBuilderFactory.newInstance();\nparse(input);"
+      ],
+      "no_match": [
+        "DocumentBuilderFactory.newInstance();\nf.setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true);"
+      ]
+    }
   },
   {
     "id": "java-xxe-sax-factory",
@@ -568,7 +585,15 @@
       "java"
     ],
     "frameworks": [],
-    "pattern": "SAXParserFactory\\.newInstance\\s*\\("
+    "pattern": "SAXParserFactory\\.newInstance\\s*\\((?![\\s\\S]{0,400}?(?:disallow-doctype-decl|external-general-entities|FEATURE_SECURE_PROCESSING|ACCESS_EXTERNAL_DTD|ACCESS_EXTERNAL_SCHEMA|SUPPORT_DTD|IS_SUPPORTING_EXTERNAL_ENTITIES|setExpandEntityReferences\\(\\s*false))",
+    "examples": {
+      "match": [
+        "SAXParserFactory.newInstance(;\nparse(input);"
+      ],
+      "no_match": [
+        "SAXParserFactory.newInstance(;\nf.setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true);"
+      ]
+    }
   },
   {
     "id": "java-xxe-xmlinputfactory",
@@ -582,7 +607,15 @@
       "java"
     ],
     "frameworks": [],
-    "pattern": "XMLInputFactory\\.newInstance\\s*\\("
+    "pattern": "XMLInputFactory\\.(?:newInstance|newFactory)\\s*\\((?![\\s\\S]{0,400}?(?:disallow-doctype-decl|external-general-entities|FEATURE_SECURE_PROCESSING|ACCESS_EXTERNAL_DTD|ACCESS_EXTERNAL_SCHEMA|SUPPORT_DTD|IS_SUPPORTING_EXTERNAL_ENTITIES|setExpandEntityReferences\\(\\s*false))",
+    "examples": {
+      "match": [
+        "XMLInputFactory.newInstance(;\nparse(input);"
+      ],
+      "no_match": [
+        "XMLInputFactory.newInstance();\nf.setProperty(XMLInputFactory.SUPPORT_DTD, false);"
+      ]
+    }
   },
   {
     "id": "jaxrs-container-response-cors",
@@ -878,5 +911,1563 @@
       "Apache Axis SOAP"
     ],
     "pattern": "(getProperty\\s*\\([^)]*\\)[\\s\\S]{0,120}new\\s+(URL|URI)\\s*\\(|setTargetEPR\\s*\\(|new\\s+EndpointReference\\s*\\()"
+  },
+  {
+    "id": "java-sql-string-concat",
+    "title": "SQL built by string concatenation",
+    "description": "A SQL statement or WHERE/SET clause literal is concatenated (or appended) with a variable. Unless the value is strictly validated, this is SQL injection; use a PreparedStatement with ? placeholders or named parameters.",
+    "cwe": "CWE-89",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "^(?!\\s*(?:[\\w$]+\\.)*(?:log|LOG|Log|logger|LOGGER|Logger|_log|_logger|logging)\\s*\\.|\\s*System\\.(?:out|err)\\.|\\s*throw\\b).*?(?:\\\"(?=[^\\\"]*?(?i:select\\s[^\\\"]*?\\bfrom\\b|insert\\s+into\\b|update\\s+[\\w.\\[\\]\\\"]+\\s+set\\b|delete\\s+from\\b|merge\\s+into\\b))[^\\\"]*\\\"\\s*\\+\\s*(?![A-Z][A-Z0-9_]*\\b)[a-zA-Z_$][\\w$]*|\\\"(?:[^\\\"]*(?i:\\bwhere)|\\s*(?i:and|or|set|on|having|,))\\s+[\\w.]+\\s*(?i:=|<>|!=|<=|>=|<|>|like|in)\\s*\\(?\\s*'?\\\"\\s*(?:\\+\\s*|\\)\\s*\\.append\\(\\s*)(?![A-Z][A-Z0-9_]*\\b)[a-zA-Z_$][\\w$]*|\\\"[^\\\"]*(?i:\\bwhere)\\s*\\\"\\s*\\+\\s*(?![A-Z][A-Z0-9_]*\\b)[a-zA-Z_$][\\w$]*|String\\.format\\(\\s*\\\"(?=[^\\\"]*?(?i:select\\s[^\\\"]*?\\bfrom\\b|insert\\s+into\\b|update\\s+[\\w.\\[\\]\\\"]+\\s+set\\b|delete\\s+from\\b|merge\\s+into\\b))[^\\\"]*%s)",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "String sql = \"SELECT * FROM users WHERE id = \" + userId;",
+        "sql += \" AND status = '\" + status + \"'\";",
+        "sb.append(\" where name = '\").append(name).append(\"'\");",
+        "String q = \"delete from orders where id=\" + id;",
+        "String q = \"SELECT a FROM t\" + \" WHERE \" + condition;",
+        "String q = String.format(\"SELECT * FROM t WHERE id = %s\", id);",
+        "query = \"UPDATE account SET balance = \" + amount + \" WHERE id = \" + id;"
+      ],
+      "no_match": [
+        "log.debug(\"select from cache failed for \" + key);",
+        "logger.info(\"SELECT * FROM t WHERE id = \" + id);",
+        "String sql = \"SELECT * FROM users WHERE id = ?\";",
+        "String sql = \"SELECT * FROM t WHERE x = \" + TABLE_NAME;",
+        "throw new IllegalStateException(\"Cannot select from \" + name);",
+        "String msg = \"Name and value = \" + value;",
+        "// String sql = \"SELECT * FROM users WHERE id = \" + userId;"
+      ]
+    }
+  },
+  {
+    "id": "java-jdbc-prepare-concat",
+    "title": "prepareStatement/prepareCall argument built by concatenation",
+    "description": "The SQL passed to prepareStatement/prepareCall is concatenated, so the PreparedStatement does not protect it; bind values with ? placeholders instead.",
+    "cwe": "CWE-89",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\.(?:prepareStatement|prepareCall)\\(\\s*(?:\\\"[^\\\"]*\\\"\\s*\\+|[a-zA-Z_$][\\w$]*\\s*\\+)",
+    "examples": {
+      "match": [
+        "ps = conn.prepareStatement(\"SELECT * FROM t WHERE id = \" + id);",
+        "cs = conn.prepareCall(base + \"(?)\");"
+      ],
+      "no_match": [
+        "ps = conn.prepareStatement(sql);",
+        "ps = conn.prepareStatement(\"SELECT * FROM t WHERE id = ?\");"
+      ]
+    }
+  },
+  {
+    "id": "java-jdbc-statement-exec-variable",
+    "title": "Statement executes a SQL string held in a variable",
+    "description": "A java.sql.Statement executes SQL passed in as a variable. Check how the string is built; if any part is user-controlled, switch to a PreparedStatement.",
+    "cwe": "CWE-89",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\.(?:executeQuery|executeUpdate|executeLargeUpdate|addBatch)\\(\\s*[a-zA-Z_$][\\w$]*\\s*\\)|\\.execute\\(\\s*(?:[a-zA-Z_$][\\w$]*(?:Sql|SQL|Query|Stmt|Qry)\\w*|(?:sql|query|stmt|qry|hql)\\w*)\\s*\\)",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "rs = stmt.executeQuery(sql);",
+        "st.executeUpdate(updateSql);",
+        "stmt.execute(deleteQuery);"
+      ],
+      "no_match": [
+        "rs = ps.executeQuery();",
+        "executor.execute(task);",
+        "ps.addBatch();"
+      ]
+    }
+  },
+  {
+    "id": "jpa-query-concat",
+    "title": "JPA/Hibernate query built by concatenation",
+    "description": "A JPQL/HQL/native query string passed to createQuery/createNativeQuery/createSQLQuery is concatenated. Use named or positional parameters (setParameter) instead.",
+    "cwe": "CWE-89",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "JPA",
+      "JPA (Jakarta)",
+      "Hibernate ORM",
+      "Spring Data"
+    ],
+    "pattern": "\\.(?:createQuery|createNativeQuery|createSQLQuery)\\(\\s*(?:\\\"[^\\\"]*\\\"\\s*\\+|[a-zA-Z_$][\\w$]*\\s*\\+)",
+    "examples": {
+      "match": [
+        "em.createQuery(\"from User u where u.name = '\" + name + \"'\");",
+        "session.createSQLQuery(base + filter);"
+      ],
+      "no_match": [
+        "em.createQuery(\"from User u where u.name = :name\");",
+        "em.createQuery(jpql);"
+      ]
+    }
+  },
+  {
+    "id": "spring-jdbctemplate-concat",
+    "title": "JdbcTemplate SQL built by concatenation",
+    "description": "SQL passed to a JdbcTemplate/NamedParameterJdbcTemplate method is concatenated. Pass values as arguments with ? or :name placeholders.",
+    "cwe": "CWE-89",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Spring Boot",
+      "Spring Framework",
+      "Spring Security",
+      "Spring Data"
+    ],
+    "pattern": "\\b\\w*[jJ]dbc\\w*\\.(?:query\\w*|update|execute|batchUpdate)\\(\\s*(?:\\\"[^\\\"]*\\\"\\s*\\+|[a-zA-Z_$][\\w$]*\\s*\\+)",
+    "examples": {
+      "match": [
+        "jdbcTemplate.queryForList(\"SELECT * FROM t WHERE name = '\" + name + \"'\");",
+        "namedParameterJdbcTemplate.update(sql + where, params);"
+      ],
+      "no_match": [
+        "jdbcTemplate.query(SQL, mapper, id);",
+        "jdbcTemplate.queryForObject(\"SELECT 1\", Integer.class);"
+      ]
+    }
+  },
+  {
+    "id": "java-sql-orderby-param",
+    "title": "ORDER BY / GROUP BY column taken from a variable",
+    "description": "A sort or group column is concatenated after ORDER BY / GROUP BY. Placeholders can't bind identifiers, so map the requested column against an allow-list.",
+    "cwe": "CWE-89",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\\"[^\\\"]*(?i:\\b(?:order|group)\\s+by)\\s*\\\"\\s*\\+\\s*(?![A-Z][A-Z0-9_]*\\b)[a-zA-Z_$][\\w$]*",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "sql += \" ORDER BY \" + sortColumn;",
+        "String q = base + \" group by \" + field;"
+      ],
+      "no_match": [
+        "sql += \" ORDER BY created_at DESC\";",
+        "sql += \" ORDER BY \" + DEFAULT_SORT;"
+      ]
+    }
+  },
+  {
+    "id": "java-exec-string-concat",
+    "title": "OS command built by concatenation",
+    "description": "The command passed to exec() is concatenated with a variable. A shell metacharacter or extra argument in that value becomes command injection; pass a fixed String[] argv and validate each value.",
+    "cwe": "CWE-78",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\.exec\\(\\s*(?:\\\"[^\\\"]*\\\"\\s*\\+|[a-zA-Z_$][\\w$]*\\s*\\+)",
+    "examples": {
+      "match": [
+        "Runtime.getRuntime().exec(\"ping \" + host);",
+        "rt.exec(cmd + \" \" + arg);"
+      ],
+      "no_match": [
+        "rt.exec(new String[]{\"ls\", dir});",
+        "rt.exec(command);"
+      ]
+    }
+  },
+  {
+    "id": "java-processbuilder-shell",
+    "title": "ProcessBuilder runs a shell with -c",
+    "description": "ProcessBuilder starts sh/bash/cmd with -c (or /c), so the next argument is parsed by a shell. Any variable in it is command injection; run the program directly with separate arguments.",
+    "cwe": "CWE-78",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "new\\s+ProcessBuilder\\(\\s*\\\"(?:/bin/|/usr/bin/)?(?:sh|bash|zsh|cmd(?:\\.exe)?|powershell(?:\\.exe)?)\\\"\\s*,\\s*\\\"[-/][cC]\\\"",
+    "examples": {
+      "match": [
+        "new ProcessBuilder(\"/bin/sh\", \"-c\", script);",
+        "new ProcessBuilder(\"cmd.exe\", \"/c\", line);"
+      ],
+      "no_match": [
+        "new ProcessBuilder(\"git\", \"status\");"
+      ]
+    }
+  },
+  {
+    "id": "spring-spel-parse-variable",
+    "title": "SpEL expression parsed from a variable",
+    "description": "parseExpression() is called with a non-literal expression. If any part comes from a request, it is expression-language injection (remote code execution); never evaluate user-supplied SpEL.",
+    "cwe": "CWE-917",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Spring Boot",
+      "Spring Framework",
+      "Spring Security",
+      "Spring Data"
+    ],
+    "pattern": "\\.parseExpression\\(\\s*(?![\\\"A-Z][A-Z0-9_]*\\s*[,)])(?!\\\")[a-zA-Z_$][\\w$.]*",
+    "examples": {
+      "match": [
+        "Expression exp = parser.parseExpression(userInput);"
+      ],
+      "no_match": [
+        "parser.parseExpression(\"#root.name\");",
+        "parser.parseExpression(DEFAULT_EXPR);"
+      ]
+    }
+  },
+  {
+    "id": "java-el-createvalueexpression-variable",
+    "title": "EL value expression created from a variable",
+    "description": "createValueExpression() receives a non-literal expression string. User-controlled EL is expression-language injection.",
+    "cwe": "CWE-917",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Java Servlet/JSP"
+    ],
+    "pattern": "createValueExpression\\(\\s*[^,]+,\\s*(?!\\\")[a-z_$][\\w$]*",
+    "examples": {
+      "match": [
+        "factory.createValueExpression(elContext, expr, Object.class);"
+      ],
+      "no_match": [
+        "factory.createValueExpression(elContext, \"#{bean.name}\", String.class);"
+      ]
+    }
+  },
+  {
+    "id": "java-xpath-concat",
+    "title": "XPath expression built by concatenation",
+    "description": "An XPath expression is concatenated with a variable. Quote characters in the value change the query (XPath injection); use XPathVariableResolver or strict validation.",
+    "cwe": "CWE-643",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\.(?:compile|evaluate)\\(\\s*\\\"[^\\\"]*\\\"\\s*\\+\\s*(?![A-Z][A-Z0-9_]*\\b)[a-zA-Z_$][\\w$]*(?=.*(?i:xpath))|(?i:xpath)\\w*\\.(?:compile|evaluate)\\(\\s*\\\"[^\\\"]*\\\"\\s*\\+|\\\"/[^\\\"]*\\[@?[\\w-]+\\s*=\\s*'\\\"\\s*\\+\\s*(?![A-Z][A-Z0-9_]*\\b)[a-zA-Z_$][\\w$]*",
+    "examples": {
+      "match": [
+        "xpath.evaluate(\"//user[@name='\" + name + \"']\", doc);",
+        "String expr = \"//account[@id='\" + accountId + \"']\";"
+      ],
+      "no_match": [
+        "xpath.evaluate(\"//user[@name=$name]\", doc);"
+      ]
+    }
+  },
+  {
+    "id": "java-jndi-lookup-variable",
+    "title": "JNDI lookup of a non-constant name",
+    "description": "A naming context looks up a name held in a variable. If that name can be influenced by a user, it is JNDI injection (remote class loading on older JDKs).",
+    "cwe": "CWE-74",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\b(?:ctx|ic|context|initialContext|initCtx|jndiContext|namingContext|\\w*Context|\\w*Ctx)\\.lookup\\(\\s*(?![A-Z][A-Z0-9_]*\\s*\\))(?:[a-z_$][\\w$.]*(?:\\(\\))?)\\s*\\)",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "Object o = ctx.lookup(jndiName);",
+        "ds = (DataSource) initialContext.lookup(getDataSourceName());"
+      ],
+      "no_match": [
+        "ctx.lookup(\"java:comp/env/jdbc/ds\");",
+        "ctx.lookup(DS_NAME);",
+        "cache.lookup(key);"
+      ]
+    }
+  },
+  {
+    "id": "java-reflection-invoke-variable",
+    "title": "Reflective method lookup by a variable name",
+    "description": "getMethod/getDeclaredMethod resolves a method name held in a variable. If the name is user-controlled, a caller can invoke arbitrary methods; map names against an allow-list.",
+    "cwe": "CWE-470",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\.(?:getMethod|getDeclaredMethod)\\(\\s*(?![A-Z][A-Z0-9_]*\\s*[,)])[a-z_$][\\w$]*\\s*[,)]",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "Method m = clazz.getMethod(methodName, String.class);"
+      ],
+      "no_match": [
+        "clazz.getMethod(\"toString\");",
+        "clazz.getMethod(GETTER, String.class);"
+      ]
+    }
+  },
+  {
+    "id": "java-template-injection",
+    "title": "Template source evaluated from a variable",
+    "description": "A template engine evaluates template *source* held in a variable. User-controlled template text is server-side template injection (often RCE); only render templates from trusted files.",
+    "cwe": "CWE-1336",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\bVelocity\\.evaluate\\(|\\b\\w*[vV]elocity\\w*\\.evaluate\\(|new\\s+Template\\(\\s*[^,]+,\\s*new\\s+StringReader\\(\\s*[a-z_$]",
+    "examples": {
+      "match": [
+        "Velocity.evaluate(context, writer, \"tag\", templateText);",
+        "Template t = new Template(\"x\", new StringReader(source), cfg);"
+      ],
+      "no_match": [
+        "Template t = cfg.getTemplate(\"page.ftl\");"
+      ]
+    }
+  },
+  {
+    "id": "java-file-from-request-getter",
+    "title": "File path taken from a request/DTO getter",
+    "description": "A file is opened from a value returned by a getter such as getFileName()/getPath(). When the object comes from a request this is path traversal; resolve against a base directory and reject '..'.",
+    "cwe": "CWE-22",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "new\\s+(?:File|FileInputStream|FileReader|FileOutputStream|RandomAccessFile)\\(\\s*(?!(?:config|conf|cfg|props|properties|settings|env|environment|System|this)\\.)[\\w$]+\\.get(?!AbsolutePath|CanonicalPath|Parent|Path\\(\\))\\w*(?:File|Path|Name|Dir)\\w*\\(\\)\\s*[,)]|Paths\\.get\\(\\s*(?!(?:config|conf|cfg|props|properties|settings|env|environment|System|this)\\.)[\\w$]+\\.get\\w*(?:File|Path|Name)\\w*\\(\\)",
+    "examples": {
+      "match": [
+        "File f = new File(request.getFileName());",
+        "Path p = Paths.get(dto.getFilePath());"
+      ],
+      "no_match": [
+        "File f = new File(config.getLogDir());",
+        "File f = new File(baseDir, name);",
+        "new File(baseDirectory.getAbsolutePath(), \"x\")"
+      ]
+    }
+  },
+  {
+    "id": "java-file-path-concat",
+    "title": "File path built by concatenating a separator and a variable",
+    "description": "A file path is concatenated from a directory, a separator and a variable. Without normalizing and checking the result stays under the base directory, '../' in the value escapes it.",
+    "cwe": "CWE-22",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "new\\s+(?:File|FileInputStream|FileOutputStream|FileReader|FileWriter)\\(\\s*[\\w$.()]+\\s*\\+\\s*(?:\\\"(?:/|\\\\\\\\)\\\"|File\\.separator)\\s*\\+\\s*[\\w$]",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "new File(baseDir + \"/\" + fileName)",
+        "new FileInputStream(root + File.separator + name)"
+      ],
+      "no_match": [
+        "new File(baseDir, fileName)"
+      ]
+    }
+  },
+  {
+    "id": "spring-requestparam-to-file",
+    "title": "Request parameter used as a file path",
+    "description": "A @RequestParam/@PathVariable String flows into a File/Path constructor in the same method. That is path traversal unless the value is validated against an allow-list or a canonical base directory.",
+    "cwe": "CWE-22",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Spring Boot",
+      "Spring Framework"
+    ],
+    "pattern": "@(?:RequestParam|PathVariable)(?:\\([^)]*\\))?\\s+(?:final\\s+)?String\\s+(\\w+)\\b(?=[\\s\\S]{0,600}?(?:new\\s+(?:File|FileInputStream|FileReader|FileOutputStream)|Paths\\.get|Path\\.of)\\(\\s*[^;]*?\\b\\1\\b)",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "public Resource get(@RequestParam(\"name\") String name) {\n    File f = new File(BASE, name);\n    return load(f);\n}"
+      ],
+      "no_match": [
+        "public Resource get(@RequestParam(\"name\") String name) {\n    return repo.find(name);\n}",
+        "public Result run(@RequestParam String editor2) {\n    String editor = editor2.trim();\n    File f = new File(editor);\n}"
+      ]
+    }
+  },
+  {
+    "id": "jaxrs-param-to-file",
+    "title": "JAX-RS parameter used as a file path",
+    "description": "A @QueryParam/@PathParam/@FormParam String flows into a File/Path constructor in the same method \u2014 path traversal unless validated.",
+    "cwe": "CWE-22",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "JBoss RESTEasy (JAX-RS)",
+      "JAX-RS",
+      "JAX-RS (Jakarta)",
+      "Apache CXF SOAP/REST"
+    ],
+    "pattern": "@(?:QueryParam|PathParam|FormParam)\\([^)]*\\)\\s+(?:final\\s+)?String\\s+(\\w+)\\b(?=[\\s\\S]{0,600}?(?:new\\s+(?:File|FileInputStream|FileReader|FileOutputStream)|Paths\\.get|Path\\.of)\\(\\s*[^;]*?\\b\\1\\b)",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "public Response get(@QueryParam(\"file\") String file) {\n    return Response.ok(new File(dir + file)).build();\n}"
+      ],
+      "no_match": [
+        "public Response get(@QueryParam(\"file\") String file) {\n    return service.load(file);\n}"
+      ]
+    }
+  },
+  {
+    "id": "spring-requestparam-redirect",
+    "title": "Redirect target taken from a variable",
+    "description": "A Spring MVC redirect is built from a variable. If it comes from the request, it is an open redirect; only redirect to relative paths or an allow-list.",
+    "cwe": "CWE-601",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Spring Boot",
+      "Spring Framework"
+    ],
+    "pattern": "return\\s+\\\"redirect:\\\"\\s*\\+\\s*[a-zA-Z_$][\\w$]*|new\\s+RedirectView\\(\\s*(?!\\\")[a-zA-Z_$][\\w$]*",
+    "examples": {
+      "match": [
+        "return \"redirect:\" + returnUrl;",
+        "return new RedirectView(target);"
+      ],
+      "no_match": [
+        "return \"redirect:/home\";",
+        "return new RedirectView(\"/login\");"
+      ]
+    }
+  },
+  {
+    "id": "jaxrs-exception-message-in-response",
+    "title": "Exception message returned in a JAX-RS response",
+    "description": "An exception's message is written into a response DTO or entity. Internal details (SQL, class names, paths) leak to the caller; return a generic message and log the detail.",
+    "cwe": "CWE-209",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "JBoss RESTEasy (JAX-RS)",
+      "JAX-RS",
+      "JAX-RS (Jakarta)",
+      "Apache CXF SOAP/REST"
+    ],
+    "pattern": "\\.(?:setError|setMessage|setErrorMsg|setErrorMessage|setDescription|entity)\\(\\s*[^;]*\\b(?:e|ex|exc|exception|t|th|throwable|err|cause)\\.(?:getMessage|getLocalizedMessage|toString)\\(\\)",
+    "examples": {
+      "match": [
+        "resp.setErrorMsg(e.getMessage());",
+        "return Response.status(500).entity(ex.getMessage()).build();"
+      ],
+      "no_match": [
+        "resp.setErrorMsg(\"Internal error\");"
+      ]
+    }
+  },
+  {
+    "id": "java-exception-object-serialized",
+    "title": "Throwable stored on a response object",
+    "description": "A Throwable is stored on a DTO via setCause/setThrowable/setStackTrace. When that DTO is serialized, the stack trace and messages reach the client.",
+    "cwe": "CWE-209",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\.set(?:Throwable|Cause|StackTrace)\\(\\s*[a-z_$][\\w$]*\\s*\\)",
+    "examples": {
+      "match": [
+        "response.setCause(ex);"
+      ],
+      "no_match": [
+        "response.setCause(\"timeout\");"
+      ]
+    }
+  },
+  {
+    "id": "spring-responsestatus-exception-message",
+    "title": "Exception message passed to ResponseStatusException",
+    "description": "The reason given to ResponseStatusException is an exception's message, which Spring can render back to the client.",
+    "cwe": "CWE-209",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Spring Boot",
+      "Spring Framework"
+    ],
+    "pattern": "new\\s+ResponseStatusException\\([^;]*\\.getMessage\\(\\)",
+    "examples": {
+      "match": [
+        "throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage(), e);"
+      ],
+      "no_match": [
+        "throw new ResponseStatusException(HttpStatus.NOT_FOUND, \"not found\");"
+      ]
+    }
+  },
+  {
+    "id": "java-client-supplied-authz",
+    "title": "Authorization decided from a request body field",
+    "description": "A role/admin/permission flag is read from the @RequestBody object itself. The client controls that value; derive authorization from the authenticated principal instead.",
+    "cwe": "CWE-602",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Spring Boot",
+      "Spring Framework"
+    ],
+    "pattern": "@RequestBody\\s+(?:@Valid(?:ated)?\\s+)?[\\w<>.]+\\s+(\\w+)\\b(?=[\\s\\S]{0,600}?\\b\\1\\.(?:is(?:Admin|SuperUser|Root)|get(?:Role|Roles|Permissions?|Authorities|IsAdmin|UserType|AccessLevel))\\(\\))",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "public void update(@RequestBody UserDto dto) {\n    if (dto.isAdmin()) {\n        grant();\n    }\n}"
+      ],
+      "no_match": [
+        "public void update(@RequestBody UserDto dto) {\n    if (principal.isAdmin()) { grant(); }\n}"
+      ]
+    }
+  },
+  {
+    "id": "spring-mass-assignment-entity",
+    "title": "Request body bound directly to a domain type",
+    "description": "@RequestBody binds to a type that is not a DTO/request/form type. If it is a JPA entity, a client can set fields it should never control (id, role, owner); bind to a dedicated DTO.",
+    "cwe": "CWE-915",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "JPA",
+      "JPA (Jakarta)",
+      "Hibernate ORM",
+      "Spring Data"
+    ],
+    "pattern": "@RequestBody\\s+(?:@Valid(?:ated)?\\s+)?(?!(?:String|Map|List|Set|Object|JsonNode|byte|Long|Integer|Boolean)\\b)(?![\\w.]*(?:Dto|DTO|Request|Req|Form|Command|Cmd|Payload|Input|Body|Params?|Criteria|Filter|Resource|View|Vo|VO|Model)\\b)[A-Z]\\w*\\s+\\w+",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "public User save(@RequestBody User user) {"
+      ],
+      "no_match": [
+        "public User save(@RequestBody UserDto user) {",
+        "public void raw(@RequestBody String body) {"
+      ]
+    }
+  },
+  {
+    "id": "spring-cors-wildcard-credentials",
+    "title": "CORS allows any origin together with credentials",
+    "description": "A wildcard origin pattern is combined with allowCredentials(true), so any website can make authenticated cross-origin requests and read the responses.",
+    "cwe": "CWE-942",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Spring Boot",
+      "Spring Framework",
+      "Spring Security",
+      "Spring Data"
+    ],
+    "pattern": "(?:allowedOriginPatterns|addAllowedOriginPattern)\\(\\s*\\\"\\*\\\"\\s*\\)(?=[\\s\\S]{0,300}?[aA]llowCredentials\\(\\s*true)|[aA]llowCredentials\\(\\s*true\\s*\\)(?=[\\s\\S]{0,300}?(?:allowedOriginPatterns|addAllowedOriginPattern)\\(\\s*\\\"\\*\\\")",
+    "examples": {
+      "match": [
+        "registry.addMapping(\"/**\")\n    .allowedOriginPatterns(\"*\")\n    .allowCredentials(true);"
+      ],
+      "no_match": [
+        "registry.addMapping(\"/**\")\n    .allowedOriginPatterns(\"https://app.example.com\")\n    .allowCredentials(true);"
+      ]
+    }
+  },
+  {
+    "id": "spring-crossorigin-wildcard",
+    "title": "@CrossOrigin open to every origin",
+    "description": "@CrossOrigin with no origins (or origins = \"*\") lets any website call this endpoint from a browser. Name the allowed origins.",
+    "cwe": "CWE-942",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Spring Boot",
+      "Spring Framework"
+    ],
+    "pattern": "@CrossOrigin(?:\\s*\\(\\s*\\)|\\s*\\(\\s*(?:origins|value)\\s*=\\s*\\\"\\*\\\"|(?!\\s*\\())",
+    "examples": {
+      "match": [
+        "@CrossOrigin",
+        "@CrossOrigin(origins = \"*\")"
+      ],
+      "no_match": [
+        "@CrossOrigin(origins = \"https://app.example.com\")"
+      ]
+    }
+  },
+  {
+    "id": "spring-actuator-exposed",
+    "title": "All Spring Boot actuator endpoints exposed over HTTP",
+    "description": "management.endpoints.web.exposure.include=* publishes every actuator endpoint (env, heapdump, configprops, ...), which leak secrets and internals. Expose only health/info, or secure them.",
+    "cwe": "CWE-200",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "properties",
+      "yaml"
+    ],
+    "frameworks": [],
+    "pattern": "management\\.endpoints\\.web\\.exposure\\.include\\s*[:=]\\s*[\\\"']?\\*|exposure:[\\s\\S]{0,40}?include:\\s*[\\\"']?\\*",
+    "examples": {
+      "match": [
+        {
+          "code": "management.endpoints.web.exposure.include=*",
+          "path": "application.properties"
+        },
+        {
+          "code": "management:\n  endpoints:\n    web:\n      exposure:\n        include: \"*\"",
+          "path": "application.yml"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "management.endpoints.web.exposure.include=health,info",
+          "path": "application.properties"
+        }
+      ]
+    }
+  },
+  {
+    "id": "spring-h2-console-enabled",
+    "title": "H2 web console enabled",
+    "description": "The H2 console gives a SQL shell (and, on older versions, code execution) to anyone who can reach it. Disable it outside local development.",
+    "cwe": "CWE-489",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "properties",
+      "yaml"
+    ],
+    "frameworks": [],
+    "pattern": "spring\\.h2\\.console\\.enabled\\s*[:=]\\s*true|h2:[\\s\\S]{0,40}?console:[\\s\\S]{0,40}?enabled:\\s*true",
+    "examples": {
+      "match": [
+        {
+          "code": "spring.h2.console.enabled=true",
+          "path": "application.properties"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "spring.h2.console.enabled=false",
+          "path": "application.properties"
+        }
+      ]
+    }
+  },
+  {
+    "id": "spring-debug-or-trace-enabled",
+    "title": "Debug/trace output or stack traces enabled in config",
+    "description": "debug/trace mode or server.error.include-stacktrace=always exposes internals in logs and error responses.",
+    "cwe": "CWE-489",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "properties",
+      "yaml"
+    ],
+    "frameworks": [],
+    "pattern": "^(?:debug|trace)\\s*[:=]\\s*true\\b|include-stacktrace\\s*[:=]\\s*always",
+    "examples": {
+      "match": [
+        {
+          "code": "server.error.include-stacktrace=always",
+          "path": "application.properties"
+        },
+        {
+          "code": "debug=true",
+          "path": "application.properties"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "logging.level.root=debug",
+          "path": "application.properties"
+        }
+      ]
+    }
+  },
+  {
+    "id": "spring-security-ignoring-all",
+    "title": "Spring Security ignores every path",
+    "description": "web.ignoring() on /** removes the whole application from the security filter chain \u2014 no authentication, CSRF or headers.",
+    "cwe": "CWE-862",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [
+      "Spring Security"
+    ],
+    "pattern": "\\.ignoring\\(\\)\\s*\\.(?:antMatchers|requestMatchers|mvcMatchers)\\(\\s*\\\"/\\*\\*\\\"",
+    "examples": {
+      "match": [
+        "web.ignoring().antMatchers(\"/**\");"
+      ],
+      "no_match": [
+        "web.ignoring().antMatchers(\"/static/**\");"
+      ]
+    }
+  },
+  {
+    "id": "java-plaintext-password-equals",
+    "title": "Password compared in plain text",
+    "description": "A password is compared with equals() against a stored value, which means passwords are stored unhashed (and the comparison is not constant-time). Store a salted hash (bcrypt/argon2) and use its matcher.",
+    "cwe": "CWE-256",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "^(?!.*(?:[Cc]onfirm|[Rr]epeat|[Rr]etype|[Vv]erif|[Nn]ew[Pp]ass|[Mm]atching)).*?(?:\\b\\w*(?:[Pp]ass(?:word|wd)?|[Pp]wd)\\w*(?:\\(\\))?\\s*\\.equals(?:IgnoreCase)?\\(\\s*[\\w$.]*(?:[Pp]ass\\w*|[Pp]wd\\w*)(?:\\(\\))?\\s*\\)|\\.equals\\(\\s*[\\w$]+\\.get(?:Password|Pwd|Passwd)\\(\\)\\s*\\))",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "if (user.getPassword().equals(password)) {",
+        "if (password.equals(dbUser.getPassword())) {"
+      ],
+      "no_match": [
+        "if (newPassword.equals(confirmPassword)) {",
+        "if (!form.getMatchingPassword().equals(form.getPassword())) {",
+        "if (encoder.matches(password, user.getPassword())) {"
+      ]
+    }
+  },
+  {
+    "id": "java-cookie-from-request-value",
+    "title": "Cookie value taken straight from a request parameter",
+    "description": "A cookie is created with a raw request parameter value \u2014 response splitting on old containers and cookie injection otherwise.",
+    "cwe": "CWE-113",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "new\\s+Cookie\\(\\s*\\\"[^\\\"]*\\\"\\s*,\\s*(?:request|req|httpRequest|httpServletRequest)\\.getParameter\\(",
+    "examples": {
+      "match": [
+        "Cookie c = new Cookie(\"lang\", request.getParameter(\"lang\"));"
+      ],
+      "no_match": [
+        "Cookie c = new Cookie(\"lang\", \"en\");"
+      ]
+    }
+  },
+  {
+    "id": "java-unvalidated-content-disposition",
+    "title": "Content-Disposition filename from a variable",
+    "description": "A download filename is concatenated into Content-Disposition without encoding. Quotes or CR/LF in it break the header (header injection, spoofed file names).",
+    "cwe": "CWE-113",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\\"Content-Disposition\\\"\\s*,\\s*\\\"(?:[^\\\"\\\\]|\\\\.)*filename=(?:[^\\\"\\\\]|\\\\.)*\\\"\\s*\\+\\s*[a-zA-Z_$][\\w$]*",
+    "examples": {
+      "match": [
+        "response.setHeader(\"Content-Disposition\", \"attachment; filename=\\\"\" + fileName + \"\\\"\");"
+      ],
+      "no_match": [
+        "response.setHeader(\"Content-Disposition\", \"attachment; filename=report.pdf\");"
+      ]
+    }
+  },
+  {
+    "id": "java-bearer-substring-indexof",
+    "title": "Bearer token extracted with indexOf + 7",
+    "description": "The token is cut out of the Authorization header by offset instead of checking the header starts with 'Bearer '. A malformed header yields a wrong token or an exception.",
+    "cwe": "CWE-287",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "indexOf\\(\\s*\\\"Bearer\\s?\\\"\\s*\\)\\s*\\+\\s*7",
+    "examples": {
+      "match": [
+        "String token = header.substring(header.indexOf(\"Bearer \") + 7);"
+      ],
+      "no_match": [
+        "String token = header.substring(7);"
+      ]
+    }
+  },
+  {
+    "id": "java-jwt-parse-unsigned",
+    "title": "JWT parsed without signature verification",
+    "description": "parseClaimsJwt/parseUnsecuredClaims/JWT.decode read a token without verifying its signature; anyone can forge the claims. Use parseClaimsJws / a JWTVerifier.",
+    "cwe": "CWE-347",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\.parseClaimsJwt\\(|\\.parseUnsecuredClaims\\(|\\bJWT\\.decode\\(",
+    "requires_dependency": [
+      {
+        "name": "jjwt"
+      },
+      {
+        "name": "jjwt-api"
+      },
+      {
+        "name": "jjwt-impl"
+      },
+      {
+        "name": "java-jwt"
+      }
+    ],
+    "examples": {
+      "match": [
+        "Claims c = Jwts.parser().parseClaimsJwt(token).getBody();",
+        "DecodedJWT jwt = JWT.decode(token);"
+      ],
+      "no_match": [
+        "Claims c = Jwts.parser().setSigningKey(key).parseClaimsJws(token).getBody();"
+      ]
+    }
+  },
+  {
+    "id": "java-jwt-hardcoded-secret",
+    "title": "JWT signing secret hardcoded in source",
+    "description": "The HMAC key used to sign or verify JWTs is a string literal. Anyone with the source can mint valid tokens; load it from a secret store.",
+    "cwe": "CWE-798",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\.(?:signWith|setSigningKey|verifyWith)\\([^)]*\\\"[^\\\"]{6,}\\\"|Algorithm\\.HMAC\\d+\\(\\s*\\\"",
+    "requires_dependency": [
+      {
+        "name": "jjwt"
+      },
+      {
+        "name": "jjwt-api"
+      },
+      {
+        "name": "jjwt-impl"
+      },
+      {
+        "name": "java-jwt"
+      }
+    ],
+    "examples": {
+      "match": [
+        ".signWith(SignatureAlgorithm.HS256, \"mySecretKey123\")",
+        "Algorithm alg = Algorithm.HMAC256(\"secret-value\");"
+      ],
+      "no_match": [
+        ".signWith(key)",
+        "Algorithm alg = Algorithm.HMAC256(secret);"
+      ]
+    }
+  },
+  {
+    "id": "java-key-from-password-no-kdf",
+    "title": "Encryption key derived from a string without a KDF",
+    "description": "Key bytes are taken directly from a password/string (getBytes, truncated with Arrays.copyOf). That key has little entropy and no salt; derive it with PBKDF2/scrypt/argon2.",
+    "cwe": "CWE-916",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "Arrays\\.copyOf\\(\\s*[\\w$.()]+\\.getBytes\\([^)]*\\)\\s*,\\s*(?:16|24|32)\\s*\\)|new\\s+SecretKeySpec\\(\\s*[a-z_$][\\w$.]*\\.getBytes\\(",
+    "examples": {
+      "match": [
+        "byte[] key = Arrays.copyOf(password.getBytes(\"UTF-8\"), 16);",
+        "new SecretKeySpec(secret.getBytes(), \"AES\");"
+      ],
+      "no_match": [
+        "new SecretKeySpec(keyBytes, \"AES\");"
+      ]
+    }
+  },
+  {
+    "id": "java-aes-cbc-unauthenticated",
+    "title": "AES-CBC without authentication",
+    "description": "AES/CBC gives confidentiality only; without a MAC an attacker can tamper with ciphertext (padding oracle). Prefer AES/GCM.",
+    "cwe": "CWE-327",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "Cipher\\.getInstance\\(\\s*\\\"AES/CBC/",
+    "examples": {
+      "match": [
+        "Cipher c = Cipher.getInstance(\"AES/CBC/PKCS5Padding\");"
+      ],
+      "no_match": [
+        "Cipher c = Cipher.getInstance(\"AES/GCM/NoPadding\");"
+      ]
+    }
+  },
+  {
+    "id": "java-cipher-default-mode",
+    "title": "Cipher requested without a mode and padding",
+    "description": "Cipher.getInstance(\"AES\") (or DES/RSA) uses the provider default \u2014 ECB for AES, PKCS#1 v1.5 for RSA. Always name the mode and padding (AES/GCM/NoPadding, RSA/ECB/OAEPWithSHA-256AndMGF1Padding).",
+    "cwe": "CWE-327",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "Cipher\\.getInstance\\(\\s*\\\"(?:AES|DES|DESede|RSA|Blowfish)\\\"\\s*\\)",
+    "examples": {
+      "match": [
+        "Cipher c = Cipher.getInstance(\"AES\");"
+      ],
+      "no_match": [
+        "Cipher c = Cipher.getInstance(\"AES/GCM/NoPadding\");"
+      ]
+    }
+  },
+  {
+    "id": "java-rsa-no-oaep",
+    "title": "RSA without OAEP padding",
+    "description": "RSA with PKCS1Padding or NoPadding is vulnerable to padding-oracle and malleability attacks; use OAEP.",
+    "cwe": "CWE-780",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "Cipher\\.getInstance\\(\\s*\\\"RSA/[^\\\"]*/(?:PKCS1Padding|NoPadding)\\\"",
+    "examples": {
+      "match": [
+        "Cipher.getInstance(\"RSA/ECB/PKCS1Padding\")"
+      ],
+      "no_match": [
+        "Cipher.getInstance(\"RSA/ECB/OAEPWithSHA-256AndMGF1Padding\")"
+      ]
+    }
+  },
+  {
+    "id": "java-weak-key-size",
+    "title": "Key generated with a weak size",
+    "description": "An RSA/DSA/DH key of 1024 bits or less, or a 40-64 bit symmetric key, can be broken. Use RSA >= 2048 and AES-128/256.",
+    "cwe": "CWE-326",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\.initialize\\(\\s*(?:512|768|1024)\\s*[,)]|\\.init\\(\\s*(?:40|56|64)\\s*[,)]",
+    "examples": {
+      "match": [
+        "kpg.initialize(1024);",
+        "keyGen.init(56);"
+      ],
+      "no_match": [
+        "kpg.initialize(2048);",
+        "keyGen.init(256);"
+      ]
+    }
+  },
+  {
+    "id": "java-legacy-base64-or-xor-cipher",
+    "title": "Legacy sun.misc Base64 or a home-made XOR cipher",
+    "description": "sun.misc.BASE64Encoder is an internal JDK class (removed in newer JDKs), and XOR 'encryption' classes are obfuscation, not encryption. Use java.util.Base64 and a real cipher.",
+    "cwe": "CWE-327",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\bnew\\s+(?:sun\\.misc\\.)?BASE64(?:En|De)coder\\(|\\bnew\\s+[\\w.]*Xor\\w*\\(",
+    "examples": {
+      "match": [
+        "String s = new BASE64Encoder().encode(bytes);",
+        "Cipher c = new SimpleXorCipher(key);"
+      ],
+      "no_match": [
+        "String s = Base64.getEncoder().encodeToString(bytes);"
+      ]
+    }
+  },
+  {
+    "id": "java-password-stored-base64",
+    "title": "Password stored as Base64",
+    "description": "A password is Base64-encoded before being stored. Base64 is an encoding, not protection; hash passwords with bcrypt/argon2.",
+    "cwe": "CWE-261",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\.set\\w*[Pp]ass\\w*\\(\\s*[^;]*(?:Base64|BASE64Encoder|encodeBase64|encodeToString)",
+    "examples": {
+      "match": [
+        "user.setPassword(Base64.getEncoder().encodeToString(pwd.getBytes()));"
+      ],
+      "no_match": [
+        "user.setPassword(encoder.encode(pwd));"
+      ]
+    }
+  },
+  {
+    "id": "java-unsalted-hash-password",
+    "title": "Password hashed with a plain message digest",
+    "description": "A MessageDigest is used near password handling. A fast, unsalted digest (MD5/SHA-*) is cracked offline quickly; use bcrypt/scrypt/argon2/PBKDF2.",
+    "cwe": "CWE-759",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "MessageDigest\\.getInstance\\([^)]*\\)(?=[\\s\\S]{0,200}?(?i:pass))",
+    "examples": {
+      "match": [
+        "MessageDigest md = MessageDigest.getInstance(\"SHA-256\");\nbyte[] h = md.digest(password.getBytes());"
+      ],
+      "no_match": [
+        "MessageDigest md = MessageDigest.getInstance(\"SHA-256\");\nbyte[] h = md.digest(fileBytes);"
+      ]
+    }
+  },
+  {
+    "id": "java-jdbc-url-inline-credentials",
+    "title": "Database credentials embedded in a JDBC URL",
+    "description": "A JDBC URL carries a username/password (user/pass@host, //user:pass@host or password=...). Move credentials to a secret store or container-managed DataSource.",
+    "cwe": "CWE-798",
+    "severity": "HIGH",
+    "category": "secrets",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [],
+    "frameworks": [],
+    "pattern": "jdbc:\\w+:(?:[^\\\"\\s]*?\\b\\w+/[^@\\\"\\s/]+@|//[^/@\\\"\\s:]+:[^/@\\\"\\s]+@|[^\\\"\\s]*[?&;](?i:password)=[^&;\\\"\\s]+)",
+    "examples": {
+      "match": [
+        "String url = \"jdbc:oracle:thin:scott/tiger@dbhost:1521:orcl\";",
+        "url = \"jdbc:mysql://db:3306/app?user=app&password=s3cret\""
+      ],
+      "no_match": [
+        "String url = \"jdbc:oracle:thin:@dbhost:1521/orcl\";",
+        "url = \"jdbc:mysql://db:3306/app\""
+      ]
+    }
+  },
+  {
+    "id": "java-cleartext-protocol-url",
+    "title": "Cleartext protocol URL in source",
+    "description": "A hardcoded http/ftp/telnet/ldap/t3 URL sends data (often credentials) unencrypted. Use the TLS variant (https, ftps/sftp, ldaps, t3s).",
+    "cwe": "CWE-319",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\\"(?:t3|telnet|ftp|ldap)://[\\w.-]+|\\\"http://(?!localhost|127\\.|0\\.0\\.0\\.0|www\\.w3\\.org|schemas\\.|xmlns\\.|java\\.sun\\.com|xml\\.apache|maven\\.apache|www\\.springframework|json-schema|purl\\.org|www\\.oracle\\.com/webfolder)[\\w.-]+",
+    "examples": {
+      "match": [
+        "String url = \"http://payments.internal.example.com/api\";",
+        "env.put(Context.PROVIDER_URL, \"t3://wls01:7001\");"
+      ],
+      "no_match": [
+        "String ns = \"http://www.w3.org/2001/XMLSchema\";",
+        "String url = \"https://api.example.com\";"
+      ]
+    }
+  },
+  {
+    "id": "java-plain-socket",
+    "title": "Plain (non-TLS) socket",
+    "description": "A raw Socket/ServerSocket sends data unencrypted. Use SSLSocketFactory/SSLServerSocketFactory unless the channel is local-only.",
+    "cwe": "CWE-319",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\bnew\\s+(?:java\\.net\\.)?(?:Server)?Socket\\(",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "Socket s = new Socket(host, port);"
+      ],
+      "no_match": [
+        "SSLSocket s = (SSLSocket) factory.createSocket(host, port);"
+      ]
+    }
+  },
+  {
+    "id": "java-ldap-anonymous-or-simple",
+    "title": "LDAP bind with no or simple authentication",
+    "description": "SECURITY_AUTHENTICATION 'none' binds anonymously; 'simple' sends the password in clear unless the URL is ldaps:// or StartTLS is used.",
+    "cwe": "CWE-522",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "Context\\.SECURITY_AUTHENTICATION\\s*,\\s*\\\"(?:none|simple)\\\"",
+    "examples": {
+      "match": [
+        "env.put(Context.SECURITY_AUTHENTICATION, \"simple\");"
+      ],
+      "no_match": [
+        "env.put(Context.SECURITY_AUTHENTICATION, \"GSSAPI\");"
+      ]
+    }
+  },
+  {
+    "id": "java-jaxb-unmarshal-unhardened",
+    "title": "JAXB unmarshals a raw reader/stream",
+    "description": "JAXB unmarshals directly from a reader, file or source rather than a hardened XMLStreamReader/SAXSource, so external entities may be resolved (XXE) depending on the implementation.",
+    "cwe": "CWE-611",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\.unmarshal\\(\\s*new\\s+(?:InputSource|StringReader|FileReader|StreamSource|File)\\(",
+    "examples": {
+      "match": [
+        "Order o = (Order) unmarshaller.unmarshal(new StringReader(xml));"
+      ],
+      "no_match": [
+        "Order o = (Order) unmarshaller.unmarshal(safeReader);"
+      ]
+    }
+  },
+  {
+    "id": "java-xxe-transformerfactory",
+    "title": "TransformerFactory without external-access restrictions",
+    "description": "TransformerFactory.newInstance() is used without ACCESS_EXTERNAL_DTD/STYLESHEET or FEATURE_SECURE_PROCESSING nearby, so a stylesheet or document can pull external resources (XXE/SSRF).",
+    "cwe": "CWE-611",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "TransformerFactory\\.newInstance\\(\\s*\\)(?![\\s\\S]{0,400}?(?:disallow-doctype-decl|external-general-entities|FEATURE_SECURE_PROCESSING|ACCESS_EXTERNAL_DTD|ACCESS_EXTERNAL_SCHEMA|SUPPORT_DTD|IS_SUPPORTING_EXTERNAL_ENTITIES|setExpandEntityReferences\\(\\s*false))",
+    "examples": {
+      "match": [
+        "TransformerFactory tf = TransformerFactory.newInstance();\nTransformer t = tf.newTransformer();"
+      ],
+      "no_match": [
+        "TransformerFactory tf = TransformerFactory.newInstance();\ntf.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, \"\");"
+      ]
+    }
+  },
+  {
+    "id": "java-xxe-schemafactory",
+    "title": "SchemaFactory without external-access restrictions",
+    "description": "SchemaFactory.newInstance() is used without ACCESS_EXTERNAL_DTD/SCHEMA restrictions nearby (XXE/SSRF via schema imports).",
+    "cwe": "CWE-611",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "SchemaFactory\\.newInstance\\((?![\\s\\S]{0,400}?(?:disallow-doctype-decl|external-general-entities|FEATURE_SECURE_PROCESSING|ACCESS_EXTERNAL_DTD|ACCESS_EXTERNAL_SCHEMA|SUPPORT_DTD|IS_SUPPORTING_EXTERNAL_ENTITIES|setExpandEntityReferences\\(\\s*false))",
+    "examples": {
+      "match": [
+        "SchemaFactory sf = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);\nSchema s = sf.newSchema(file);"
+      ],
+      "no_match": [
+        "SchemaFactory sf = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);\nsf.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, \"\");"
+      ]
+    }
+  },
+  {
+    "id": "java-xxe-xmlreader",
+    "title": "XMLReader created without disabling external entities",
+    "description": "An XMLReader is created without disallow-doctype-decl / external-entity features nearby, so parsing untrusted XML resolves external entities (XXE).",
+    "cwe": "CWE-611",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?:XMLReaderFactory\\.createXMLReader\\(|\\.getXMLReader\\(\\))(?![\\s\\S]{0,400}?(?:disallow-doctype-decl|external-general-entities|FEATURE_SECURE_PROCESSING|ACCESS_EXTERNAL_DTD|ACCESS_EXTERNAL_SCHEMA|SUPPORT_DTD|IS_SUPPORTING_EXTERNAL_ENTITIES|setExpandEntityReferences\\(\\s*false))",
+    "examples": {
+      "match": [
+        "XMLReader r = XMLReaderFactory.createXMLReader();\nr.parse(input);"
+      ],
+      "no_match": [
+        "XMLReader r = XMLReaderFactory.createXMLReader();\nr.setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true);"
+      ]
+    }
+  },
+  {
+    "id": "java-xxe-domparser",
+    "title": "Xerces DOMParser/SAXParser without disabling external entities",
+    "description": "A Xerces DOMParser/SAXParser is instantiated directly without disallow-doctype-decl / external-entity features nearby (XXE).",
+    "cwe": "CWE-611",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "new\\s+(?:org\\.apache\\.xerces\\.parsers\\.)?(?:DOM|SAX)Parser\\(\\s*\\)(?![\\s\\S]{0,400}?(?:disallow-doctype-decl|external-general-entities|FEATURE_SECURE_PROCESSING|ACCESS_EXTERNAL_DTD|ACCESS_EXTERNAL_SCHEMA|SUPPORT_DTD|IS_SUPPORTING_EXTERNAL_ENTITIES|setExpandEntityReferences\\(\\s*false))",
+    "examples": {
+      "match": [
+        "DOMParser p = new DOMParser();\np.parse(new InputSource(in));"
+      ],
+      "no_match": [
+        "DOMParser p = new DOMParser();\np.setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true);"
+      ]
+    }
+  },
+  {
+    "id": "java-xstream-fromxml",
+    "title": "XStream deserializes XML",
+    "description": "XStream.fromXML on untrusted input has a long history of remote-code-execution gadgets. Configure an allow-list (allowTypes) or avoid XStream for untrusted data.",
+    "cwe": "CWE-502",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A08:2021-Software-and-Data-Integrity-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\.fromXML\\(",
+    "requires_dependency": [
+      {
+        "name": "xstream"
+      }
+    ],
+    "examples": {
+      "match": [
+        "Object o = xstream.fromXML(xml);"
+      ],
+      "no_match": [
+        "String xml = xstream.toXML(o);"
+      ]
+    }
+  },
+  {
+    "id": "java-snakeyaml-unsafe",
+    "title": "SnakeYAML default constructor on untrusted YAML",
+    "description": "Before SnakeYAML 2.0, new Yaml() / new Yaml(new Constructor()) instantiates arbitrary classes from YAML tags (RCE). Use SafeConstructor or upgrade.",
+    "cwe": "CWE-502",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A08:2021-Software-and-Data-Integrity-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "new\\s+Yaml\\(\\s*\\)|new\\s+Yaml\\(\\s*new\\s+Constructor\\(",
+    "requires_dependency": [
+      {
+        "name": "snakeyaml",
+        "version_lt": "2.0"
+      }
+    ],
+    "examples": {
+      "match": [
+        "Yaml yaml = new Yaml();"
+      ],
+      "no_match": [
+        "Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()));"
+      ]
+    }
+  },
+  {
+    "id": "java-kryo-registration-off",
+    "title": "Kryo class registration disabled",
+    "description": "setRegistrationRequired(false) lets Kryo instantiate any class named in the stream \u2014 a deserialization gadget surface.",
+    "cwe": "CWE-502",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A08:2021-Software-and-Data-Integrity-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "setRegistrationRequired\\(\\s*false\\s*\\)",
+    "examples": {
+      "match": [
+        "kryo.setRegistrationRequired(false);"
+      ],
+      "no_match": [
+        "kryo.setRegistrationRequired(true);"
+      ]
+    }
+  },
+  {
+    "id": "java-sql-in-log",
+    "title": "SQL text written to a log",
+    "description": "A SQL/query string is logged. Logged SQL can carry user data and reveals schema details; log a statement id instead.",
+    "cwe": "CWE-532",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A09:2021-Security-Logging-and-Monitoring-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\b(?:log|LOG|Log|logger|LOGGER|Logger)\\.\\w+\\(.*\\+\\s*(?:sql|query|sqlStmt|sqlString|sqlQuery|hql|qry)\\b",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "log.debug(\"Executing: \" + sql);"
+      ],
+      "no_match": [
+        "log.debug(\"Executing statement {}\", statementId);"
+      ]
+    }
+  },
+  {
+    "id": "java-insecure-random-security-context",
+    "title": "java.util.Random inside a token/session/key generator",
+    "description": "A method whose name says it produces a session id, token, nonce, OTP, salt or key uses java.util.Random/Math.random, which is predictable. Use SecureRandom.",
+    "cwe": "CWE-330",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\b\\w*(?i:session|token|nonce|otp|salt|password|secret|key)\\w*\\s*\\([^)]*\\)\\s*(?:throws\\s+[\\w.,\\s]+)?\\{(?=[\\s\\S]{0,500}?(?:new\\s+(?:java\\.util\\.)?Random\\s*\\(|Math\\.random\\s*\\(\\)|ThreadLocalRandom\\.current\\(\\)))",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "public String generateSessionId() {\n    Random r = new Random();\n    return Long.toHexString(r.nextLong());\n}"
+      ],
+      "no_match": [
+        "public String generateSessionId() {\n    SecureRandom r = new SecureRandom();\n    return Long.toHexString(r.nextLong());\n}"
+      ]
+    }
+  },
+  {
+    "id": "java-static-dateformat",
+    "title": "Shared static SimpleDateFormat",
+    "description": "SimpleDateFormat is not thread-safe; a static instance shared across requests corrupts dates under load. Use java.time.DateTimeFormatter.",
+    "cwe": "CWE-362",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A04:2021-Insecure-Design",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "static\\s+(?:final\\s+)?(?:java\\.text\\.)?(?:SimpleDateFormat|DateFormat)\\b",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "private static final SimpleDateFormat FMT = new SimpleDateFormat(\"yyyy-MM-dd\");"
+      ],
+      "no_match": [
+        "private static final DateTimeFormatter FMT = DateTimeFormatter.ISO_DATE;"
+      ]
+    }
+  },
+  {
+    "id": "java-tls-protocol-weak",
+    "title": "Deprecated SSL/TLS protocol version",
+    "description": "SSLv2/SSLv3/TLSv1/TLSv1.1 are deprecated and broken (POODLE, BEAST). Use TLSv1.2 or TLSv1.3.",
+    "cwe": "CWE-326",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "(?:getInstance|setEnabledProtocols)\\([^)]*\\\"(?:SSLv2|SSLv3|TLSv1|TLSv1\\.1)\\\"",
+    "examples": {
+      "match": [
+        "SSLContext ctx = SSLContext.getInstance(\"TLSv1\");",
+        "socket.setEnabledProtocols(new String[]{\"SSLv3\"});"
+      ],
+      "no_match": [
+        "SSLContext ctx = SSLContext.getInstance(\"TLSv1.2\");"
+      ]
+    }
+  },
+  {
+    "id": "java-trustmanager-trustall-alt",
+    "title": "TrustManager accepts every certificate",
+    "description": "getAcceptedIssuers returns null/an empty array, the signature of a trust-all TrustManager; certificate validation is effectively off (MITM).",
+    "cwe": "CWE-295",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "getAcceptedIssuers\\(\\)[\\s\\S]{0,40}?\\{\\s*return\\s+(?:null|new\\s+(?:java\\.security\\.cert\\.)?X509Certificate\\[\\s*0\\s*\\])",
+    "examples": {
+      "match": [
+        "public X509Certificate[] getAcceptedIssuers() {\n    return null;\n}"
+      ],
+      "no_match": [
+        "public X509Certificate[] getAcceptedIssuers() {\n    return delegate.getAcceptedIssuers();\n}"
+      ]
+    }
+  },
+  {
+    "id": "java-cookie-secure-false",
+    "title": "Cookie Secure/HttpOnly explicitly disabled",
+    "description": "setSecure(false)/setHttpOnly(false) sends the cookie over cleartext or exposes it to JavaScript.",
+    "cwe": "CWE-614",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "java"
+    ],
+    "frameworks": [],
+    "pattern": "\\.set(?:Secure|HttpOnly)\\(\\s*false\\s*\\)",
+    "examples": {
+      "match": [
+        "cookie.setHttpOnly(false);"
+      ],
+      "no_match": [
+        "cookie.setHttpOnly(true);"
+      ]
+    }
   }
 ]

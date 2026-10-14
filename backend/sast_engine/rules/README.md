@@ -12,6 +12,7 @@ directory except `surfaces.json`** and fails loudly on a duplicate rule id.
 | `typescript.json` | TypeScript / JavaScript, Angular and React |
 | `python.json` | Python |
 | `web.json` | HTML and `.properties` / `.yaml` / `.env` |
+| `frontend-templates.json` | template markup shared by Angular `.html`, Vue `.vue` and JSX (`[innerHTML]`, `v-html`, `target="_blank"`) |
 | `surfaces.json` | the stack → surface → rules map (not a rule file) |
 
 Adding a language is just adding a file — `csharp.json`, `go.json` and friends
@@ -55,7 +56,11 @@ patterns, and prefer no rule to a noisy one.
   "languages": ["java"],
   "frameworks": [],
   "requires_dependency": [],
-  "pattern": "\\.printStackTrace\\s*\\("
+  "pattern": "\\.printStackTrace\\s*\\(",
+  "examples": {
+    "match": ["e.printStackTrace();"],
+    "no_match": ["log.error(\"failed\", e);"]
+  }
 }
 ```
 
@@ -63,8 +68,11 @@ patterns, and prefer no rule to a noisy one.
 filters, all **empty-means-universal** — an empty list never excludes anything.
 
 - `languages` — tags from `llm_file_scan._EXT_TO_LANG`. Note `.jsp` → `java`,
-  and `.json` has **no** tag, so a rule meant to match `package.json` must
-  leave `languages` empty and rely on a manifest-specific pattern.
+  `.vue`/`.svelte` → `javascript`, and `.json` has **no** tag, so a rule meant
+  to match `package.json` must leave `languages` empty and rely on a
+  manifest-specific pattern. Template rules list
+  `["html", "javascript", "typescript"]` so they reach Angular `.html`
+  templates, Vue single-file components and inline templates alike.
 - `frameworks` — must match a label from `pipeline/stack_signatures.py`
   exactly (e.g. `"Apache Struts (legacy MVC)"`, `"JBoss RESTEasy (JAX-RS)"`).
 - `requires_dependency` — `[{"name": ..., "version_lt": ..., "version_lte": ...}]`,
@@ -81,13 +89,42 @@ filters, all **empty-means-universal** — an empty list never excludes anything
   `serializable-missing-svuid` matches `class Foo implements Serializable`,
   `class Bar implements Serializable`, ... and without this flag each class
   gets its own row instead of one row listing every affected class.
+- `examples` — `{"match": [...], "no_match": [...]}`, each entry a code string
+  or `{"code": ..., "path": "x.html"}` when the file extension should pick the
+  language. Never read at scan time; `tests/test_rule_catalog.py` runs every
+  example through the real scan path (line or multiline mode, comment
+  masking, language/framework filter). **Every new rule must ship at least one
+  `match` example** — put the look-alikes you deliberately don't flag in
+  `no_match`.
+- `scan_comments` (default `false`) — hits that start on a comment-only line
+  are dropped, for line and multiline rules alike. Only a rule *about*
+  comments (`entire-file-block-commented`) sets this.
 
-Patterns containing `[\s\S]` are treated as whole-file searches and report only
-their **first** match per file; everything else runs line by line. Prefer a
+Patterns containing `[\s\S]` are treated as whole-file searches and report
+every match per file, up to `regex_scan.MULTILINE_HITS_PER_FILE_CAP` (25);
+everything else runs line by line. Prefer a
 zero-width lookahead (`(?!...)`) over a consuming quantifier for "assert X
 doesn't follow within N chars" — a consuming match pulls that trailing text
 into `matched_text`, which (absent `group_by_rule`) defeats grouping since the
 trailing content varies per occurrence even when the actual issue doesn't.
+
+### Pattern idioms
+
+- **Not a log line.** Rules for concatenation (SQL, commands) start with a
+  guard so logging the same string isn't reported:
+  `^(?!\s*(?:[\w$]+\.)*(?:log|LOG|Log|logger|LOGGER|Logger|_log|_logger|logging)\s*\.|\s*System\.(?:out|err)\.|\s*throw\b)`.
+  Then match the rest with a lazy `.*?`, and set `group_by_rule` because the
+  matched text now includes the line prefix.
+- **Not a constant.** Concatenating an ALL_CAPS constant isn't injection:
+  `(?![A-Z][A-Z0-9_]*\b)[a-zA-Z_$][\w$]*`. This needs case-sensitive matching,
+  so scope case-insensitivity to the keywords with `(?i:select|where)` rather
+  than a leading `(?i)`.
+- **Put `\s*` inside a negative lookahead**, never in front of it:
+  `:(?!\s*['"])`, not `:\s*(?!['"])`. The regex engine backtracks the
+  `\s*` to zero characters and then the lookahead sees a space and passes.
+- **Bind a parameter to its use with a backreference**, and close the
+  capture with `\b` so it can't backtrack to a prefix:
+  `String\s+(\w+)\b(?=[\s\S]{0,600}?new\s+File\([^;]*?\b\1\b)`.
 
 ### Versions fail open
 

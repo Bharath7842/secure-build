@@ -81,6 +81,7 @@ EXT_LANG_MAP: Dict[str, str] = {
     ".py": "Python", ".pyi": "Python (stub)",
     ".js": "JavaScript", ".jsx": "JavaScript (React)",
     ".ts": "TypeScript", ".tsx": "TypeScript (React)",
+    ".vue": "Vue", ".svelte": "Svelte",
     ".php": "PHP", ".cs": "C#", ".vb": "VB.NET",
     ".go": "Go", ".rb": "Ruby", ".rs": "Rust", ".c": "C", ".cpp": "C++", ".h": "C/C++ Header",
     ".html": "HTML",

@@ -62,6 +62,115 @@ def test_shipped_catalog_loads_with_unique_ids_and_valid_patterns(regex_scan):
         assert rule.category in {"code", "secrets", "dependency"}
 
 
+def _shipped_rule_entries():
+    for path in sorted(_RULES_DIR.glob("*.json")):
+        if path.name == "surfaces.json":
+            continue
+        for entry in json.loads(path.read_text(encoding="utf-8")):
+            yield path.name, entry
+
+
+def test_every_shipped_pattern_compiles():
+    """load_rules skips a pattern that fails to compile so one bad entry
+    can't block a scan — which also means a typo silently drops a rule. The
+    shipped catalog must have none."""
+    import re
+
+    bad = []
+    for fname, entry in _shipped_rule_entries():
+        try:
+            re.compile(entry["pattern"])
+        except re.error as exc:
+            bad.append(f"{fname}:{entry['id']}: {exc}")
+    assert bad == []
+
+
+# Rules that predate the `examples` field. Every other rule must ship at least
+# one match example — don't add to this list.
+_LEGACY_RULES_WITHOUT_EXAMPLES = frozenset({
+    'auth-exception-message-concat', 'castor-unmarshaller-untrusted',
+    'clickjacking-frameoptions-disabled', 'cors-allow-origin-reflect',
+    'cors-wildcard-with-credentials', 'corsfilter-reflect-origin', 'csrf-disabled',
+    'custom-account-status-grants-auth', 'debug-enabled', 'drools-rule-external-load',
+    'entire-file-block-commented', 'eval-call', 'exec-call', 'http-trace-webxml',
+    'java-class-forname', 'java-config-default-credential', 'java-deskeyspec',
+    'java-empty-catch-block', 'java-empty-trust-check', 'java-hardcoded-local-endpoint',
+    'java-header-from-request', 'java-insecure-random-security', 'java-jackson-default-typing',
+    'java-ldap-injection', 'java-log-injection-unsanitized-input', 'java-objectinputstream',
+    'java-open-redirect', 'java-path-file-constructor', 'java-printstacktrace',
+    'java-processbuilder-concat', 'java-runtime-exec', 'java-scriptengine-eval',
+    'java-secretkeyspec-string-literal', 'java-session-never-expires',
+    'java-sql-error-detail-exposed', 'java-sslcontext-ssl', 'java-ssrf-url-request',
+    'java-static-iv-from-key', 'java-stdout-debug-print', 'java-trust-all-hostname',
+    'java-upload-extension-only-check', 'java-weak-cipher-des', 'java-weak-cipher-ecb',
+    'java-weak-messagedigest', 'java-weak-pbe-md5-des', 'java-xmldecoder', 'java-xss-jsp-servlet',
+    'jaxrs-container-response-cors', 'jaxrs-exception-in-response-entity', 'jaxrs-path-sensitive',
+    'jaxrs-permit-all', 'js-document-write', 'js-outerhtml-assign',
+    'jsch-stricthostkeychecking-disabled', 'jsp-raw-request-expression', 'jwt-none-alg',
+    'logger-exception-tostring', 'maven-known-eol-artifact', 'maven-snapshot-version', 'md5-hash',
+    'npm-deprecated-package', 'os-system', 'password-input-missing-autocomplete', 'pickle-loads',
+    'python-ssl-verify-false', 'resteasy-corsfilter-allowed-origins-star', 'secret-api-key-token',
+    'secret-aws-key', 'secret-bearer-token', 'secret-config-unquoted', 'secret-private-key-pem',
+    'sensitive-endpoint-permit-all', 'serializable-missing-svuid',
+    'servlet-cors-allow-origin-star', 'servlet-corsfilter-class', 'spring-any-request-permit-all',
+    'spring-exception-message-in-response-body', 'spring-sensitive-url-permit-all',
+    'ssrf-endpoint-from-config-property', 'struts-formfile-upload-handling', 'subprocess-shell',
+    'webxml-cors-filter-name', 'webxml-filter-class-cors', 'webxml-sensitive-url-pattern',
+    'webxml-wildcard-url-pattern', 'xml-axis2-admin-surface-exposed',
+    'xml-session-timeout-excessive', 'xml-transport-guarantee-none', 'yaml-unsafe-load',
+})
+
+
+def test_new_rules_ship_examples(regex_scan):
+    missing = sorted(
+        r.id for r in regex_scan.load_rules(_RULES_DIR)
+        if not r.examples.get("match") and r.id not in _LEGACY_RULES_WITHOUT_EXAMPLES
+    )
+    assert missing == [], "add examples.match (and ideally no_match) to these rules"
+
+
+def _example_cases(regex_scan):
+    from pipeline.llm_file_scan import lang_for_path
+
+    for rule in regex_scan.load_rules(_RULES_DIR):
+        for kind in ("match", "no_match"):
+            for ex in rule.examples.get(kind, []):
+                code, path = (ex["code"], ex.get("path")) if isinstance(ex, dict) else (ex, None)
+                lang = lang_for_path(path) if path else (rule.languages[0] if rule.languages else None)
+                yield rule, kind, code, lang
+
+
+def test_rule_examples_through_the_real_scan_path(regex_scan):
+    """Each rule's examples run exactly as triage runs them: line or
+    multiline mode, comment masking for the example's language, and the
+    rule's own language/framework filter."""
+    failures = []
+    for rule, kind, code, lang in _example_cases(regex_scan):
+        assert rule.applies_to(lang, set(rule.frameworks), None), f"{rule.id}: example language {lang!r} is filtered out"
+        mask = regex_scan._comment_line_mask(code, lang)
+        hits = regex_scan.scan_text_by_rule(code, rule, comment_lines=mask)
+        if (kind == "match") != bool(hits):
+            failures.append(f"{rule.id} [{kind}]: {code!r}")
+    assert failures == []
+
+
+def test_multiline_rules_report_every_match_up_to_the_cap(regex_scan):
+    rule = regex_scan.RegexRule(_rule(pattern=r"open\((?=[\s\S]{0,20}?close)"))
+    text = "\n".join(["open(a); close(a);", "x", "open(b); close(b);"])
+    assert [h["line"] for h in regex_scan.scan_text_by_rule(text, rule)] == [1, 3]
+
+    many = "\n".join("open(x); close(x);" for _ in range(40))
+    hits = regex_scan.scan_text_by_rule(many, rule)
+    assert len(hits) == regex_scan.MULTILINE_HITS_PER_FILE_CAP
+
+
+def test_multiline_hit_starting_in_a_comment_is_masked(regex_scan):
+    rule = regex_scan.RegexRule(_rule(pattern=r"open\((?=[\s\S]{0,40}?close)"))
+    text = "\n".join(["// open(a);", "close(a);", "open(b);", "close(b);"])
+    mask = regex_scan._comment_line_mask(text, "java")
+    assert [h["line"] for h in regex_scan.scan_text_by_rule(text, rule, comment_lines=mask)] == [3]
+
+
 def test_rule_group_by_rule_defaults_false_and_is_settable(regex_scan):
     default_rule = regex_scan.RegexRule(_rule())
     assert default_rule.group_by_rule is False
@@ -473,7 +582,7 @@ def test_active_surfaces_filters_by_language(regex_scan):
     python_only = regex_scan.active_surfaces(surfaces, languages={"python"})
     names = {s.surface for s in python_only}
     assert "Python injection sinks" in names
-    assert "SQL injection via JDBC" not in names
+    assert "SQL injection (JDBC/JPA/Spring Data)" not in names
 
 
 # --- comment-line masking ----------------------------------------------------
@@ -536,9 +645,9 @@ def test_comment_mask_is_off_when_file_lang_is_omitted(regex_scan):
     assert len(hits) == 1
 
 
-def test_comment_mask_does_not_apply_to_multiline_rules(regex_scan):
-    """entire-file-block-commented is a DOTALL whole-file search; comment
-    masking is line-oriented and must not suppress it."""
+def test_scan_comments_rule_is_never_masked(regex_scan):
+    """entire-file-block-commented matches a comment by design, so it opts
+    out of the comment mask with scan_comments."""
     rule = next(
         r for r in regex_scan.load_rules(_RULES_DIR)
         if r.id == "entire-file-block-commented"

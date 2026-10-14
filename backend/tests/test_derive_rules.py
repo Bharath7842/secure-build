@@ -172,6 +172,34 @@ def test_cap_prefers_pass_a_order(derive_rules):
     assert dropped == ["over_cap"] * 5
 
 
+def test_pass_a_ranks_wrappers_by_sink_severity(derive_rules):
+    """A capped derive keeps SQL/command wrappers over file/deser ones,
+    whatever order the graph lists them in."""
+    from types import SimpleNamespace
+
+    hits = [("readConfigFile", "files"), ("loadState", "deser"), ("runScript", "command"),
+            ("selectCount", "sql"), ("fetchRows", "jpa")]
+
+    class FakeGraph:
+        language = "java"
+
+        def sink_hits(self):
+            return [SimpleNamespace(caller_key=name, kind=kind) for name, kind in hits]
+
+        def caller_info(self, key):
+            return SimpleNamespace(name=key, is_constructor=False, file=f"src/main/java/{key}.java", display=key)
+
+        def is_test_path(self, path):
+            return False
+
+    raw = derive_rules.wrappers_from_graph(FakeGraph())
+    assert [r["wrapper_name"] for r in raw] == ["fetchRows", "selectCount", "runScript", "loadState", "readConfigFile"]
+    kept = derive_rules.compile_derived_rules(raw, [], cap=3)
+    assert [r.id for r in kept] == [
+        "runtime-sink-jpa-fetchRows", "runtime-sink-sql-selectCount", "runtime-sink-command-runScript",
+    ]
+
+
 def test_pass_b_mocked_merges(tmp_path, call_graph, derive_rules, regex_scan):
     paths = _write_java(tmp_path)
     graph = call_graph.build_call_graph(tmp_path, paths)

@@ -320,6 +320,9 @@ _EXT_TO_LANG: Dict[str, str] = {
     ".jsp": "java",
     ".ts": "typescript", ".tsx": "typescript",
     ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+    # Single-file components: script and template share the JS rule set, and
+    # the template rules (rules/frontend-templates.json) list javascript too.
+    ".vue": "javascript", ".svelte": "javascript",
     ".py": "python",
     ".go": "go",
     ".cs": "csharp",
