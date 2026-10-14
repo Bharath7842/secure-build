@@ -2,7 +2,7 @@
 
 Secure Build is an application-security platform with a **FastAPI** backend and a **Next.js** frontend. It runs two kinds of scans against your projects and gives you one place to review the results:
 
-- **SAST** (static analysis). It clones a repository, maps its structure and tech stack, ranks files by risk, and uses an LLM to find vulnerabilities. Optional Joern dataflow analysis and an agentic hunt add depth.
+- **SAST** (static analysis). It clones a repository, maps its structure and tech stack, ranks files by risk, and uses an LLM to find vulnerabilities. Optional Joern dataflow analysis adds depth.
 - **DAST** (dynamic analysis). It crawls a running web application with a browser and sends guarded test traffic. A model helps choose tests and explain evidence.
 - **Reports and CI.** Findings are grouped, filterable by verdict, and exportable (PDF, XLSX, SARIF, JUnit). A small REST API plugs into Jenkins, GitHub Actions, GitLab CI or plain shell.
 
@@ -36,7 +36,6 @@ Secure Build is an application-security platform with a **FastAPI** backend and 
 - LLM deep scan of the highest-risk files, guided by a regex rule catalog and per-stack "vulnerability surfaces". Remaining files get a fast regex triage tier, and every hit is then confirmed or dismissed by the LLM.
 - Verdicts: `true_positive`, `false_positive`, and `unverified` (a pattern matched and nobody has reviewed it yet).
 - Optional [Joern](https://joern.io) taint analysis (`reachableByFlows` from request inputs to dangerous sinks).
-- Opt-in **agentic hunt**: an LLM-driven investigator over a read-only ripgrep/read/callers toolbox. It only reports findings it can ground in code it actually saw.
 - Token-efficiency features: prompt caching on Bedrock, JSON-envelope outputs, batched confirmations, and a cross-scan LLM result cache. A per-scan spend cutoff (default $2) caps cost.
 - Pluggable LLM providers: AWS Bedrock, any OpenAI-compatible endpoint (vLLM, LM Studio, llama.cpp, OpenAI), and Ollama. A per-project `local_only` data policy blocks any non-local provider.
 
@@ -274,7 +273,7 @@ Restart the backend. Git must be installed, since the backend clones target repo
 | Component | Needed for | Linux install |
 |---|---|---|
 | **Playwright Chromium** | DAST crawling | `source backend/.venv/bin/activate && python -m playwright install --with-deps chromium` |
-| **ripgrep** | Agentic hunt | Already installed in the venv by the pinned `ripgrep` wheel. To use a PCRE2-enabled build, install `ripgrep` and set `RG_PATH=/usr/bin/rg`. |
+| **ripgrep** | Regex catalog prefilter (speed only) | Already installed in the venv by the pinned `ripgrep` wheel. To use another build, set `RG_PATH=/usr/bin/rg`. |
 | **Joern + JDK 17+** | Dataflow (taint) analysis | `sudo apt install -y openjdk-17-jdk`, then install Joern from https://joern.io (or `curl -L "https://github.com/joernio/joern/releases/latest/download/joern-install.sh" -o joern-install.sh && chmod +x joern-install.sh && ./joern-install.sh`). Put it on `PATH` or set `JOERN_HOME=/path/to/joern-cli`. Without Joern the Joern stages are logged no-ops. |
 | **Docker** | Practice targets in `dev/practice-targets/` | `sudo apt install -y docker.io docker-compose-v2` |
 
@@ -326,7 +325,7 @@ Put a reverse proxy (nginx or Caddy) with TLS in front of port 3000 if the app i
 
 ### 8. Linux notes
 
-- The agentic hunt's ripgrep runs under a `ulimit -v` memory wrapper. That wrapper is **enforced on Linux**; macOS ignores it.
+- The catalog prefilter's ripgrep runs under a `ulimit -v` memory wrapper. That wrapper is **enforced on Linux**; macOS ignores it.
 - Joern CPG builds on large Java repos want 4-8 GB of heap (`JOERN_JAVA_OPTS=-Xmx6g`).
 - If a Playwright launch fails with missing shared libraries, re-run `python -m playwright install --with-deps chromium`.
 - Port 3000 is the frontend's default. If you run the Juice Shop practice target, it is bound to 3001 for that reason.
@@ -364,7 +363,7 @@ The backend reads the **root** `.env` file (`secure-build/.env`) via `app/config
 | Variable | Purpose |
 |---|---|
 | `JOERN_HOME`, `JOERN_JAVA_HOME`, `JOERN_JAVA_OPTS`, `JOERN_TIMEOUT_SEC` | Joern install location, JDK, heap size and timeout. |
-| `RG_PATH` | Use a specific `rg` binary for the agentic hunt. |
+| `RG_PATH` | Use a specific `rg` binary for the regex catalog prefilter. |
 | `SAST_REFRESH_CACHE` | `1` clears the cached tech-stack fingerprint before each scan. |
 | `NVD_API_KEY` | Optional NVD key for vulnerability lookups. |
 
@@ -407,7 +406,6 @@ python sast_scan_agent.py --path /path/to/project                 # full scan
 python sast_scan_agent.py --path /path/to/project --no-llm        # discovery + regex only
 python sast_scan_agent.py --path /path/to/project --llm-provider ollama --llm-model granite-code:3b
 python sast_scan_agent.py --path /path/to/project --no-joern
-python sast_scan_agent.py --path /path/to/project --hunt          # agentic hunt
 ```
 
 ### Practice targets for DAST
@@ -424,7 +422,7 @@ scan_directory → analyze_tech_stack → categorize_files → map_modules_and_r
   → confirm_triage_groups → generate_report
 ```
 
-(Joern and hunt nodes run in between when enabled.)
+(Joern nodes run in between when enabled.)
 
 | Stage | What happens |
 |---|---|
@@ -532,7 +530,7 @@ There is no frontend test runner. Use lint and the Next.js build.
 ## Further documentation
 
 - [CLAUDE.md](CLAUDE.md): architecture deep-dive for contributors.
-- [backend/sast_engine/README.md](backend/sast_engine/README.md): engine pipeline, Joern, agentic hunt, CLI and LLM backends.
+- [backend/sast_engine/README.md](backend/sast_engine/README.md): engine pipeline, Joern, CLI and LLM backends.
 - [backend/sast_engine/rules/README.md](backend/sast_engine/rules/README.md): rule catalog field reference.
 - [docs/how-scan-works.md](docs/how-scan-works.md): scan lifecycle.
 - [DAST_IMPLEMENTATION.md](DAST_IMPLEMENTATION.md) and [spec/](spec/): DAST overview and design.

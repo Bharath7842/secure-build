@@ -563,9 +563,7 @@ def test_build_graph_wires_joern_nodes(agent):
     assert ("map_modules_and_risk", "build_joern_cpg") in edges
     assert ("build_joern_cpg", "build_call_graph") in edges
     assert ("scan_triage_files", "joern_scan") in edges
-    # The agentic hunt sits between the Joern queries and triage grouping.
-    assert ("joern_scan", "hunt_security") in edges
-    assert ("hunt_security", "group_triage_findings") in edges
+    assert ("joern_scan", "group_triage_findings") in edges
 
 
 # ---------------------------------------------------------------------------

@@ -30,8 +30,6 @@ export interface Project {
   llm_data_policy?: LlmDataPolicy;
   /** The API key itself is write-only and never returned. */
   llm_api_key_set?: boolean;
-  /** Agentic-hunt patterns promoted on earlier scans; run with the catalog on later ones. */
-  learned_rules?: Array<{ id: string; title?: string; cwe?: string; pattern: string; learned_from_scan_id?: string; last_confirmed_at?: string }>;
   fallback_llm_provider?: SastFallbackProvider | string | null;
   fallback_llm_model?: string | null;
   owasp_mode: "top10" | "top15" | "custom";

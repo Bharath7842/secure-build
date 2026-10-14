@@ -38,7 +38,7 @@ except ImportError:  # pragma: no cover — 3.10 and older
     import sre_constants  # type: ignore[no-redef]
     import sre_parse  # type: ignore[no-redef]
 
-from pipeline.hunt.rg_runner import RgRunner
+from pipeline.rg_runner import RgRunner
 from pipeline.regex_scan import RegexRule
 
 MIN_LITERAL_CHARS = 4

@@ -54,8 +54,7 @@ networkx>=3.2
 python-dotenv>=1.0.0
 beautifulsoup4>=4.12.0
 semgrep==1.34.1
-# Agentic hunt: ships a pinned `rg` binary into the interpreter's bin/
-# (pipeline/hunt/rg_runner.find_rg_binary looks there). The prebuilt wheel
-# has no PCRE2, so hunt patterns must avoid look-around; RG_PATH can point at
-# a PCRE2-enabled build instead.
+# Triage catalog prefilter (pipeline/rg_prefilter.py): ships a pinned `rg`
+# binary into the interpreter's bin/ (pipeline/rg_runner.find_rg_binary looks
+# there). RG_PATH can point at another build instead.
 ripgrep==15.1.0

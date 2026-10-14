@@ -22,7 +22,6 @@ PROGRESS_MARKERS: list[tuple[str, int]] = [
     ("files (deep scan)", 85),
     ("files (triage)", 97),
     ("### Running Joern queries", 97),
-    ("### Hunting vulnerabilities (agentic)", 97),
     ("### Grouping ", 98),
     ("### Generating report", 99),
     # Fixed-tier labels from before the banners named the actual tiers.

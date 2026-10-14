@@ -1,7 +1,7 @@
 """ripgrep literal prefilter for the regex catalog pass.
 
 The gate: for every eligible rule, every file with a Python hit must be in
-rg's candidate set (superset), over real code (this repository and the hunt
+rg's candidate set (superset), over real code (this repository and the Java
 fixture, every rule against every file regardless of language) and over
 synthetic edge cases rg would otherwise skip. Plus: triage output is
 identical with and without the prefilter.
@@ -21,7 +21,7 @@ if str(_ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(_ENGINE_DIR))
 
 from pipeline import llm_file_scan, regex_scan  # noqa: E402
-from pipeline.hunt.rg_runner import RgRunner, find_rg_binary  # noqa: E402
+from pipeline.rg_runner import RgRunner, find_rg_binary  # noqa: E402
 from pipeline.regex_scan import RegexRule  # noqa: E402
 from pipeline.rg_prefilter import build_prefilter, required_literal, rules_for_path_fn  # noqa: E402
 
@@ -85,9 +85,9 @@ def _python_hit_files(root: Path, paths, rules):
 
 
 @needs_rg
-@pytest.mark.parametrize("corpus", ["repository", "hunt_fixture"])
+@pytest.mark.parametrize("corpus", ["repository", "java_fixture"])
 def test_prefilter_is_a_superset_of_python_hits_on_real_code(corpus):
-    root = _BACKEND.parent if corpus == "repository" else _BACKEND / "tests" / "fixtures" / "hunt_java"
+    root = _BACKEND.parent if corpus == "repository" else _BACKEND / "tests" / "fixtures" / "java_corpus"
     paths = _corpus_files(root)
     pre = build_prefilter(root, paths, CATALOG)
     assert pre is not None and pre.eligible, "expected most catalog rules to be prefilter-eligible"
@@ -98,7 +98,7 @@ def test_prefilter_is_a_superset_of_python_hits_on_real_code(corpus):
         if hits[rule_id] - pre.candidates[rule_id]
     }
     assert violations == {}
-    # The repository corpus must actually exercise the gate (the small hunt
+    # The repository corpus must actually exercise the gate (the small Java
     # fixture's catalog hits all come from alternation rules, which are
     # ineligible and so always run in full).
     if corpus == "repository":
@@ -157,7 +157,7 @@ def test_failed_search_falls_back_to_full_scan(tmp_path, monkeypatch):
 
 @needs_rg
 def test_triage_findings_identical_with_and_without_prefilter():
-    root = _BACKEND / "tests" / "fixtures" / "hunt_java"
+    root = _BACKEND / "tests" / "fixtures" / "java_corpus"
     paths = _corpus_files(root)
     entries = [{"path": p, "module": "(root)", "lang": "java", "risk_level": "MEDIUM"} for p in paths]
 

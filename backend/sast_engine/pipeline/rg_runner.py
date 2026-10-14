@@ -1,13 +1,11 @@
-"""ripgrep execution for the hunt, hardened for LLM-written patterns.
-
-Every pattern and glob here may have been written by a model reading
-untrusted repository text, so:
+"""ripgrep execution for the catalog prefilter (rg_prefilter.py), hardened
+so a pattern or glob can never escape its argv slot or the repo root:
 
 * patterns are passed as `--regexp=<p>` (a leading `-` can never become a
   flag) and globs as `--glob=<g>`, in an argv list, never through a shell;
 * globs must be relative with no `..`, and every result path is resolved
   and confined to the repo root, then post-filtered to the engine's own file
-  inventory so the hunt sees exactly the scan's scope;
+  inventory so callers see exactly the scan's scope;
 * the default (Rust) regex engine runs in linear time; PCRE2 — only used
   when a pattern needs look-around/backreferences and the binary has it —
   gets a static nested-quantifier check and a shorter timeout;
@@ -19,7 +17,7 @@ Memory: rg is started through `/bin/sh -c 'ulimit -v <kb>; exec "$0" "$@"'`
 so the child caps its own address space before becoming rg (same PID, so
 timeouts still kill rg). preexec_fn would do the same in-process, but it is
 documented as unsafe (it can deadlock the child) when the parent has threads,
-and hunters run on worker threads. The rg arguments travel as "$@", never
+and triage runs on worker threads. The rg arguments travel as "$@", never
 through the script text. Linux enforces the cap; macOS refuses RLIMIT_AS, so
 there it is best-effort and `memory_limit_enforced()` reports False.
 """

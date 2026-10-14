@@ -1304,10 +1304,9 @@ def test_run_real_scan_threads_scan_limitation_suppression_flags(monkeypatch, pr
     assert captured_states[1]["derive_runtime_rules"] is False
 
 
-def test_run_real_scan_threads_agentic_hunt_toggle_and_llm_endpoint(monkeypatch, project_tree, tmp_path_factory):
-    """agentic-security-hunt (default on) maps to hunt_mode, and only when the
-    scan uses an LLM; the project's openai_compat endpoint, key and data
-    policy reach the engine's usage dict (never the scan row)."""
+def test_run_real_scan_threads_llm_endpoint(monkeypatch, project_tree, tmp_path_factory):
+    """The project's openai_compat endpoint, key and data policy reach the
+    engine's usage dict (never the scan row)."""
     monkeypatch.setenv("SAST_AST_CACHE_DIR", str(tmp_path_factory.mktemp("ast_cache")))
     engine_dir = Path(__file__).resolve().parents[1] / "sast_engine"
     monkeypatch.setattr(settings, "sast_framework_path", str(engine_dir))
@@ -1332,21 +1331,12 @@ def test_run_real_scan_threads_agentic_hunt_toggle_and_llm_endpoint(monkeypatch,
         llm_data_policy = "local_only"
         metadata_json = {"use_llm": True}
 
-    class FakeScanNoLlm(FakeScan):
-        metadata_json = {"use_llm": False}
-
-    default_project = Project(name="hunt-default", default_git_url="https://example.com/r.git", languages=["Java"],
-                              limitations_config={"agentic-security-hunt": False})
-    hunting = Project(
-        name="hunt-on", default_git_url="https://example.com/r.git", languages=["Java"],
-        limitations_config={"agentic-security-hunt": True}, llm_api_key="sk-local",
+    project = Project(
+        name="local-llm", default_git_url="https://example.com/r.git", languages=["Java"], llm_api_key="sk-local",
     )
-    for project, scan in ((default_project, FakeScan()), (hunting, FakeScan()), (hunting, FakeScanNoLlm())):
-        agent_bridge.run_real_scan(project=project, workspace=project_tree, changed_paths=None, scan_id=None, scan=scan)
+    agent_bridge.run_real_scan(project=project, workspace=project_tree, changed_paths=None, scan_id=None, scan=FakeScan())
 
-    assert [s["hunt_mode"] for s in captured_states] == ["off", "agentic", "off"]
-    assert captured_states[0]["learned_rules"] == []
-    usage = captured_states[1]["usage"]
+    usage = captured_states[0]["usage"]
     assert usage["_provider_options"]["openai_compat"] == {"base_url": "http://127.0.0.1:1234/v1", "api_key": "sk-local"}
     assert usage["_data_policy"] == "local_only"
     assert usage["fallback_provider"] == "none"
@@ -1406,7 +1396,6 @@ def test_untouched_project_runs_every_sast_toggle_at_its_catalog_default(monkeyp
     project = Project(name="defaults", default_git_url="https://example.com/r.git", languages=["Java"])
     agent_bridge.run_real_scan(project=project, workspace=project_tree, changed_paths=None, scan_id=None, scan=FakeScan())
     state = captured[0]
-    assert state["hunt_mode"] == "agentic"
     assert state["catalog_prefilter"] is True
     assert state["suppress_http_findings"] is True
     assert state["inter_file_flow"] and state["joern_dataflow"] and state["derive_runtime_rules"]

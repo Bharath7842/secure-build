@@ -15,8 +15,6 @@ flowchart TD
     Triage -->|hits| Unverified["Published as 'unverified', batched by module"]
     DeepScan --> Report[Generate report]
     Unverified --> Report
-    Unverified --> Hunt["Agentic hunt (opt-in): plan -> rg search/read -> validate"]
-    Hunt --> Report
 ```
 
 1. **Scan directory** — walk the repo (or scoped subdirectory), list files,
@@ -174,103 +172,31 @@ scripts use the `io.shiftleft`/`io.joern.dataflowengineoss` APIs, so
 re-check them after a major Joern upgrade (`pytest -m live
 tests/test_joern.py`).
 
-## Agentic hunt (opt-in)
+## Ripgrep catalog prefilter
 
-`pipeline/hunt/`, node `hunt_security` (after `joern_scan`). Off unless
-`hunt_mode == "agentic"` — limitation `agentic-security-hunt` for API scans,
-`--hunt` on the CLI — and a logged no-op without an LLM or without ripgrep.
-The catalog pass stays the deterministic floor; the hunt adds what a fixed
-pattern list can't express: cross-method, cross-file source-to-sink proof.
+`pipeline/rg_prefilter.py` (limitation `ripgrep-catalog-prefilter`, on by
+default for API scans; `--catalog-prefilter` on the CLI): rg narrows which
+(file, rule) pairs the Python catalog pass checks, using a literal every match
+must contain (taken from Python's own regex parse). Python stays the authority,
+so findings are identical either way. On a ~1k-file repo it was slower
+(4.2s vs 1.8s), because one rg process per literal outweighs the saved work.
 
-```
-dossier (no LLM) -> planner (1 call) -> investigators (parallel) -> validator -> findings (kind=hunt)
-```
+rg runs through `pipeline/rg_runner.py`: patterns go in as `--regexp=`, globs
+are repo-confined and relative, results are post-filtered to the inventory,
+and size limits, a streamed 8 MB output cap and timeouts apply. Each rg runs
+under `/bin/sh -c 'ulimit -v <kb>; exec "$0" "$@"'` (`RG_MEMORY_LIMIT_MB`,
+default 2048), which Linux enforces and macOS treats as best-effort. An
+abnormal rg exit is an error (or truncation), never "no matches". The binary
+comes from the pinned `ripgrep` wheel in requirements.txt; `RG_PATH`
+overrides it.
 
-- **Dossier** (`repo_index.py`): a bounded (~6k-token) summary standing in
-  for the repo — stack, surfaces, entry points, per-kind sink inventory
-  (call-graph resolved when the graph exists, else rg file counts),
-  security-config files, catalog hit histogram, unconfirmed flows. The model
-  never sees a file list.
-- **Planner** (`planner.py`): deterministic seed hypotheses (every sink kind
-  present, every unconfirmed flow, authz/CSRF surfaces) plus one LLM call to
-  rank and extend them (`{"hypotheses": [...]}`), capped at 20. Seeds keep a
-  floor when the planner fails.
-- **Investigator** (`investigator.py`): one JSON action per turn over the
-  read-only toolbox (`tools.py`: `search`, `search_sinks`, `search_sources`,
-  `read`, `definition`, `callers`, `find_sanitizers`, `find_authz`,
-  `list_files`, then `report`/`abandon`). The engine classifies every search
-  — INVALID (rg's error + a fix hint), ZERO (one relaxed variant tried
-  automatically), TOO_MANY (>300: totals and a module histogram only),
-  NOISY (mostly comments/tests/generated: filtered and stated) — and keeps
-  an evidence checklist the model can only update with lines a tool actually
-  showed it. A `report` with gaps (a sink with no proven source/path, no
-  sanitizer check, no authorization check) is refused as
-  INSUFFICIENT_EVIDENCE with the missing items and the strategy to switch to;
-  after that, or after 3 consecutive searches for something already
-  established, further searches for it are blocked. Loop guards: pattern
-  memo, 3 reformulations per intent, 14 steps per hypothesis, one corrective
-  retry for a malformed action. The engine pre-runs the obvious first search
-  so no LLM turn is spent on it.
-- **Symbols** (`symbols.py`): Joern taint paths, then the tree-sitter
-  CallGraph (built lazily over the Java inventory when the scan didn't build
-  one), then rg — and rg results are labelled `textual` and never count as
-  proof.
-- **Validator** (`validator.py`): grounding against the `EvidenceLedger`
-  (every cited line must have been shown; quotes must match the file,
-  redaction-aware) — else dropped. Evidence level L3 (Joern path), L2 (every
-  hop graph-resolved or read in full within one method, request-accessor or
-  entry-parameter source, known sink), L1 otherwise. L2/L3 candidates go to an
-  independent verifier with no transcript (`flow_verify.verify_flows` for
-  source->sink classes, `confirm_finding_group` for single-construct ones);
-  `true_positive` needs L2/L3 *and* agreement, anything else is `unverified`
-  with the reason. Dedupe is per finding (file, sink line +-2, CWE family)
-  against every other tier — a CRITICAL-file finding the deep scan missed is
-  published, one it found is counted as `corroborated`.
-- **Budget/safety** (`budget.py`, `redact.py`, `rg_runner.py`): atomic
-  reservations (worst-case cost reserved before each call, settled after) for
-  USD, tokens, wall time, LLM and rg calls; the USD default is 30% of the
-  scan's remaining cost cutoff. Secret values are masked before any code
-  leaves the process (line-count preserving). Repository text reaches the
-  model only inside `<untrusted_code>` blocks. rg runs with patterns as
-  `--regexp=`, repo-confined relative globs, inventory post-filtering, size
-  limits, a streamed 8 MB output cap and timeouts. Each rg runs under
-  `/bin/sh -c 'ulimit -v <kb>; exec "$0" "$@"'` (`RG_MEMORY_LIMIT_MB`, default
-  2048; args never pass through the script) — enforced on Linux, best-effort
-  on macOS, reported as `report["hunt"]["rg_memory_limit_enforced"]`. An
-  abnormal rg exit is an error (or truncation), never "no matches". The prebuilt `ripgrep`
-  wheel (requirements.txt) has no PCRE2, so look-around patterns get a
-  rewrite hint unless `RG_PATH` points at a PCRE2 build.
-- **Scope**: seeds from `triage_scan_paths` (HIGH/MEDIUM/LOW), ranked HIGH
-  first; traces and publishes anywhere in the inventory. Tests are
-  deprioritized, generated files excluded; `--hunt-profile benchmark` (state
-  `hunt_profile`) includes both, for OWASP Benchmark / Juliet layouts.
-- **Report**: `report["hunt"]` — per-hypothesis status
-  (confirmed/refuted/inconclusive/budget), strategy trail, searches and
-  outcomes, evidence levels, dropped/corroborated counts, budget snapshot.
-- **Learned rules** (`learned.py`): a model-written search that surfaced a
-  confirmed TP sink becomes a candidate rule, promoted only if Python
-  compiles it, it matches every sink it is credited with, it matches no
-  refuted/verifier-disputed site, and its repo-wide match count stays under a
-  noise ceiling. Rows (promoted/rejected with reasons) land in
-  `report["hunt"]["learned_rules"]`; on a successful API scan,
-  `scan_runner._remember_learned_rules` merges the promoted ones into
-  `Project.learned_rules` (`app/services/learned_rules.py`: stable
-  pattern-hash ids, deduped, newest 50), and later scans run them with the
-  catalog (`state["learned_rules"]` -> `_learned_rules` in `_scan_context`;
-  limitation `learned-hunt-rules`, default on; a pattern that no longer
-  compiles or collides with a catalog id is skipped). Remove one with
-  `DELETE /projects/{id}/learned-rules/{rule_id}`.
-- `scan_runner.reconcile_unverified_findings` skips `kind=hunt`: their
-  `unverified` is a deliberate evidence cap, not unfinished work.
-- **Catalog prefilter** (`pipeline/rg_prefilter.py`, opt-in: limitation
-  `ripgrep-catalog-prefilter` / `--catalog-prefilter`): rg narrows which
-  (file, rule) pairs the Python catalog pass checks via a literal every match
-  must contain (from Python's own regex parse); Python stays the authority and
-  findings are identical. Off by default — measured slower on a ~1k-file repo
-  (4.2s vs 1.8s) since one rg process per literal outweighs the saved work.
+The agentic hunt (`pipeline/hunt/`, node `hunt_security`, learned rules) was
+removed. Old scans can still hold `kind=hunt` findings, and
+`scan_runner.reconcile_unverified_findings` skips them because their
+`unverified` is an evidence cap.
 
-Offline tests: `tests/test_hunt_*.py` against `tests/fixtures/hunt_java`
-(scripted LLM; rg and tree-sitter-java needed for the graph-resolved paths).
+Offline tests: `tests/test_rg_runner.py`, and `tests/test_rg_prefilter.py`
+against `tests/fixtures/java_corpus`.
 
 ## Rule catalog and vulnerability surfaces
 
@@ -305,7 +231,7 @@ python sast_scan_agent.py --path /path/to/project --llm-provider ollama --llm-mo
 python sast_scan_agent.py --path /path/to/project --no-joern
 python sast_scan_agent.py --path /path/to/project --llm-provider openai_compat \
     --llm-base-url http://localhost:8000/v1 --llm-model Qwen/Qwen2.5-Coder-32B-Instruct \
-    --llm-data-policy local_only --hunt
+    --llm-data-policy local_only
 ```
 
 ## LLM backends
@@ -328,7 +254,7 @@ the configured fallback provider — default `none`, which raises
 A `local_only` data policy (`init_usage(data_policy=...)`) refuses Bedrock
 and any non-localhost/private endpoint (`LlmPolicyViolation`); the API also
 refuses such a scan at trigger time. `call_llm(meta_out=...)` reports one
-call's own tokens — what the hunt budget settles on under concurrency.
+call's own tokens.
 
 `call_llm` also owns the two token-saving mechanisms shared by every stage:
 
