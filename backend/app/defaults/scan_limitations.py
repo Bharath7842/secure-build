@@ -198,6 +198,15 @@ SCAN_LIMITATIONS: tuple[ScanLimitation, ...] = (
         source="llm_file_scan.py looks_vendored_or_minified",
     ),
     ScanLimitation(
+        id="parallel-scan-stages",
+        enabled_by_default=True,
+        category="engine-cap",
+        title="Flow Analysis, Deep Scan and Triage Run in Parallel",
+        description="After the call graph and runtime rules are built, the inter-file flow analysis (with the Joern queries), the deep LLM scan and the regex triage tier run at the same time instead of one after another, then join for grouping and confirmation. This cuts wall-clock time, not tokens. While they run, the LLM cost cutoff is split into reserved shares (deep scan 55%, flows 10%, triage/confirmation 35%); a stage that finishes under its share releases the rest to the others, and all provider calls share one concurrency limit (LLM_MAX_CONCURRENCY, default 8) that halves on throttling and recovers gradually. Log lines from each stage are tagged so the live log can keep them apart. Turn this off for a strictly sequential run with an easier-to-read log.",
+        affected_scope="Scan stages after runtime-rule derivation",
+        source="sast_scan_agent.py build_graph(parallel=True) / state['parallel_stages']; llm_client.reserve_stage_budgets, AdaptiveLimiter",
+    ),
+    ScanLimitation(
         id="test-files-skipped",
         enabled_by_default=True,
         category="engine-cap",

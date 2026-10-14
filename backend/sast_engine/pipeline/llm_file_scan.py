@@ -46,7 +46,14 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 from llm_client import call_llm, parse_llm_json_array
 
 from .owasp_map import OWASP_TOP_10_2021, owasp_for_rule
-from .regex_scan import RegexRule, rules_for_prompt, scan_one_file, _SQL_CONCAT_CATALOG_IDS
+from .regex_scan import (
+    PROCESS_POOL_MIN_FILES,
+    RegexRule,
+    _SQL_CONCAT_CATALOG_IDS,
+    rules_for_prompt,
+    scan_files_in_processes,
+    scan_one_file,
+)
 
 # --- tunables ---------------------------------------------------------------
 
@@ -2043,6 +2050,8 @@ def scan_triage_files(
     entries: Optional[List[Dict[str, Any]]] = None,
     triage_mode: str = DEFAULT_TRIAGE_MODE,
     rules_for_path: Optional[Callable[[str], List[RegexRule]]] = None,
+    on_file_done: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+    regex_processes: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Regex-scan every MEDIUM/LOW-risk file (plus any CRITICAL/HIGH overflow
     the caller routes here past DEEP_SCAN_FILE_CAP).
@@ -2068,13 +2077,42 @@ def scan_triage_files(
     `rules_for_path` (pipeline/rg_prefilter.py) narrows the rules run on each
     file to those ripgrep found a required literal for; a file left with no
     rules is never read. Python stays the authority on every hit.
+
+    `on_file_done(position, result)` fires once per entry, whatever happened
+    to it (callers track per-batch completion with it). `regex_processes`
+    runs the regex pass in worker processes — None means "when there are at
+    least regex_scan.PROCESS_POOL_MIN_FILES files"; the findings are the same
+    either way.
     """
     triage_files = entries if entries is not None else files_for_risk_levels(module_plan, TRIAGE_RISK_LEVELS)
     total = len(triage_files)
     results: List[Optional[Dict[str, Any]]] = [None] * total
     rules_by_id = {rule.id: rule for rule in rules}
 
+    prescanned: Dict[str, Dict[str, Any]] = {}
+    if regex_processes or (regex_processes is None and total >= PROCESS_POOL_MIN_FILES):
+        jobs = []
+        for entry in triage_files:
+            path = entry["path"]
+            file_rules = rules_for_path(path) if rules_for_path is not None else rules
+            if not file_rules:
+                continue  # prefiltered out; _run_one records it without reading
+            rule_ids = None if file_rules is rules else tuple(r.id for r in file_rules)
+            jobs.append((path, entry.get("module", "(root)"), entry.get("lang") or lang_for_path(path), rule_ids))
+        prescanned = scan_files_in_processes(
+            jobs, repo_root=repo_root, rules=rules,
+            active_frameworks=active_frameworks, dependency_index=dependency_index,
+        ) or {}
+
     def _run(indexed: Tuple[int, Dict[str, Any]]) -> None:
+        try:
+            _run_one(indexed)
+        finally:
+            if on_file_done is not None:
+                with _CALLBACK_LOCK:
+                    on_file_done(indexed[0], results[indexed[0]] or {})
+
+    def _run_one(indexed: Tuple[int, Dict[str, Any]]) -> None:
         position, entry = indexed
         path = entry["path"]
         if on_file_start is not None:
@@ -2089,7 +2127,7 @@ def scan_triage_files(
                 "skipped_no_hits": True, "prefiltered": True, "chunk_errors": [],
             }
             return
-        scanned = scan_one_file(
+        scanned = prescanned.get(path) or scan_one_file(
             repo_root, path, entry.get("module", "(root)"), file_rules,
             file_lang=lang, active_frameworks=active_frameworks,
             dependency_index=dependency_index,

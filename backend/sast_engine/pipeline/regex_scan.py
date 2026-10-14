@@ -27,10 +27,13 @@ rules.
 from __future__ import annotations
 
 import json
+import multiprocessing
+import os
 import re
 import time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 
 _MAX_SNIPPET_LEN = 160
 # Multiline rules search the whole file with finditer; past this many hits
@@ -480,6 +483,69 @@ def scan_one_file(
         "applicable_rule_count": len(applicable_rules),
         "read_error": read_error,
     }
+
+
+# --- the regex pass in worker processes ----------------------------------------
+#
+# The catalog pass is pure-Python regex, so threads serialize on the GIL. On
+# large triage sets it runs in worker processes instead. "spawn" is used
+# everywhere: forking a process that already runs scan threads can deadlock.
+# Workers receive the rules once (initializer), then (path, module, lang,
+# rule_ids) jobs; results are exactly what scan_one_file returns in-process.
+PROCESS_POOL_MIN_FILES = 500
+PROCESS_POOL_WORKERS = max(1, min(8, (os.cpu_count() or 2) - 1))
+
+_WORKER: Dict[str, Any] = {}
+
+ScanJob = Tuple[str, str, Optional[str], Optional[Tuple[str, ...]]]
+
+
+def _worker_init(rules: List[RegexRule], repo_root: str,
+                 active_frameworks: Optional[Set[str]],
+                 dependency_index: Optional[Dict[str, List[Optional[str]]]]) -> None:
+    _WORKER.update(
+        rules=list(rules), by_id={r.id: r for r in rules}, root=Path(repo_root),
+        frameworks=active_frameworks, deps=dependency_index,
+    )
+
+
+def _worker_scan(job: ScanJob) -> Dict[str, Any]:
+    path, module, lang, rule_ids = job
+    rules = _WORKER["rules"] if rule_ids is None else [_WORKER["by_id"][i] for i in rule_ids]
+    return scan_one_file(
+        _WORKER["root"], path, module, rules, file_lang=lang,
+        active_frameworks=_WORKER["frameworks"], dependency_index=_WORKER["deps"],
+    )
+
+
+def scan_files_in_processes(
+    jobs: Sequence[ScanJob],
+    *,
+    repo_root: Path,
+    rules: List[RegexRule],
+    active_frameworks: Optional[Set[str]] = None,
+    dependency_index: Optional[Dict[str, List[Optional[str]]]] = None,
+    workers: int = PROCESS_POOL_WORKERS,
+) -> Optional[Dict[str, Dict[str, Any]]]:
+    """{path: scan_one_file result} for every job, computed in worker
+    processes; None if a pool can't be used here (the caller then scans
+    in-process, with identical results)."""
+    if not jobs:
+        return {}
+    workers = max(1, min(workers, len(jobs)))
+    try:
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=_worker_init,
+            initargs=(list(rules), str(repo_root), active_frameworks, dependency_index),
+        ) as pool:
+            chunksize = max(1, len(jobs) // (workers * 8))
+            results = list(pool.map(_worker_scan, jobs, chunksize=chunksize))
+    except Exception as exc:  # noqa: BLE001 — fall back, never fail the tier
+        print(f"  [regex] worker processes unavailable ({type(exc).__name__}: {exc}); scanning in-process")
+        return None
+    return {job[0]: result for job, result in zip(jobs, results)}
 
 
 def scan_files_for_tier(

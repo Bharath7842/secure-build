@@ -7,10 +7,12 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import random
 import re
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import boto3
@@ -73,6 +75,138 @@ PROVIDER_OPTIONS_USAGE_KEY = "_provider_options"
 DATA_POLICY_USAGE_KEY = "_data_policy"
 DATA_POLICY_LOCAL_ONLY = "local_only"
 DATA_POLICY_ALLOW_EXTERNAL = "allow_external"
+
+
+# --- concurrency: one process-wide cap on in-flight provider calls ----------
+#
+# Parallel scan stages each run their own worker pools; without a shared cap,
+# 3 stages x 8 workers is 24 requests in flight and Bedrock throttles Haiku.
+# The limit halves on every throttle and climbs back by one per
+# LIMITER_RECOVER_AFTER successful calls (AIMD), never above the maximum.
+LLM_MAX_CONCURRENCY = max(1, int(os.environ.get("LLM_MAX_CONCURRENCY", "8")))
+LIMITER_RECOVER_AFTER = 10
+THROTTLE_RETRIES = 6
+THROTTLE_MAX_WAIT_SECONDS = 30.0
+_THROTTLE_CODES = frozenset({
+    "ThrottlingException", "TooManyRequestsException", "ServiceUnavailableException",
+    "ModelNotReadyException",
+})
+
+
+class AdaptiveLimiter:
+    def __init__(self, maximum: int):
+        self.maximum = max(1, int(maximum))
+        self.limit = self.maximum
+        self.active = 0
+        self._successes = 0
+        self._cond = threading.Condition()
+
+    @contextmanager
+    def slot(self) -> Iterator[None]:
+        with self._cond:
+            while self.active >= self.limit:
+                self._cond.wait()
+            self.active += 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                self.active -= 1
+                self._cond.notify()
+
+    def on_success(self) -> None:
+        with self._cond:
+            if self.limit >= self.maximum:
+                return
+            self._successes += 1
+            if self._successes >= LIMITER_RECOVER_AFTER:
+                self._successes = 0
+                self.limit += 1
+                self._cond.notify()
+
+    def on_throttle(self) -> None:
+        with self._cond:
+            self.limit = max(1, self.limit // 2)
+            self._successes = 0
+
+
+_LIMITER = AdaptiveLimiter(LLM_MAX_CONCURRENCY)
+
+
+def is_throttle_error(exc: BaseException) -> bool:
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        if ((response.get("Error") or {}).get("Code")) in _THROTTLE_CODES:
+            return True
+    status = getattr(response, "status_code", None)
+    if status == 429:
+        return True
+    text = str(exc)
+    return "Throttl" in text or "Too many requests" in text or "TooManyRequests" in text
+
+
+def throttle_wait_seconds(attempt: int) -> float:
+    """Exponential backoff with full jitter around the midpoint, so workers
+    that were throttled together don't retry together."""
+    return min(THROTTLE_MAX_WAIT_SECONDS, 2.0 ** attempt) * random.uniform(0.5, 1.5)
+
+
+# --- per-stage budget reservations (parallel stages only) -------------------
+#
+# When stages run concurrently, "first come, first served" lets whichever
+# stage fans out fastest spend the whole cutoff. reserve_stage_budgets gives
+# each stage a share of the cutoff; a stage may always spend its own share and
+# may go beyond it only into what nobody has claimed — unstarted shares stay
+# reserved until finish_stage releases what that stage didn't use. The global
+# cutoff still bounds the total. Steps not mapped to a stage (derive, SBOM)
+# only count against the global cutoff.
+STAGE_BUDGET_USAGE_KEY = "_stage_budget"
+DEFAULT_STAGE_SHARES = {"deep": 0.55, "flows": 0.10, "triage": 0.35}
+STEP_STAGES = {
+    "scan_deep_files": "deep",
+    "verify_flow_slices": "flows",
+    "scan_triage_files": "triage",
+    "group_confirm_triage_findings": "triage",
+}
+
+
+def reserve_stage_budgets(usage: Optional[Dict[str, Any]], shares: Optional[Dict[str, float]] = None) -> None:
+    if usage is None:
+        return
+    shares = dict(shares or DEFAULT_STAGE_SHARES)
+    with _USAGE_LOCK:
+        usage[STAGE_BUDGET_USAGE_KEY] = {
+            "shares": shares,
+            "spent": {stage: 0.0 for stage in shares},
+            "finished": [],
+        }
+
+
+def finish_stage(usage: Optional[Dict[str, Any]], stage: str) -> None:
+    if usage is None:
+        return
+    with _USAGE_LOCK:
+        budget = usage.get(STAGE_BUDGET_USAGE_KEY)
+        if budget is not None and stage not in budget["finished"]:
+            budget["finished"].append(stage)
+
+
+def _stage_over_budget(usage: Dict[str, Any], step: str, cutoff: float) -> bool:
+    """Caller holds _USAGE_LOCK."""
+    budget = usage.get(STAGE_BUDGET_USAGE_KEY)
+    stage = STEP_STAGES.get(step)
+    if budget is None or stage is None or stage not in budget["shares"]:
+        return False
+    spent = budget["spent"]
+    own_share = budget["shares"][stage] * cutoff
+    if spent.get(stage, 0.0) < own_share:
+        return False
+    committed = sum(
+        spent.get(s, 0.0) if s in budget["finished"] else max(spent.get(s, 0.0), share * cutoff)
+        for s, share in budget["shares"].items()
+    )
+    unstaged = float(usage.get("cost_usd") or 0.0) - sum(spent.values())
+    return committed + max(0.0, unstaged) >= cutoff
 
 
 class LlmBudgetExhausted(RuntimeError):
@@ -325,6 +459,10 @@ def record_llm_usage(
         usage["cache_read_input_tokens"] = usage.get("cache_read_input_tokens", 0) + cache_read_tokens
         usage["cache_write_input_tokens"] = usage.get("cache_write_input_tokens", 0) + cache_write_tokens
         usage["cost_usd"] = float(usage.get("cost_usd") or 0.0) + call_cost
+        stage_budget = usage.get(STAGE_BUDGET_USAGE_KEY)
+        stage = STEP_STAGES.get(step)
+        if stage_budget is not None and stage in stage_budget["spent"]:
+            stage_budget["spent"][stage] += call_cost
         if estimated:
             usage["estimated_tokens"] = True
         entry: Dict[str, Any] = {
@@ -370,10 +508,12 @@ def _resolve_provider_for_call(
     usage: Optional[Dict[str, Any]],
     provider: Optional[str],
     model: Optional[str],
+    step: str = "unknown",
 ) -> Tuple[str, str]:
     """Pick the primary vs fallback provider based on running cost_usd vs
-    cutoff. Raises LlmBudgetExhausted past the cutoff when the fallback is
-    "none"."""
+    cutoff — and, when stage budgets are reserved, on the calling stage's
+    allowance. Raises LlmBudgetExhausted past either limit when the fallback
+    is "none"."""
     primary = (provider or DEFAULT_LLM_PROVIDER or "bedrock").strip().lower()
     primary_model = model or _default_model_for(primary)
     if usage is None:
@@ -392,7 +532,8 @@ def _resolve_provider_for_call(
 
     with _USAGE_LOCK:
         current_cost = float(usage.get("cost_usd") or 0.0)
-        if current_cost < float(cutoff):
+        stage_over = current_cost < float(cutoff) and _stage_over_budget(usage, step, float(cutoff))
+        if current_cost < float(cutoff) and not stage_over:
             usage["active_provider"] = primary
             usage["active_model"] = primary_model
             return primary, primary_model
@@ -402,6 +543,21 @@ def _resolve_provider_for_call(
             .strip()
             .lower()
         )
+        if stage_over:
+            # Only this stage is out of allowance; other stages keep the
+            # primary provider, so the shared active_* fields stay untouched.
+            stage = STEP_STAGES.get(step, step)
+            if fb_provider == PROVIDER_NONE:
+                warned = usage.setdefault("_stage_budget_warned", [])
+                if stage not in warned:
+                    warned.append(stage)
+                    print(f"  [llm] the {stage} stage used its share of the ${float(cutoff):.2f} cutoff "
+                          f"and nothing is left unclaimed — its remaining LLM work is skipped")
+                raise LlmBudgetExhausted(f"{stage} stage budget share of ${float(cutoff):.2f} reached")
+            fb_model = str(
+                usage.get("fallback_model") or DEFAULT_FALLBACK_LLM_MODEL or _default_model_for(fb_provider)
+            ).strip()
+            return fb_provider, fb_model
         if fb_provider == PROVIDER_NONE:
             if not usage.get("budget_exhausted"):
                 usage["budget_exhausted"] = True
@@ -510,7 +666,7 @@ def call_llm(
     """`meta_out`, when given, receives this call's own provider, model and
     recorded token counts (zero on a result-cache hit) — the only reliable
     per-call figure when parallel workers share one usage dict."""
-    provider, model = _resolve_provider_for_call(usage, provider, model)
+    provider, model = _resolve_provider_for_call(usage, provider, model, step)
     if provider not in KNOWN_PROVIDERS:
         # Used to fall through to Bedrock silently — a typo'd provider would
         # have shipped code to AWS on a scan configured for a local model.
@@ -551,41 +707,8 @@ def call_llm(
     caller_meta = meta_out
     meta_out = {}
     if provider == "ollama":
-        text = _call_ollama(
-            system,
-            user,
-            model,
-            max_tokens,
-            temperature,
-            retries,
-            usage=usage,
-            step=step,
-            json_mode=json_mode,
-            provider_label=provider,
-            model_label=model,
-            meta_out=meta_out,
-        )
-    elif provider == PROVIDER_OPENAI_COMPAT:
-        options = ((usage or {}).get(PROVIDER_OPTIONS_USAGE_KEY) or {}).get(provider) or {}
-        text = _call_openai_compat(
-            system,
-            user,
-            model,
-            max_tokens,
-            temperature,
-            retries,
-            usage=usage,
-            step=step,
-            json_mode=json_mode,
-            base_url=provider_base_url(usage, provider),
-            api_key=str(options.get("api_key") or OPENAI_COMPAT_API_KEY or ""),
-            meta_out=meta_out,
-        )
-    else:
-        cache_system = should_cache_system_prompt(system, model)
-
-        def _bedrock_call() -> str:
-            return _call_bedrock(
+        with _LIMITER.slot():
+            text = _call_ollama(
                 system,
                 user,
                 model,
@@ -594,12 +717,48 @@ def call_llm(
                 retries,
                 usage=usage,
                 step=step,
+                json_mode=json_mode,
                 provider_label=provider,
                 model_label=model,
-                json_mode=json_mode,
-                cache_system=cache_system,
                 meta_out=meta_out,
             )
+    elif provider == PROVIDER_OPENAI_COMPAT:
+        options = ((usage or {}).get(PROVIDER_OPTIONS_USAGE_KEY) or {}).get(provider) or {}
+        with _LIMITER.slot():
+            text = _call_openai_compat(
+                system,
+                user,
+                model,
+                max_tokens,
+                temperature,
+                retries,
+                usage=usage,
+                step=step,
+                json_mode=json_mode,
+                base_url=provider_base_url(usage, provider),
+                api_key=str(options.get("api_key") or OPENAI_COMPAT_API_KEY or ""),
+                meta_out=meta_out,
+            )
+    else:
+        cache_system = should_cache_system_prompt(system, model)
+
+        def _bedrock_call() -> str:
+            with _LIMITER.slot():
+                return _call_bedrock(
+                    system,
+                    user,
+                    model,
+                    max_tokens,
+                    temperature,
+                    retries,
+                    usage=usage,
+                    step=step,
+                    provider_label=provider,
+                    model_label=model,
+                    json_mode=json_mode,
+                    cache_system=cache_system,
+                    meta_out=meta_out,
+                )
 
         gate = _warm_gate_for(model, system) if cache_system else None
         leader = False
@@ -616,6 +775,7 @@ def call_llm(
                     gate.warmed_at = time.monotonic()
         if not leader:
             text = _bedrock_call()
+    _LIMITER.on_success()
 
     if cache_key is not None and is_complete_json_response(text, meta_out.get("stop_reason")):
         try:
@@ -712,7 +872,9 @@ def _call_bedrock(
         }
     )
     last_exc: Optional[Exception] = None
-    for attempt in range(retries):
+    attempt = 0
+    throttles = 0
+    while attempt < retries:
         try:
             resp = _bedrock.invoke_model(
                 modelId=model_id,
@@ -746,6 +908,7 @@ def _call_bedrock(
                         f"retrying in {wait}s..."
                     )
                     time.sleep(wait)
+                    attempt += 1
                     continue
                 print(f"  [bedrock] empty response after {retries} attempt(s) (stop_reason={stop_reason!r})")
             if meta_out is not None:
@@ -754,9 +917,21 @@ def _call_bedrock(
             return text
         except Exception as exc:  # noqa: BLE001 — throttle + network
             last_exc = exc
+            if is_throttle_error(exc) and throttles < THROTTLE_RETRIES:
+                # Throttling is transient and shared: back off with jitter,
+                # shrink the process-wide concurrency, and don't spend one of
+                # the ordinary retries on it.
+                throttles += 1
+                _LIMITER.on_throttle()
+                wait = throttle_wait_seconds(throttles)
+                print(f"  [bedrock] throttled; backing off {wait:.1f}s "
+                      f"(concurrency limit now {_LIMITER.limit})...")
+                time.sleep(wait)
+                continue
             wait = 2**attempt
             print(f"  [bedrock] error ({exc}), retrying in {wait}s...")
             time.sleep(wait)
+            attempt += 1
     raise last_exc  # type: ignore[misc]
 
 
@@ -896,6 +1071,7 @@ def _call_openai_compat(
     timeout = int(os.environ.get("OPENAI_COMPAT_REQUEST_TIMEOUT", str(OPENAI_COMPAT_REQUEST_TIMEOUT)))
     last_exc: Optional[Exception] = None
     attempt = 0
+    throttles = 0
     while attempt < retries:
         payload_body = dict(body)
         if use_response_format:
@@ -948,6 +1124,14 @@ def _call_openai_compat(
             raise
         except (requests.RequestException, ValueError) as exc:
             last_exc = exc
+            if is_throttle_error(exc) and throttles < THROTTLE_RETRIES:
+                throttles += 1
+                _LIMITER.on_throttle()
+                wait = throttle_wait_seconds(throttles)
+                print(f"  [openai_compat] HTTP 429; backing off {wait:.1f}s "
+                      f"(concurrency limit now {_LIMITER.limit})...")
+                time.sleep(wait)
+                continue
             wait = 2**attempt
             print(f"  [openai_compat] request failed ({type(exc).__name__}), retrying in {wait}s...")
             time.sleep(wait)

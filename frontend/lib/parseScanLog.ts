@@ -73,29 +73,68 @@ export function extractProjectStructureTree(lines: ScanLogLine[]): string[] | nu
   return null;
 }
 
+// Parallel engine stages (flows, deep scan, triage) prefix every line with
+// "[[stage:<name>]] " because their output interleaves. Tagged lines go to the
+// latest section that stage opened; untagged lines (every log persisted before
+// parallel stages, and everything outside the fan-out) stay positional. A few
+// untagged lines are written from worker threads mid-fan-out (e.g. "Saved N
+// finding(s)"); they join the section of the most recent tagged line.
+const STAGE_TAG_RE = /^\[\[stage:([\w-]+)\]\]\s?(.*)$/;
+const STAGE_FINISHED_RE = /^Stage finished: /;
+
 export function parseScanLogLines(lines: ScanLogLine[]): AgentSection[] {
   const sections: AgentSection[] = [];
   let current: AgentSection | null = null;
+  const stageSection = new Map<string, AgentSection>();
+  let lastTagged: AgentSection | null = null;
 
-  const open = (seq: number, label: string) => {
-    current = { seq, label, lines: [] };
-    sections.push(current);
+  const open = (seq: number, label: string): AgentSection => {
+    const section = { seq, label, lines: [] as string[] };
+    sections.push(section);
+    return section;
   };
 
   for (const { seq, line } of lines) {
-    const trimmed = line.trim();
+    let trimmed = line.trim();
     if (!trimmed || /^=+$/.test(trimmed)) continue;
 
-    const match = trimmed.match(SECTION_RE);
-    if (match) {
-      open(seq, match[1].trim());
+    const tagged = trimmed.match(STAGE_TAG_RE);
+    if (tagged) {
+      const stage = tagged[1];
+      trimmed = tagged[2].trim();
+      if (!trimmed || STAGE_FINISHED_RE.test(trimmed)) continue;
+      const banner = trimmed.match(SECTION_RE);
+      if (banner) {
+        const section = open(seq, banner[1].trim());
+        stageSection.set(stage, section);
+        lastTagged = section;
+        continue;
+      }
+      let section = stageSection.get(stage);
+      if (!section) {
+        section = open(seq, stage);
+        stageSection.set(stage, section);
+      }
+      section.lines.push(trimmed);
+      lastTagged = section;
       continue;
     }
 
-    if (!current) {
-      open(seq, "Preparing scan");
+    const match = trimmed.match(SECTION_RE);
+    if (match) {
+      current = open(seq, match[1].trim());
+      lastTagged = null; // an untagged banner means the stages have joined
+      continue;
     }
-    current!.lines.push(trimmed);
+
+    if (lastTagged) {
+      lastTagged.lines.push(trimmed);
+      continue;
+    }
+    if (!current) {
+      current = open(seq, "Preparing scan");
+    }
+    current.lines.push(trimmed);
   }
 
   return sections;

@@ -818,9 +818,9 @@ def test_node_scan_triage_files_routes_overflow_critical_through_regex_gate(agen
 
 
 def test_node_scan_triage_files_logs_batch_boundaries_for_multi_module_repo(agent, tmp_path, monkeypatch):
-    """A multi-module repo batches by module; the log carries a batch-start
-    and batch-complete line per module, and scan_triage_files is called once
-    per batch (not once for the whole repo)."""
+    """A multi-module repo batches by module for reporting only: every file
+    goes through one scan_triage_files call (one worker pool), and each
+    module logs its batch-complete line when its last file finishes."""
     (tmp_path / "svc-a" / "pom.xml").parent.mkdir(parents=True)
     (tmp_path / "svc-a" / "pom.xml").write_text("<project/>\n", encoding="utf-8")
     (tmp_path / "svc-a" / "util.py").write_text("x = 1\n", encoding="utf-8")
@@ -845,8 +845,10 @@ def test_node_scan_triage_files_logs_batch_boundaries_for_multi_module_repo(agen
 
     call_count = []
 
-    def fake_scan_triage_files(*, entries, **kwargs):
+    def fake_scan_triage_files(*, entries, on_file_done, **kwargs):
         call_count.append(len(entries))
+        for position in range(len(entries)):
+            on_file_done(position, {"findings": []})
         return {"files_scanned": 0, "files_regex_scanned": len(entries), "tp_count": 0,
                 "fp_count": 0, "chunk_errors": 0, "files": []}
 
@@ -854,13 +856,13 @@ def test_node_scan_triage_files_logs_batch_boundaries_for_multi_module_repo(agen
     agent.node_scan_triage_files(state)
 
     events = state["_tracer"].events
-    batch_starts = [e for e in events if e.get("node") == "scan_triage_files"
-                    and e["message"].startswith("Batch ") and "complete" not in e["message"]]
+    queued = [e for e in events if e.get("node") == "scan_triage_files" and e["message"].startswith("Queued ")]
     batch_completes = [e for e in events if e.get("node") == "scan_triage_files"
                        and e["message"].startswith("Batch ") and "complete" in e["message"]]
-    assert len(batch_starts) == len(call_count)
-    assert len(batch_completes) == len(call_count)
-    assert len(call_count) >= 1
+    modules = {e.get("module") for e in agent.llm_file_scan.files_for_paths(module_plan, module_plan["triage_scan_paths"])}
+    assert call_count == [len(module_plan["triage_scan_paths"])]
+    assert len(queued) == 1
+    assert len(batch_completes) == len(modules) >= 2
 
 
 def test_node_generate_report_aggregates_by_owasp_category(agent):
