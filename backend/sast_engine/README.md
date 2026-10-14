@@ -59,11 +59,15 @@ flowchart TD
    stacks.
 4. **Map modules and risk** — per-file risk level (CRITICAL / HIGH / MEDIUM /
    LOW) from path heuristics (auth/security code, DB/repository layers,
-   runtime config, etc.), plus module boundary discovery (e.g. multi-module
-   Maven builds).
+   runtime config, etc.) plus a peek at Java file heads (HTTP/SOAP entry
+   points and servlet filters become CRITICAL, EJB interfaces LOW), and
+   module boundary discovery (e.g. multi-module Maven builds). Test code —
+   by directory or by name (`FooTest.java`, `*.spec.ts`, ...) — stays in
+   Discovery but leaves both scan tiers.
 5. **Deep LLM scan (top `DEEP_SCAN_FILE_CAP` CRITICAL / HIGH)** — the top 100
-   CRITICAL/HIGH files by priority (CRITICAL first, then HIGH, in the order
-   the risk rules encounter them — overridable via `deep_scan_file_cap`) are
+   CRITICAL/HIGH files by priority (CRITICAL first, then HIGH; once the call
+   graph exists the set is re-picked by framework entry points, then typed
+   sinks, per file — cap overridable via `deep_scan_file_cap`) are
    sent to the LLM in full, with the `rules/` catalog as prompt guidance (not
    a regex gate). Findings are written incrementally (`kind=llm`). This tier
    also owns the *absence* checks a regex cannot express — a missing
@@ -76,11 +80,11 @@ flowchart TD
    run locally, and **that is the whole tier** — there is no LLM call. A file
    with zero hits is skipped entirely (no database write); every hit in a file
    that matches is written as a finding with `kind=regex` and
-   **`verdict=unverified`** — a pattern matched, nobody reviewed it. On large
-   repos this tier runs in batches — one per real module when the repo has more
-   than one, else fixed-size slices (`triage_batch_size`, default 250) — so
-   results and progress surface incrementally instead of one pass over the whole
-   repo; batches run strictly sequentially.
+   **`verdict=unverified`** — a pattern matched, nobody reviewed it. Every file
+   goes to one worker pool; batches (one per real module, else
+   `triage_batch_size` slices) only report progress, each logging its "done"
+   line when its last file finishes. Past 500 files the regex pass runs in
+   worker processes, with the same findings.
 
    The mode is a toggle, not a hard-coding: `triage_mode` (`--triage-mode`)
    accepts `regex_only` (the default) or `llm_triage`, which restores the
@@ -107,6 +111,26 @@ estimated Bedrock cost reaches $2, remaining calls in that scan continue on
 fallback Ollama. Both finding stages share one usage dict so the cutoff applies
 across the whole run — though in the default `regex_only` mode step 6 makes no
 LLM calls, so the deep scan is effectively the only spender.
+
+## Parallel stages
+
+API scans (limitation `parallel-scan-stages`, default on) and the CLI (unless
+`--sequential`) run three stages side by side after runtime-rule derivation,
+joining for grouping and confirmation:
+
+```
+derive_runtime_rules -> fan_out -> flows (discover -> verify -> Joern queries)
+                                -> scan_deep_files
+                                -> scan_triage_files
+                     -> group_triage_findings -> confirm_triage_groups -> generate_report
+```
+
+This cuts wall-clock time, not tokens. The LLM cutoff is split into reserved
+shares (deep 55%, flows 10%, triage/confirm 35%); a stage that finishes under
+its share releases the rest. All provider calls share one concurrency limit
+(`LLM_MAX_CONCURRENCY`, default 8) that halves on throttling, and throttled
+calls back off with jitter. Each stage's log lines are prefixed
+`[[stage:<name>]] ` so progress and the UI can tell them apart.
 
 ## Joern (optional)
 
@@ -229,6 +253,7 @@ python sast_scan_agent.py --path /path/to/project
 python sast_scan_agent.py --path /path/to/project --no-llm
 python sast_scan_agent.py --path /path/to/project --llm-provider ollama --llm-model granite-code:3b
 python sast_scan_agent.py --path /path/to/project --no-joern
+python sast_scan_agent.py --path /path/to/project --sequential   # one stage at a time
 python sast_scan_agent.py --path /path/to/project --llm-provider openai_compat \
     --llm-base-url http://localhost:8000/v1 --llm-model Qwen/Qwen2.5-Coder-32B-Instruct \
     --llm-data-policy local_only
