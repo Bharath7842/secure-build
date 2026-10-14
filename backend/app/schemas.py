@@ -487,6 +487,8 @@ class FindingOut(BaseModel):
     data_flow: str | None = None
     verdict_reason: str | None = None
     affected_files: list[str] | None = None
+    # Rows this grouped finding stands for (group_findings_by_issue).
+    occurrence_count: int | None = None
     matched_text: str | None = None
     flow_path: list[dict] | None = None
     triage_status: str | None = None
@@ -570,6 +572,10 @@ class ScanFindingsOut(BaseModel):
     # persisted payloads and any caller not yet aware of it still validate.
     unverified_count: int = 0
     files_scanned: int = 0
+    # scan_export.count_groups_by_severity over the whole scan (ignoring the
+    # verdict filter): {"actionable": {sev: {groups, occurrences}},
+    # "dismissed": {groups, occurrences}} — the same basis as the PDF headline.
+    severity_group_counts: dict[str, Any] | None = None
     findings: list[FindingOut]
 
 

@@ -255,16 +255,44 @@ def _count_by_severity(findings: list[Finding]) -> dict[str, int]:
     return counts
 
 
-def _count_by_owasp(findings: list[Finding]) -> list[tuple[str, int, int]]:
-    """(category label, total, critical+high count), ordered by risk then size."""
+def _occurrences(finding: Finding) -> int:
+    """Raw rows behind one grouped finding (1 for an ungrouped row)."""
+    return getattr(finding, "occurrence_count", None) or 1
+
+
+def _is_dismissed(finding: Finding) -> bool:
+    return (finding.verdict or "").strip().lower() == "false_positive"
+
+
+def count_groups_by_severity(grouped: list[Finding]) -> dict[str, Any]:
+    """Headline counts over `group_findings_by_issue` output: actionable
+    (true_positive + unverified) groups and their occurrences per severity,
+    plus dismissed (false_positive) groups/occurrences on their own. Groups
+    never mix verdicts (the group key leads with the verdict), so a group is
+    wholly actionable or wholly dismissed."""
+    actionable = {sev: {"groups": 0, "occurrences": 0} for sev in SEVERITY_ORDER}
+    dismissed = {"groups": 0, "occurrences": 0}
+    for finding in grouped:
+        bucket = dismissed if _is_dismissed(finding) else actionable[_severity_bucket(finding.severity)]
+        bucket["groups"] += 1
+        bucket["occurrences"] += _occurrences(finding)
+    return {"actionable": actionable, "dismissed": dismissed}
+
+
+def _count_by_owasp(findings: list[Finding]) -> list[tuple[str, int, int, int]]:
+    """(category label, actionable groups, critical+high groups, occurrences)
+    over grouped findings, dismissed groups left out; ordered by risk then size."""
     buckets: dict[str, list[int]] = {}
     for finding in findings:
+        if _is_dismissed(finding):
+            continue
         label = _owasp_header(finding)
-        entry = buckets.setdefault(label, [0, 0])
+        entry = buckets.setdefault(label, [0, 0, 0])
         entry[0] += 1
         if _severity_bucket(finding.severity) in ("critical", "high"):
             entry[1] += 1
-    rows = [(label, total, severe) for label, (total, severe) in buckets.items()]
+        entry[2] += _occurrences(finding)
+    rows = [(label, total, severe, occ) for label, (total, severe, occ) in buckets.items()]
     rows.sort(key=lambda r: (-r[2], -r[1], r[0]))
     return rows
 
@@ -579,7 +607,11 @@ def group_findings_by_issue(findings: list[Finding]) -> list[Finding]:
     The representative is the highest-severity (then highest-cvss) member of
     the group, so its title/snippet/ai_fix/verdict_reason serve as the one
     generic example for the whole group. Singleton groups pass through with
-    `affected_files` left unset, unchanged from today's behavior."""
+    `affected_files` left unset, unchanged from today's behavior.
+
+    Every returned finding carries `occurrence_count` (how many rows it
+    stands for). Like `affected_files`, it is set on the ORM instance and
+    must never be flushed — nothing commits after this runs."""
     order: list[tuple] = []
     groups: dict[tuple, list[Finding]] = {}
     for f in findings:
@@ -593,6 +625,7 @@ def group_findings_by_issue(findings: list[Finding]) -> list[Finding]:
     for key in order:
         members = groups[key]
         if len(members) == 1:
+            members[0].occurrence_count = 1
             result.append(members[0])
             continue
         representative = min(
@@ -611,6 +644,7 @@ def group_findings_by_issue(findings: list[Finding]) -> list[Finding]:
                     seen.add(p)
                     paths.append(p)
         representative.affected_files = paths
+        representative.occurrence_count = len(members)
         result.append(representative)
     return _sorted_findings(result)
 
@@ -643,8 +677,12 @@ def _xl_header_row(sheet: Any, row: int, headers: list[str], *, widths: list[int
 def _build_summary_sheet(sheet: Any, project: Project, scan: Scan, findings: list[Finding], gate: dict) -> None:
     """Row positions are computed as we go. The previous version hardcoded
     `A14` for the severity header while the metadata block above it had a
-    conditional extra row — one more metadata field would have overwritten it."""
-    counts = _count_by_severity(findings)
+    conditional extra row — one more metadata field would have overwritten it.
+
+    `findings` are grouped (group_findings_by_issue); the headline counts are
+    actionable groups, with occurrences and dismissed groups alongside."""
+    summary = count_groups_by_severity(findings)
+    actionable, dismissed = summary["actionable"], summary["dismissed"]
     title_font = Font(name="Calibri", size=18, bold=True, color="152238")
     section_font = Font(name="Calibri", size=13, bold=True, color="152238")
     label_font = Font(name="Calibri", size=11, color="64748B")
@@ -676,7 +714,9 @@ def _build_summary_sheet(sheet: Any, project: Project, scan: Scan, findings: lis
             or (not scan.llm_provider and not scan.llm_model)
             else f"{scan.llm_provider or '—'} / {scan.llm_model or '—'}",
         ),
-        ("Total findings", len(findings)),
+        ("Actionable issues (groups)", sum(v["groups"] for v in actionable.values())),
+        ("Occurrences", sum(v["occurrences"] for v in actionable.values())),
+        ("Dismissed", f"{dismissed['groups']} groups ({dismissed['occurrences']} occurrences)"),
     ]
     status_note = _scan_status_banner(scan)
     if status_note:
@@ -691,26 +731,33 @@ def _build_summary_sheet(sheet: Any, project: Project, scan: Scan, findings: lis
     row += 1
     sheet.cell(row, 1, "Severity breakdown").font = section_font
     row += 1
-    _xl_header_row(sheet, row, ["Severity", "Count"])
+    _xl_header_row(sheet, row, ["Severity", "Groups", "Occurrences"])
     row += 1
     for sev in SEVERITY_ORDER:
         cell = sheet.cell(row, 1, sev.upper())
         cell.fill = EXCEL_SEVERITY_FILLS[sev]
         cell.font = Font(name="Calibri", bold=True, color="FFFFFF")
         cell.border = _THIN
-        count_cell = sheet.cell(row, 2, counts.get(sev, 0))
+        for col, value in ((2, actionable[sev]["groups"]), (3, actionable[sev]["occurrences"])):
+            count_cell = sheet.cell(row, col, value)
+            count_cell.alignment = Alignment(horizontal="center")
+            count_cell.border = _THIN
+        row += 1
+    sheet.cell(row, 1, "Dismissed (false positive)").border = _THIN
+    for col, value in ((2, dismissed["groups"]), (3, dismissed["occurrences"])):
+        count_cell = sheet.cell(row, col, value)
         count_cell.alignment = Alignment(horizontal="center")
         count_cell.border = _THIN
-        row += 1
+    row += 1
 
     row += 1
     sheet.cell(row, 1, "OWASP distribution").font = section_font
     row += 1
-    _xl_header_row(sheet, row, ["Category", "Findings", "Critical + High"])
+    _xl_header_row(sheet, row, ["Category", "Groups", "Critical + High", "Occurrences"])
     row += 1
-    for label, total, severe in _count_by_owasp(findings):
+    for label, total, severe, occurrences in _count_by_owasp(findings):
         sheet.cell(row, 1, label).border = _THIN
-        for col, value in ((2, total), (3, severe)):
+        for col, value in ((2, total), (3, severe), (4, occurrences)):
             cell = sheet.cell(row, col, value)
             cell.alignment = Alignment(horizontal="center")
             cell.border = _THIN
@@ -719,6 +766,7 @@ def _build_summary_sheet(sheet: Any, project: Project, scan: Scan, findings: lis
     sheet.column_dimensions["A"].width = 44
     sheet.column_dimensions["B"].width = 56
     sheet.column_dimensions["C"].width = 18
+    sheet.column_dimensions["D"].width = 14
 
 
 def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
@@ -1414,10 +1462,20 @@ def _meta_grid(project: Project, scan: Scan, styles: Any, width: float) -> Table
     return grid
 
 
-def _severity_strip(counts: dict[str, int], styles: Any, width: float) -> Table:
+def _severity_strip(
+    counts: dict[str, int], styles: Any, width: float, *, occurrences: dict[str, int] | None = None,
+) -> Table:
+    """One cell per severity. With `occurrences` (SAST), `counts` are groups
+    and each cell also says how many occurrences they cover."""
+    def _sub(sev: str) -> str:
+        if occurrences is None:
+            return ""
+        n, occ = counts.get(sev, 0), occurrences.get(sev, 0)
+        return f'<br/><font size="7">{"group" if n == 1 else "groups"} · {occ} {"occurrence" if occ == 1 else "occurrences"}</font>'
+
     cells = [
         Paragraph(f'<font size="15"><b>{counts.get(sev, 0)}</b></font><br/>'
-                  f'<font size="8">{sev.upper()}</font>', styles["BadgeText"])
+                  f'<font size="8">{sev.upper()}</font>{_sub(sev)}', styles["BadgeText"])
         for sev in SEVERITY_ORDER
     ]
     strip = Table([cells], colWidths=[width / len(SEVERITY_ORDER)] * len(SEVERITY_ORDER))
@@ -1440,16 +1498,18 @@ def _owasp_table(findings: list[Finding], styles: Any, width: float) -> Table | 
         return None
     data: list[list[Any]] = [[
         Paragraph("<b>OWASP CATEGORY</b>", styles["TableHead"]),
-        Paragraph("<b>FINDINGS</b>", styles["TableHeadCenter"]),
+        Paragraph("<b>GROUPS</b>", styles["TableHeadCenter"]),
         Paragraph("<b>CRITICAL + HIGH</b>", styles["TableHeadCenter"]),
+        Paragraph("<b>OCCURRENCES</b>", styles["TableHeadCenter"]),
     ]]
-    for label, total, severe in rows:
+    for label, total, severe, occurrences in rows:
         data.append([
             Paragraph(_esc(label), styles["TableCell"]),
             Paragraph(str(total), styles["TableCellCenter"]),
             Paragraph(str(severe), styles["TableCellCenter"]),
+            Paragraph(str(occurrences), styles["TableCellCenter"]),
         ])
-    table = Table(data, colWidths=[width * 0.6, width * 0.2, width * 0.2], repeatRows=1)
+    table = Table(data, colWidths=[width * 0.52, width * 0.14, width * 0.17, width * 0.17], repeatRows=1)
     table.hAlign = "LEFT"
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), INK),
@@ -2066,7 +2126,10 @@ def build_pdf_report(project: Project, scan: Scan, findings: list[Finding]) -> b
     if _is_sbom_scan(scan):
         return _build_pdf_sbom_report(project, scan)
 
-    counts = _count_by_severity(findings)
+    summary = count_groups_by_severity(findings)
+    group_counts = {sev: v["groups"] for sev, v in summary["actionable"].items()}
+    occurrence_counts = {sev: v["occurrences"] for sev, v in summary["actionable"].items()}
+    dismissed = summary["dismissed"]
     gate = build_gate_summary(project, findings)
     buf = io.BytesIO()
     page = landscape(A4)
@@ -2103,10 +2166,16 @@ def build_pdf_report(project: Project, scan: Scan, findings: list[Finding]) -> b
     story.append(Spacer(1, 4 * mm))
     story.append(_meta_grid(project, scan, styles, content_width))
     story.append(Spacer(1, 5 * mm))
-    story.append(_severity_strip(counts, styles, content_width))
+    story.append(_severity_strip(group_counts, styles, content_width, occurrences=occurrence_counts))
+    story.append(Spacer(1, 2 * mm))
+    story.append(Paragraph(
+        f'<font color="#64748b">Actionable issue groups (true positive + unverified) by severity. '
+        f"Dismissed: {dismissed['groups']} {'group' if dismissed['groups'] == 1 else 'groups'} "
+        f"({dismissed['occurrences']} {'occurrence' if dismissed['occurrences'] == 1 else 'occurrences'}).</font>",
+        styles["FindingBody"]))
     story.append(Spacer(1, 6 * mm))
 
-    owasp_table = _owasp_table(findings, styles, content_width * 0.6)
+    owasp_table = _owasp_table(findings, styles, content_width * 0.7)
     if owasp_table is not None:
         story.append(KeepTogether([
             Paragraph("OWASP DISTRIBUTION", styles["SectionHeading"]),

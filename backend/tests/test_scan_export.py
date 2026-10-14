@@ -5,7 +5,13 @@ from io import BytesIO
 from openpyxl import load_workbook
 
 from app.models import Finding, Project, Scan
-from app.services.scan_export import build_excel_report, build_pdf_report, export_filenames, group_findings_by_issue
+from app.services.scan_export import (
+    build_excel_report,
+    build_pdf_report,
+    count_groups_by_severity,
+    export_filenames,
+    group_findings_by_issue,
+)
 
 
 def _sample(project_name: str = "Demo App"):
@@ -568,3 +574,66 @@ def test_sca_empty_findings_still_exports():
     project, scan, _ = _sca_sample()
     assert build_pdf_report(project, scan, [])[:4] == b"%PDF"
     assert build_excel_report(project, scan, [])[:2] == b"PK"
+
+
+def _construct_rows():
+    """3 true-positive rows of one construct + 2 dismissed rows of another."""
+    tp = [
+        Finding(id=f"tp{i}", scan_id="s1", severity="high", title="SQL concat", rule_id="java-sql-string-concat",
+                kind="regex", matched_text='"SELECT * FROM t WHERE id = " + id', verdict="true_positive",
+                file_path=f"src/Dao{i}.java", line=10, owasp_category="A03:2021-Injection")
+        for i in range(3)
+    ]
+    fp = [
+        Finding(id=f"fp{i}", scan_id="s1", severity="medium", title="Password literal", rule_id="secret-password-assign",
+                kind="regex", matched_text='password = "test"', verdict="false_positive",
+                file_path=f"src/Fixture{i}.java", line=3, owasp_category="A07:2021-Identification-and-Authentication-Failures")
+        for i in range(2)
+    ]
+    return tp + fp
+
+
+def test_headline_counts_actionable_groups_with_occurrences():
+    grouped = group_findings_by_issue(_construct_rows())
+    assert sorted(f.occurrence_count for f in grouped) == [2, 3]
+
+    counts = count_groups_by_severity(grouped)
+    assert counts["actionable"]["high"] == {"groups": 1, "occurrences": 3}
+    assert counts["actionable"]["medium"] == {"groups": 0, "occurrences": 0}
+    assert counts["dismissed"] == {"groups": 1, "occurrences": 2}
+
+
+def test_singleton_groups_count_one_occurrence():
+    project, scan, findings = _sample()
+    grouped = group_findings_by_issue(findings)
+    assert [f.occurrence_count for f in grouped] == [1, 1]
+    counts = count_groups_by_severity(grouped)
+    assert counts["actionable"]["high"] == {"groups": 1, "occurrences": 1}
+    assert counts["dismissed"] == {"groups": 1, "occurrences": 1}
+
+
+def test_excel_summary_reports_groups_occurrences_and_dismissed():
+    project, scan, _ = _sample()
+    data = build_excel_report(project, scan, group_findings_by_issue(_construct_rows()))
+    summary = load_workbook(BytesIO(data))["Summary"]
+    rows = {summary.cell(r, 1).value: [summary.cell(r, c).value for c in (2, 3, 4)]
+            for r in range(1, summary.max_row + 1)}
+    assert rows["Actionable issues (groups)"][0] == 1
+    assert rows["Occurrences"][0] == 3
+    assert rows["HIGH"][:2] == [1, 3]
+    assert rows["Dismissed (false positive)"][:2] == [1, 2]
+    # The OWASP table leaves the dismissed category out entirely.
+    from app.services.scan_export import OWASP_NAMES
+
+    assert rows[OWASP_NAMES["A03"]] == [1, 1, 3]
+    assert OWASP_NAMES["A07"] not in rows
+
+
+def test_pdf_headline_names_groups_and_dismissed():
+    from pypdf import PdfReader
+
+    project, scan, _ = _sample()
+    data = build_pdf_report(project, scan, group_findings_by_issue(_construct_rows()))
+    text = "".join(page.extract_text() for page in PdfReader(BytesIO(data)).pages[:1])
+    assert "group · 3 occurrences" in text
+    assert "Dismissed: 1 group (2 occurrences)" in text
