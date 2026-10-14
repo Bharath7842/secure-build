@@ -185,6 +185,7 @@ STACK_PROFILES: Dict[str, Dict[str, Any]] = {
         "markers": ["pom.xml"],
         "rules": [
             (r"(^|/)pom\.xml$",                                   "MEDIUM",   "dependency & plugin manifest",        "dependency"),
+            (r"(^|/)web\.xml$",                                    "CRITICAL", "servlet deployment descriptor (URL security constraints, filters, session config)", "config"),
             (r"(^|/)src/main/java/.*/(controller|controllers|web|rest)/", "HIGH",     "user input entry point (controller layer)", "source"),
             (r"(^|/)src/main/java/.*(ExceptionHandler|ControllerAdvice)\w*\.java$", "HIGH", "exception handler / controller advice (builds HTTP responses from exception data, regardless of package)", "source"),
             (r"(^|/)src/main/java/.*(SecurityConfig|WebSecurityConfig|SecurityFilterChain)\w*\.java$", "CRITICAL", "Spring Security configuration (CSRF/CORS/authorization rules, regardless of package)", "source"),
@@ -203,7 +204,7 @@ STACK_PROFILES: Dict[str, Dict[str, Any]] = {
         "markers": ["angular.json"],
         "rules": [
             (r"(^|/)package\.json$",                    "MEDIUM",   "dependency manifest",                   "dependency"),
-            (r"environment(\.\w+)?\.ts$",                "CRITICAL", "env config — possible API keys/secrets", "config"),
+            (r"environment(\.\w+)?\.ts$",                "MEDIUM",   "env config — the secret/endpoint rules cover it", "config"),
             (r"\.guard\.ts$",                            "CRITICAL", "route auth guard",                      "source"),
             (r"\.interceptor\.ts$",                      "HIGH",     "HTTP interceptor (auth headers, tokens)", "source"),
             (r"\.service\.ts$",                          "HIGH",     "business logic / API calls",            "source"),
@@ -1262,6 +1263,40 @@ def _discover_modules(scan: Dict[str, Any], stack: str) -> List[str]:
     return sorted(module_dirs) if module_dirs else ["(root)"]
 
 
+_RISK_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+
+# Path rules can't see what a Java class *is*. A short peek at its head can:
+# an EJB home/remote/local interface is declarations only (no logic for the
+# deep scan to review), while a JAX-RS resource, Spring REST controller, SOAP
+# endpoint, servlet or servlet filter is an HTTP entry point that belongs in
+# the deep scan whatever package it sits in.
+_CONTENT_PEEK_CHARS = 16_000
+_EJB_INTERFACE_RE = re.compile(
+    r"\binterface\s+\w+\s+extends\s+[\w.,\s]*?\b(?:EJBHome|EJBLocalHome|EJBObject|EJBLocalObject)\b"
+    r"|@(?:Remote|Local)\b(?:\s*\([^)]*\))?\s*(?:public\s+)?interface\b"
+)
+_ENTRY_CLASS_RE = re.compile(r"@(?:Path|RestController|WebService|WebServlet)\b|\bextends\s+HttpServlet\b")
+_SERVLET_FILTER_RE = re.compile(r"\bimplements\s+(?:[\w.<>]+\s*,\s*)*(?:javax\.servlet\.|jakarta\.servlet\.)?Filter\b")
+
+
+def _java_content_risk(root: Path, rel_path: str, risk: str, reason: str) -> Tuple[str, str]:
+    """(risk, reason) after looking at a .java file's head; unchanged when
+    unreadable or unremarkable."""
+    try:
+        with open(root / rel_path, encoding="utf-8", errors="replace") as fh:
+            head = fh.read(_CONTENT_PEEK_CHARS)
+    except OSError:
+        return risk, reason
+    if _EJB_INTERFACE_RE.search(head):
+        return "LOW", "EJB home/remote/local interface (declarations only)"
+    if risk != "CRITICAL" and (
+        _ENTRY_CLASS_RE.search(head)
+        or (rel_path.endswith("Filter.java") and _SERVLET_FILTER_RE.search(head))
+    ):
+        return "CRITICAL", "HTTP/SOAP entry point (JAX-RS/Spring REST resource, web service, servlet or filter)"
+    return risk, reason
+
+
 def node_map_modules_and_risk(state: SastState) -> dict:
     tracer: AgentTrace = state["_tracer"]
     scan = state["scan"]
@@ -1275,6 +1310,8 @@ def node_map_modules_and_risk(state: SastState) -> dict:
     file_risk: List[Dict[str, Any]] = []
     risk_counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
     modules_by_stack: Dict[str, List[str]] = {}
+    root = _resolve_scan_root(state)
+    content_overrides = {"promoted": 0, "demoted": 0}
 
     for stack in active_profiles:
         mods = _discover_modules(scan, stack)
@@ -1296,6 +1333,11 @@ def node_map_modules_and_risk(state: SastState) -> dict:
             matched_stack = "generic-fallback"
 
         risk, reason, category = matched
+        if f["path"].endswith(".java") and not llm_file_scan.is_test_path(f["path"]):
+            new_risk, reason = _java_content_risk(root, f["path"], risk, reason)
+            if new_risk != risk:
+                content_overrides["promoted" if new_risk == "CRITICAL" else "demoted"] += 1
+                risk = new_risk
         if risk in risk_counts:
             risk_counts[risk] += 1
 
@@ -1327,7 +1369,6 @@ def node_map_modules_and_risk(state: SastState) -> dict:
     triage_risk_levels = (
         llm_file_scan.TRIAGE_RISK_LEVELS | {"HIGH"} if critical_only else llm_file_scan.TRIAGE_RISK_LEVELS
     )
-    _RISK_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
     critical_high = llm_file_scan.files_for_risk_levels(
         {"files": file_risk}, deep_risk_levels
@@ -1354,6 +1395,13 @@ def node_map_modules_and_risk(state: SastState) -> dict:
         room = deep_cap - len(deep_entries)
         backfill_entries, medium_low = medium_low[:room], medium_low[room:]
 
+    files_skipped_test = sum(
+        1 for e in file_risk
+        if llm_file_scan.is_test_path(e["path"])
+        and not llm_file_scan.is_non_source_path(e["path"])
+        and not llm_file_scan.is_excluded_from_finding_scan(e["path"])
+    )
+
     deep_scan_paths = [e["path"] for e in deep_entries] + [e["path"] for e in backfill_entries]
     # Overflow CRITICAL/HIGH goes first so it isn't stuck behind every
     # MEDIUM/LOW file once the triage tier batches (node_scan_triage_files).
@@ -1367,6 +1415,8 @@ def node_map_modules_and_risk(state: SastState) -> dict:
                           [e for e in file_risk if e["risk_level"] == "HIGH"],
         "deep_scan_paths": deep_scan_paths,
         "triage_scan_paths": triage_scan_paths,
+        "files_skipped_test": files_skipped_test,
+        "content_risk_overrides": content_overrides,
     }
 
     llm_analysis = state.get("llm_analysis") or {}
@@ -1392,7 +1442,10 @@ def node_map_modules_and_risk(state: SastState) -> dict:
     tracer.log(4, "map_modules_and_risk", "Risk mapping complete",
                 detail=f"{risk_counts} — {len(module_plan['scan_priority'])} files flagged CRITICAL/HIGH; "
                        f"deep_cap={deep_cap}, critical_only={critical_only}, "
-                       f"overflow={len(overflow_entries)}, backfill={len(backfill_entries)}; "
+                       f"overflow={len(overflow_entries)}, backfill={len(backfill_entries)}, "
+                       f"test_files_skipped={files_skipped_test}, "
+                       f"entry_points_promoted={content_overrides['promoted']}, "
+                       f"ejb_interfaces_demoted={content_overrides['demoted']}; "
                        f"tech_stack={llm_analysis.get('tech_stack')}",
                 narrative=f"{risk_counts['CRITICAL']} critical-risk file(s), {risk_counts['HIGH']} high, "
                           f"{risk_counts['MEDIUM']} medium, {risk_counts['LOW']} low "
@@ -1401,7 +1454,8 @@ def node_map_modules_and_risk(state: SastState) -> dict:
                           f"{backfill_note}) queued for the full LLM scan; "
                           f"{len(triage_scan_paths)} file(s) queued for regex-gated triage{overflow_note}, "
                           f"where {triage_llm_note}. "
-                          f"{wrap}")
+                          + (f"{files_skipped_test} test file(s) are left out of both tiers. " if files_skipped_test else "")
+                          + f"{wrap}")
     # Persist discovery now so the UI can show Discovery results before the
     # LLM file scan (which can take a long time).
     _emit_discovery(state, module_plan=module_plan, report=None)
@@ -1557,6 +1611,38 @@ def node_build_joern_cpg(state: SastState) -> dict:
     return {"joern": {"status": status, **summary, "_session": session if session.cpgs else None}}
 
 
+def _rank_deep_scan_by_attack_surface(
+    state: SastState, entries: Counter, sinks: Counter,
+) -> Tuple[Dict[str, Any], int]:
+    """Re-pick the deep-scan set once the call graph exists.
+
+    node_map_modules_and_risk filled the cap with CRITICAL then HIGH files in
+    walk order, before anything knew which files are reachable. Now rank every
+    deep-tier candidate (including overflow sitting in triage) by
+    (risk, -framework entry points, -typed sinks, original order) and take the
+    top `cap`; files that lose their slot move to the front of triage. Sizes
+    and risk levels don't change — only which CRITICAL/HIGH files the LLM reads
+    in full. Returns (module_plan, files swapped in)."""
+    module_plan = dict(state.get("module_plan") or {})
+    deep = list(module_plan.get("deep_scan_paths") or [])
+    triage = list(module_plan.get("triage_scan_paths") or [])
+    deep_levels = {"CRITICAL"} if state.get("deep_scan_critical_only") else set(llm_file_scan.LLM_RISK_LEVELS)
+    risk_of = {e["path"]: e.get("risk_level") for e in module_plan.get("files") or []}
+    pool = [p for p in deep + triage if risk_of.get(p) in deep_levels]
+    if not pool:
+        return module_plan, 0
+    cap = state.get("deep_scan_file_cap", llm_file_scan.DEEP_SCAN_FILE_CAP)
+    order = {p: i for i, p in enumerate(pool)}
+    ranked = sorted(pool, key=lambda p: (_RISK_RANK.get(risk_of.get(p), 9), -entries.get(p, 0), -sinks.get(p, 0), order[p]))
+    chosen, overflow = ranked[:cap], ranked[cap:]
+    backfill = [p for p in deep if risk_of.get(p) not in deep_levels][: max(0, cap - len(chosen))]
+    placed = set(chosen) | set(backfill) | set(overflow)
+    swapped_in = len(set(chosen) - set(deep))
+    module_plan["deep_scan_paths"] = chosen + backfill
+    module_plan["triage_scan_paths"] = overflow + [p for p in deep + triage if p not in placed]
+    return module_plan, swapped_in
+
+
 def node_build_call_graph(state: SastState) -> dict:
     tracer: AgentTrace = state["_tracer"]
     if not _tree_sitter_graph_enabled(state):
@@ -1618,7 +1704,19 @@ def node_build_call_graph(state: SastState) -> dict:
                        f"({unresolved_note}), framework_or_stdlib_skipped={framework_skipped}",
                 narrative=f"Call graph: {summary['methods']} method(s)/function(s), {len(graph.edges)} resolved "
                           f"edges, {len(graph.sinks)} typed sink(s).")
-    return {"call_graph": summary}
+
+    entries, sinks = lang_module.attack_surface_counts(graph)
+    module_plan, swapped_in = _rank_deep_scan_by_attack_surface(state, entries, sinks)
+    deep_paths = module_plan.get("deep_scan_paths") or []
+    exposed = sum(1 for p in deep_paths if entries.get(p) or sinks.get(p))
+    tracer.log(5, "build_call_graph",
+                f"Deep-scan set ranked by attack surface: {exposed} of {len(deep_paths)} file(s) hold an entry point "
+                f"or typed sink; {swapped_in} file(s) swapped in",
+                detail=f"entry_point_files={len(entries)}, sink_files={len(sinks)}",
+                narrative=f"Re-ranked the deep-scan files by how exposed they are (HTTP/SOAP entry points, then "
+                          f"typed sinks): {exposed} of {len(deep_paths)} hold one"
+                          + (f", and {swapped_in} more exposed file(s) took slots from less exposed ones." if swapped_in else "."))
+    return {"call_graph": summary, "module_plan": module_plan}
 
 
 def _merge_flows(joern: List[Any], tree_sitter: List[Any], cap: int) -> List[Any]:

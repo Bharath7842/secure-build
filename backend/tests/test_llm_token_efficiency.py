@@ -388,6 +388,39 @@ def test_triage_call_failure_keeps_every_candidate(lfs, rules):
     assert all(f["verdict"] == "unverified" for f in result["findings"])
 
 
+def test_triage_asks_once_per_repeated_construct_and_fans_the_verdict_out(lfs, rules):
+    """The same matched text five times in one file is one candidate (with an
+    occurrence count and only its first three excerpts); its verdict lands on
+    every occurrence."""
+    lines = [f"filler{i}" for i in range(1, 201)]
+    repeated = [10, 50, 90, 130, 170]
+    for n in repeated:
+        lines[n - 1] = "password = 'same'"
+    lines[194] = "password = 'other'"
+    hits = [{"rule": "secret-password-assign", "line": n, "matched_text": "password = 'same'", "severity": "HIGH"}
+            for n in repeated]
+    hits.append({"rule": "secret-password-assign", "line": 195, "matched_text": "password = 'other'", "severity": "HIGH"})
+    prompts = []
+
+    def fake(system, user, **kwargs):
+        prompts.append(user)
+        return json.dumps({"decisions": [
+            {"id": "c1", "verdict": "false_positive", "confidence": 0.9, "verdict_reason": "fixture value"},
+            {"id": "c2", "verdict": "true_positive", "confidence": 0.8, "verdict_reason": "real secret"},
+        ]})
+
+    result = lfs.triage_regex_hits(
+        file_path="a.py", source_text="\n".join(lines), hits=hits, rules=rules, call_llm_fn=fake,
+    )
+    assert len(prompts) == 1
+    user = prompts[0]
+    assert "c1 | secret-password-assign | 5 occurrences of the same match" in user
+    assert "c3 |" not in user
+    assert "<-- c1" in user and "130:" not in user  # only the first three occurrences are excerpted
+    verdicts = {f["line"]: f["verdict"] for f in result["findings"]}
+    assert verdicts == {**{n: "false_positive" for n in repeated}, 195: "true_positive"}
+
+
 # --- flows: shared hops sent once -----------------------------------------------
 
 def _hop(cg, file, method, start, body, role, line=None):

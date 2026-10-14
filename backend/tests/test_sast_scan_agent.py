@@ -285,13 +285,16 @@ def test_node_map_modules_and_risk_flags_critical_and_low(agent, project_tree):
     assert len(module_plan["scan_priority"]) == 2
     assert {f["path"]: f.get("lang") for f in module_plan["files"]}["app/auth.py"] == "python"
     # Only 2 CRITICAL files against the default 100-file cap, so backfill
-    # (default on) fills the rest of the budget with the MEDIUM file, then the
-    # LOW file — nothing is left for regex-gated triage in this tiny fixture.
+    # (default on) fills the rest of the budget with the MEDIUM file — nothing
+    # is left for regex-gated triage in this tiny fixture.
     # risk_level (asserted above) stays MEDIUM/LOW regardless of which tier
     # actually scans the file.
     assert set(module_plan["deep_scan_paths"]) == {
-        "app/auth.py", "app/models.py", "requirements.txt", "tests/test_app.py",
+        "app/auth.py", "app/models.py", "requirements.txt",
     }
+    # Test code stays in Discovery (risk_level LOW above) but neither tier scans it.
+    assert "tests/test_app.py" not in module_plan["triage_scan_paths"]
+    assert module_plan["files_skipped_test"] == 1
     assert module_plan["triage_scan_paths"] == []
 
 
@@ -305,7 +308,7 @@ def test_node_map_modules_and_risk_no_backfill_when_disabled(agent, project_tree
     result = agent.node_map_modules_and_risk(state)
     module_plan = result["module_plan"]
     assert set(module_plan["deep_scan_paths"]) == {"app/auth.py", "app/models.py"}
-    assert set(module_plan["triage_scan_paths"]) == {"requirements.txt", "tests/test_app.py"}
+    assert set(module_plan["triage_scan_paths"]) == {"requirements.txt"}
 
 
 def test_node_map_modules_and_risk_backfill_prefers_medium_over_low_and_stays_capped(agent, tmp_path):
@@ -1370,7 +1373,7 @@ def test_tier_banners_name_the_risk_levels_each_tier_holds(agent, capsys):
 
 def test_untouched_project_runs_every_sast_toggle_at_its_catalog_default(monkeypatch, project_tree, tmp_path_factory):
     """No hard-coded second copy of the defaults: a project that never saved
-    its limitations gets exactly what the settings page shows — all on."""
+    its limitations gets exactly what the settings page shows."""
     monkeypatch.setenv("SAST_AST_CACHE_DIR", str(tmp_path_factory.mktemp("ast_cache")))
     monkeypatch.setattr(settings, "sast_framework_path", str(Path(__file__).resolve().parents[1] / "sast_engine"))
     import sys
@@ -1380,7 +1383,11 @@ def test_untouched_project_runs_every_sast_toggle_at_its_catalog_default(monkeyp
     from app.models import Project
     from app.services import agent_bridge
 
-    assert all(lim.enabled_by_default for lim in SCAN_LIMITATIONS)
+    # Per-file LLM triage and CRITICAL-only deep scan wasted the budget on a
+    # real legacy repo, so both ship off; everything else ships on.
+    assert {lim.id for lim in SCAN_LIMITATIONS if not lim.enabled_by_default} == {
+        "deep-scan-critical-only", "triage-mode-llm-confirm",
+    }
     real_agent = agent_bridge._load_agent_module()
     captured = []
     monkeypatch.setattr(real_agent, "invoke_graph", lambda graph, state, **_k: captured.append(state) or {})
@@ -1399,4 +1406,95 @@ def test_untouched_project_runs_every_sast_toggle_at_its_catalog_default(monkeyp
     assert state["catalog_prefilter"] is True
     assert state["suppress_http_findings"] is True
     assert state["inter_file_flow"] and state["joern_dataflow"] and state["derive_runtime_rules"]
-    assert state["triage_mode"] == real_agent.llm_file_scan.TRIAGE_MODE_LLM
+    assert state["triage_mode"] == real_agent.llm_file_scan.TRIAGE_MODE_REGEX_ONLY
+    assert state["deep_scan_critical_only"] is False
+
+
+# --- risk routing: test code, content-based risk, attack-surface ranking ------
+
+@pytest.mark.parametrize("path,expected", [
+    ("src/main/java/com/acme/OrderServiceTest.java", True),
+    ("src/main/java/com/acme/OrderIT.java", True),
+    ("src/main/java/com/acme/ejbclient/OrderTestClient.java", True),
+    ("src/test/java/com/acme/Anything.java", True),
+    ("web/src/app/cart.component.spec.ts", True),
+    ("web/__tests__/cart.js", True),
+    ("e2e/login.e2e-spec.ts", True),
+    ("src/main/java/com/acme/AUDIT.java", False),
+    ("src/main/java/com/acme/Contest.java", False),
+    ("web/src/app/test-data.service.ts", False),
+])
+def test_is_test_path_matches_directories_and_name_conventions(agent, path, expected):
+    assert agent.llm_file_scan.is_test_path(path) is expected
+
+
+def _java_repo(tmp_path, files):
+    (tmp_path / "pom.xml").write_text("<project/>", encoding="utf-8")
+    for rel, body in files.items():
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+    return tmp_path
+
+
+def _risk_by_path(agent, root):
+    state = _initial_state(agent, root)
+    state.update(agent.node_scan_directory(state))
+    state.update(agent.node_analyze_tech_stack(state))
+    state.update(agent.node_categorize_files(state))
+    plan = agent.node_map_modules_and_risk(state)["module_plan"]
+    return {f["path"]: f["risk_level"] for f in plan["files"]}, plan
+
+
+def test_content_promotes_entry_points_and_demotes_ejb_interfaces(agent, tmp_path):
+    base = "src/main/java/com/acme/"
+    root = _java_repo(tmp_path, {
+        base + "misc/OrderResource.java": '@Path("/orders")\npublic class OrderResource {}\n',
+        base + "misc/ApiController.java": "@RestController\npublic class ApiController {}\n",
+        base + "misc/AuthFilter.java": "public class AuthFilter implements javax.servlet.Filter {}\n",
+        base + "misc/RowFilter.java": "public class RowFilter implements Predicate<Row> {}\n",
+        base + "security/OrderHome.java": "public interface OrderHome extends EJBHome { Order create(); }\n",
+        base + "security/OrderBean.java": "public class OrderBean implements SessionBean {}\n",
+        "src/main/webapp/WEB-INF/web.xml": "<web-app/>\n",
+    })
+    risk, plan = _risk_by_path(agent, root)
+    assert risk[base + "misc/OrderResource.java"] == "CRITICAL"
+    assert risk[base + "misc/ApiController.java"] == "CRITICAL"
+    assert risk[base + "misc/AuthFilter.java"] == "CRITICAL"
+    assert risk[base + "misc/RowFilter.java"] == "MEDIUM"
+    assert risk[base + "security/OrderHome.java"] == "LOW"
+    assert risk[base + "security/OrderBean.java"] == "CRITICAL"
+    assert risk["src/main/webapp/WEB-INF/web.xml"] == "CRITICAL"
+    assert plan["content_risk_overrides"] == {"promoted": 3, "demoted": 1}
+
+
+def test_angular_environment_files_are_medium(agent, tmp_path):
+    (tmp_path / "angular.json").write_text("{}", encoding="utf-8")
+    env = tmp_path / "src" / "environments"
+    env.mkdir(parents=True)
+    (env / "environment.prod.ts").write_text("export const environment = {};\n", encoding="utf-8")
+    risk, _ = _risk_by_path(agent, tmp_path)
+    assert risk["src/environments/environment.prod.ts"] == "MEDIUM"
+
+
+def test_deep_scan_set_is_reranked_by_entry_points_then_sinks(agent):
+    from collections import Counter
+
+    files = [{"path": f"C{i}.java", "risk_level": "CRITICAL"} for i in range(3)] + \
+            [{"path": f"H{i}.java", "risk_level": "HIGH"} for i in range(3)] + \
+            [{"path": "M0.java", "risk_level": "MEDIUM"}]
+    state = {
+        "deep_scan_file_cap": 4,
+        "module_plan": {
+            "files": files,
+            "deep_scan_paths": ["C0.java", "C1.java", "C2.java", "H0.java"],
+            "triage_scan_paths": ["H1.java", "H2.java", "M0.java"],
+        },
+    }
+    entries = Counter({"C2.java": 3, "H2.java": 2})
+    sinks = Counter({"C1.java": 1, "H1.java": 5})
+    plan, swapped_in = agent._rank_deep_scan_by_attack_surface(state, entries, sinks)
+    # CRITICAL stays ahead of HIGH; within a tier, entry points then sinks.
+    assert plan["deep_scan_paths"] == ["C2.java", "C1.java", "C0.java", "H2.java"]
+    assert swapped_in == 1
+    assert plan["triage_scan_paths"] == ["H1.java", "H0.java", "M0.java"]
