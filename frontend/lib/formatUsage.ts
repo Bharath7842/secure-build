@@ -18,6 +18,7 @@ export function providerLabel(provider: string | undefined): string {
   const key = (provider || "").trim().toLowerCase();
   if (key === "bedrock") return "Bedrock";
   if (key === "ollama") return "Ollama";
+  if (key === "openai_compat") return "OpenAI-compatible";
   if (key === "anthropic") return "Anthropic";
   if (key === "openai") return "OpenAI";
   return provider || "Unknown";
@@ -29,6 +30,10 @@ export function stepLabel(step: string): string {
     verify_flow_slices: "Inter-file flow slices",
     derive_runtime_rules: "Runtime-derived regex",
     scan_triage_files: "Regex triage",
+    group_confirm_triage_findings: "Grouped triage confirmation",
+    hunt_plan: "Agentic hunt — planning",
+    hunt_investigate: "Agentic hunt — investigation",
+    hunt_verify: "Agentic hunt — independent verification",
     // Pre-rename step keys, kept so usage summaries persisted on older scans
     // still render a label instead of a raw identifier.
     scan_critical_files: "File scan",
@@ -53,14 +58,24 @@ export function estimateStepCostUsd(
   if (typeof step.cost_usd === "number") return step.cost_usd;
   const inPrice = summary.input_price_per_mtok ?? 0;
   const outPrice = summary.output_price_per_mtok ?? 0;
+  // Mirrors llm_client.llm_cost_usd: prompt-cache reads bill at 0.1x input,
+  // writes at 1.25x; input_tokens already includes both.
+  const read = step.cache_read_input_tokens ?? 0;
+  const write = step.cache_write_input_tokens ?? 0;
+  const uncached = Math.max(0, step.input_tokens - read - write);
   return (
-    (step.input_tokens / 1_000_000) * inPrice + (step.output_tokens / 1_000_000) * outPrice
+    ((uncached + read * 0.1 + write * 1.25) / 1_000_000) * inPrice +
+    (step.output_tokens / 1_000_000) * outPrice
   );
 }
 
 export function hasUsageData(summary: UsageSummary | null | undefined): boolean {
   if (!summary) return false;
-  return (summary.call_count ?? 0) > 0 || (summary.total_tokens ?? 0) > 0;
+  return (
+    (summary.call_count ?? 0) > 0 ||
+    (summary.total_tokens ?? 0) > 0 ||
+    (summary.result_cache_hits ?? 0) > 0
+  );
 }
 
 export function usageCardSubtitle(summary: UsageSummary): string {
@@ -68,6 +83,9 @@ export function usageCardSubtitle(summary: UsageSummary): string {
     `${formatTokenCount(summary.total_tokens ?? 0)} tokens`,
     formatCostUsd(summary.cost_usd ?? 0),
   ];
+  if (summary.result_cache_hits) {
+    parts.push(`${formatTokenCount(summary.result_cache_hits)} reused`);
+  }
   if (summary.fallback_switched) {
     parts.push("fallback used");
   }

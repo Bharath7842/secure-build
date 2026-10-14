@@ -10,6 +10,7 @@ catalog already uses). Bare ``execute(`` is not a sink.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -121,6 +122,11 @@ _SINK_SEVERITY = {
     "reflect": 2,
     "files": 3,
     "redirect": 3,
+    # Joern-only kinds (joern/taint_spec.json). Real but lower-impact, and far
+    # more numerous on a typical web app — see joern_flows._LOW_VALUE_KINDS.
+    "header": 3,
+    "response_body": 3,
+    "log": 4,
 }
 
 # (receiver FQCNs, method names, sink kind). An empty method set means any
@@ -184,15 +190,23 @@ _CONSTRUCTOR_SINKS: Dict[str, str] = {
     "java.net.URI": "ssrf",
 }
 
-# Base types whose *subtypes* are sinks, keyed by simple name -> sink kind.
+# Base types whose *subtypes* are candidate sinks, keyed by simple name ->
+# sink kind.
 #
 # The receiver-based rules above only fire on a known framework type at the
 # call site. That misses the dominant persistence idiom, where the project
 # declares its own interface (`interface OrderRepository extends
 # JpaRepository<Order, Long>`) and the querying implementation is generated at
 # runtime, so it never exists in the repo to be resolved or hopped into. Every
-# method on such a type is a query — derived (`findByEmail`) or `@Query`
-# annotated — so the call site itself is the sink.
+# call on such a type is *routed through* this table (see
+# _spring_data_repository_sink), but it is a real sink only when the project's
+# own declared method is `@Query(..., nativeQuery = true)` — a derived query
+# method (`findByEmail`) and a plain JPQL `@Query` are both parameterized by
+# construction (and a Java annotation value is a compile-time constant, so
+# neither can ever have untrusted input concatenated into its query text).
+# Only nativeQuery=true executes a literal SQL string the project wrote
+# itself, which is also the one case that can defeat parameter binding via a
+# SpEL `?#{...}` substitution.
 #
 # Keyed by simple name because these base types belong to the framework and so
 # are never present in `graph.types` to be matched by FQCN. This table is the
@@ -331,6 +345,12 @@ class SinkHit:
     file: str
     method_name: str
     label: str
+    # Declared repository method's own source (signature + any @Query
+    # annotation), when the sink is a Spring Data nativeQuery call — see
+    # _typed_sink. Appended to the sink hop's body so the LLM sees the actual
+    # SQL text, not just the caller's wrapper code. Empty for every other
+    # sink kind.
+    declaration: str = ""
 
 
 @dataclass
@@ -355,6 +375,16 @@ class Flow:
     authenticated: bool
     files: List[str]
     unresolved: List[str] = field(default_factory=list)
+    # Expression-level dataflow path ({file, line, method, code} per step).
+    # Only Joern flows (pipeline/joern_flows.py) carry one; this graph is
+    # method-level and leaves it empty.
+    taint_path: List[Dict[str, Any]] = field(default_factory=list)
+    # Joern only, like taint_path ({file, line, code} each): conditions the
+    # path's nodes are control-dependent on, and sanitizer calls (taint_spec
+    # "sanitizers") the value passes through. Context for the verifier — a
+    # flow is never dropped for having either.
+    guards: List[Dict[str, Any]] = field(default_factory=list)
+    sanitizers: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def entry_key(self) -> str:
@@ -801,45 +831,87 @@ def _sink_kind_for_declared_type(graph: "CallGraph", fqcn: Optional[str]) -> Opt
     return None
 
 
+_NATIVE_QUERY_RE = re.compile(r"nativeQuery\s*=\s*true")
+
+
+def _resolve_repository_method(
+    graph: "CallGraph", fqcn: Optional[str], name: str, argc: int,
+) -> Optional[JavaMethod]:
+    """The in-repo declaration of `fqcn.name(argc args)`, if the project
+    declares it directly (true for every custom Spring Data repository
+    method — derived or @Query — even though the implementation itself is
+    generated at runtime and never appears in the repo)."""
+    if not fqcn:
+        return None
+    keys = _lookup_methods(graph, fqcn, name, argc)
+    return graph.methods.get(keys[0]) if len(keys) == 1 else None
+
+
+def _spring_data_repository_sink(
+    graph: "CallGraph", receiver_fqcn: str, method_name: str, argc: int,
+) -> Tuple[Optional[str], str]:
+    """Sink kind + declaration text for a Spring Data repository call.
+
+    A derived query method (no `@Query`) is always parameterized by Spring
+    Data's name-derivation, and a JPQL `@Query` is a Java annotation value —
+    a compile-time constant no runtime string can be concatenated into —
+    so neither can ever embed untrusted input into the query text. Only
+    `@Query(..., nativeQuery = true)` executes a literal SQL string the
+    project wrote itself (and can defeat parameter binding via a SpEL
+    `?#{...}` substitution), so that is the only case kept as a sink.
+    A method inherited from `JpaRepository` itself (`save`, `findById`, ...)
+    isn't declared in-repo at all and binds typed entity/id values, never a
+    raw string, so it is never a sink either.
+    """
+    method = _resolve_repository_method(graph, receiver_fqcn, method_name, argc)
+    if method is None or "Query" not in method.annotations:
+        return None, ""
+    if not _NATIVE_QUERY_RE.search(method.body):
+        return None, ""
+    return "jpa", method.body
+
+
 def _typed_sink(
     graph: "CallGraph",
     method_name: str,
     receiver_fqcn: Optional[str],
     call: CallSite,
-) -> Optional[str]:
+) -> Tuple[Optional[str], str]:
     if call.syntactic_runtime_exec:
-        return "command"
+        return "command", ""
     if call.syntactic_process_builder:
-        return "command"
+        return "command", ""
     if receiver_fqcn is None:
-        return None
+        return None, ""
     declared = _sink_kind_for_declared_type(graph, receiver_fqcn)
+    if declared == "jpa":
+        return _spring_data_repository_sink(graph, receiver_fqcn, method_name, call.argc)
     if declared:
-        return declared
+        return declared, ""
     if method_name in _SQL_METHODS and receiver_fqcn in _SQL_RECEIVERS:
-        return "sql"
+        return "sql", ""
     if method_name in _JPA_METHODS and receiver_fqcn in _JPA_RECEIVERS:
-        return "jpa"
+        return "jpa", ""
     if method_name in _JDBC_TEMPLATE_METHODS and receiver_fqcn in _JDBC_TEMPLATE_RECEIVERS:
-        return "jdbc_template"
+        return "jdbc_template", ""
     if method_name == "exec" and receiver_fqcn == "java.lang.Runtime":
-        return "command"
+        return "command", ""
     if method_name in ("start", "command") and receiver_fqcn == "java.lang.ProcessBuilder":
-        return "command"
+        return "command", ""
     if call.is_constructor and receiver_fqcn == "java.lang.ProcessBuilder":
-        return "command"
+        return "command", ""
     if method_name == "readObject" and receiver_fqcn == "java.io.ObjectInputStream":
-        return "deser"
+        return "deser", ""
     if method_name in _FILES_METHODS and receiver_fqcn == "java.nio.file.Files":
-        return "files"
+        return "files", ""
     for receivers, methods, kind in _RECEIVER_SINKS:
         if receiver_fqcn in receivers and (not methods or method_name in methods):
-            return kind
+            return kind, ""
     if call.is_constructor:
         ctor_kind = _CONSTRUCTOR_SINKS.get(receiver_fqcn)
         if ctor_kind:
-            return ctor_kind
-    return None
+            return ctor_kind, ""
+    return None, ""
 
 
 def _resolve_callee_keys(
@@ -902,7 +974,7 @@ def _wire_calls(graph: CallGraph, calls: List[CallSite]) -> None:
             caller.file, ("", {}, set())
         )
         receiver = _resolve_receiver_fqcn(graph, call, caller, package, imports, stars)
-        sink_kind = _typed_sink(graph, call.method_name, receiver, call)
+        sink_kind, declaration = _typed_sink(graph, call.method_name, receiver, call)
         if sink_kind:
             graph.sinks.append(SinkHit(
                 caller_key=caller.key,
@@ -911,6 +983,7 @@ def _wire_calls(graph: CallGraph, calls: List[CallSite]) -> None:
                 file=caller.file,
                 method_name=call.method_name,
                 label=f"{(receiver or '').rsplit('.', 1)[-1]}.{call.method_name}(...)",
+                declaration=declaration,
             ))
         keys, reason = _resolve_callee_keys(graph, call, receiver)
         # A sink terminates the flow by design — its body is framework or
@@ -1076,8 +1149,18 @@ def _public_api_entries(graph: CallGraph) -> List[str]:
     return sorted(entries)
 
 
-def _hop_from_method(method: JavaMethod, *, line: int, role: str, label: str) -> FlowHop:
+def _hop_from_method(
+    method: JavaMethod, *, line: int, role: str, label: str, extra_body: str = "",
+) -> FlowHop:
     short = f"{method.fqcn.rsplit('.', 1)[-1]}.{method.name}"
+    body = method.body
+    if extra_body:
+        # The sink call's own declaration (e.g. a nativeQuery=true @Query) —
+        # the repository interface is a different file the BFS never hops
+        # into (its implementation is generated at runtime), so without this
+        # the LLM would see only the caller's wrapper code and never the
+        # actual SQL text it's judging.
+        body = f"{body}\n\n// Declaration of the sink call above:\n{extra_body}"
     return FlowHop(
         file=method.file,
         method=short,
@@ -1086,7 +1169,7 @@ def _hop_from_method(method: JavaMethod, *, line: int, role: str, label: str) ->
         line=line,
         start_line=method.start_line,
         end_line=method.end_line,
-        body=method.body,
+        body=body,
         role=role,
         label=label,
     )
@@ -1156,7 +1239,8 @@ def discover_flows(
                         # Marker on the call inside this method that reaches the next hop.
                         out_line = lines[i + 1] if i + 1 < len(lines) else lines[i]
                         role, label, line = "hop", f"{m.name}(...)", out_line
-                    hops.append(_hop_from_method(m, line=line, role=role, label=label))
+                    extra_body = sink.declaration if role == "sink" else ""
+                    hops.append(_hop_from_method(m, line=line, role=role, label=label, extra_body=extra_body))
                     nfile = _norm_file(m.file)
                     if nfile not in seen_files:
                         seen_files.add(nfile)
@@ -1262,4 +1346,7 @@ def flow_to_dict(flow: Flow) -> Dict[str, Any]:
             }
             for h in flow.hops
         ],
+        "taint_path": list(flow.taint_path),
+        "guards": list(flow.guards),
+        "sanitizers": list(flow.sanitizers),
     }

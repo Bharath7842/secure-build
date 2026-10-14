@@ -13,9 +13,17 @@ frontend/.next/
 
 # Secrets (keep .env.local.example)
 frontend/.env.local
+.env
 
 # Runtime data (DBs, scan logs, workspaces, screenshots)
 data/
+
+# Joern console workspaces (CPG copies made by importCpg in whatever directory
+# joern ran from). joern_runner now runs Joern inside the scan's temp dir; these
+# catch manual runs and leftovers from before that.
+backend/workspace/
+backend/sast_engine/workspace/
+backend/sast_engine/joern/workspace/
 
 # Scratch/debug artifacts from local scan runs (see CLAUDE.md)
 sast_output/
@@ -38,3 +46,10 @@ Curd-Pro-v2.pdf
 Curd-Pro-v3.pdf
 Juice-Shop-dast-v21.pdf
 SSIR-v2.pdf
+.gstack/
+
+# Local tooling / scratch output
+.playwright-cli/
+.superpowers/
+tmp/
+output/

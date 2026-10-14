@@ -15,8 +15,8 @@ export function verdictKind(verdict: string | null | undefined): VerdictKind {
   return "dismissed";
 }
 
-/** DAST findings are confirmed (the model's FAIL) or dismissed (the model's PASS).
- * Leftover `unverified` rows from older scans display as dismissed. */
-export function dastVerdictKind(verdict: string | null | undefined): Exclude<VerdictKind, "unverified"> {
-  return verdict === "true_positive" ? "confirmed" : "dismissed";
+/** DAST findings preserve the three persisted states so browser observations that need review
+ * remain visible instead of being silently grouped with dismissed findings. */
+export function dastVerdictKind(verdict: string | null | undefined): VerdictKind {
+  return verdictKind(verdict);
 }

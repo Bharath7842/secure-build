@@ -26,7 +26,7 @@ from app.schemas import (
     ScanStatusOut,
     ScanTriggerOut,
 )
-from app.services import dast_narration, git_workspace, scan_log, scan_runner
+from app.services import dast_narration, git_token, git_workspace, scan_log, scan_runner
 from app.services import dast_settings
 from app.services.dast_authz import build_authz_matrix
 from app.services.dast_diff import build_diff
@@ -34,6 +34,7 @@ from app.services.dast_report import build_dast_report
 from app.services.dast_summary import build_summary
 from app.services.dast_findings_query import build_dast_findings
 from app.services.dast_scan_setup import DastSetupError, prepare_dast_scan
+from app.services.llm_policy import DATA_POLICY_ALLOW_EXTERNAL, data_policy_violation
 from app.services.scan_export import build_excel_report, build_pdf_report, export_filenames, group_findings_by_issue
 from app.services.scan_progress import infer_progress_from_lines
 
@@ -65,6 +66,15 @@ def _resolve_triggered_by(metadata: dict | None) -> str:
     if meta.get("github_run_id") or meta.get("github_run_url"):
         return "jenkins"
     return "app"
+
+
+def _effective_llm_base_url(provider: str, project_base_url: str | None) -> str | None:
+    """The endpoint `provider` will actually call for this project."""
+    if provider == "openai_compat":
+        return project_base_url or settings.openai_compat_base_url
+    if provider == "ollama":
+        return settings.ollama_base_url
+    return None
 
 
 def _dast_display_model(routing: dict) -> tuple[str | None, str | None]:
@@ -217,7 +227,7 @@ def trigger_scan(
     # of always kicking off a brand-new full scan.
     if not commit_sha and not payload.force and not is_dast:
         commit_sha = git_workspace.resolve_remote_head(
-            git_url, branch, project.git_provider, project.git_access_token
+            git_url, branch, project.git_provider, git_token.fresh_access_token(project)
         )
         resolved_from_git = commit_sha is not None
 
@@ -260,13 +270,27 @@ def trigger_scan(
             fallback_llm_provider = (
                 payload.fallback_llm_provider
                 or getattr(project, "fallback_llm_provider", None)
-                or "ollama"
+                or "none"
             )
             fallback_llm_model = (
                 payload.fallback_llm_model
                 or getattr(project, "fallback_llm_model", None)
-                or "granite-code:3b"
+                or None
             )
+        llm_base_url = getattr(project, "llm_base_url", None) or None
+        llm_data_policy = getattr(project, "llm_data_policy", None) or DATA_POLICY_ALLOW_EXTERNAL
+        # Refuse up front rather than fail mid-scan: under local_only, neither
+        # the primary nor the fallback may send code off the local network.
+        for candidate in (llm_provider, fallback_llm_provider):
+            if not candidate or candidate == "none":
+                continue
+            violation = data_policy_violation(
+                policy=llm_data_policy,
+                provider=candidate,
+                base_url=_effective_llm_base_url(candidate, llm_base_url),
+            )
+            if violation:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=violation)
     elif is_dast:
         # DAST does not use the SAST LLM path (`use_llm` stays false) but still
         # calls models through the gateway. Snapshot the routing so the scan
@@ -274,11 +298,15 @@ def trigger_scan(
         llm_provider, llm_model = _dast_display_model((prepared.effective if prepared else {}).get("model_routing") or {})
         fallback_llm_provider = None
         fallback_llm_model = None
+        llm_base_url = None
+        llm_data_policy = None
     else:
         llm_provider = None
         llm_model = None
         fallback_llm_provider = None
         fallback_llm_model = None
+        llm_base_url = None
+        llm_data_policy = None
     metadata = dict(payload.metadata or {})
     metadata["use_llm"] = use_llm
     if is_dast:
@@ -305,6 +333,8 @@ def trigger_scan(
         llm_model=llm_model,
         fallback_llm_provider=fallback_llm_provider,
         fallback_llm_model=fallback_llm_model,
+        llm_base_url=llm_base_url,
+        llm_data_policy=llm_data_policy,
         triggered_by=_resolve_triggered_by(metadata),
     )
     db.add(scan)

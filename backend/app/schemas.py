@@ -6,6 +6,12 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from app.config import settings
+from app.services.llm_policy import (
+    DATA_POLICIES,
+    DATA_POLICY_ALLOW_EXTERNAL,
+    SAST_FALLBACK_PROVIDERS,
+    SAST_LLM_PROVIDERS,
+)
 
 
 class ReferenceSource(BaseModel):
@@ -36,11 +42,15 @@ class ProjectBase(BaseModel):
     max_files_to_scan: int = 0  # 0 = entire repo; UI no longer exposes a cap
     max_derived_regex_rules: int = 50  # hard cap on LLM-derived regex rules per scan
     max_derived_semgrep_rules: int = 20  # hard cap on LLM-derived Semgrep rules per scan
-    llm_provider: str = "bedrock"  # bedrock|ollama — which LLM backend each scan uses
+    llm_provider: str = "bedrock"  # bedrock|openai_compat|ollama — which LLM backend each scan uses
     llm_model: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-    # After soft Bedrock $ cutoff, continue with this local model (ignored if primary is ollama).
-    fallback_llm_provider: str = "ollama"
-    fallback_llm_model: str = "granite-code:3b"
+    # openai_compat endpoint (e.g. http://localhost:8000/v1); None = server default.
+    llm_base_url: str | None = None
+    llm_data_policy: str = DATA_POLICY_ALLOW_EXTERNAL  # allow_external|local_only
+    # After the soft $ cutoff, continue on this provider/model; "none" stops
+    # LLM work instead (ignored if primary is ollama).
+    fallback_llm_provider: str = "none"
+    fallback_llm_model: str = ""
     owasp_mode: str = "top10"  # top10|top15|custom (synced from reference_sources)
     owasp_urls: list[str] = Field(default_factory=list)
     nvd_mode: str = "top10"  # top10|top15|custom (synced from reference_sources)
@@ -52,6 +62,32 @@ class ProjectBase(BaseModel):
     def _none_to_list(cls, value):
         return value or []
 
+    @field_validator("llm_provider")
+    @classmethod
+    def _known_llm_provider(cls, value):
+        return _check_choice("llm_provider", value, SAST_LLM_PROVIDERS)
+
+    # mode="before": legacy rows can hold NULL here, which must coerce to the
+    # default rather than fail ProjectOut's str type check.
+    @field_validator("fallback_llm_provider", mode="before")
+    @classmethod
+    def _known_fallback_provider(cls, value):
+        return _check_choice("fallback_llm_provider", value or "none", SAST_FALLBACK_PROVIDERS)
+
+    @field_validator("llm_data_policy", mode="before")
+    @classmethod
+    def _known_data_policy(cls, value):
+        return _check_choice("llm_data_policy", value or DATA_POLICY_ALLOW_EXTERNAL, DATA_POLICIES)
+
+
+def _check_choice(field: str, value: str | None, allowed: tuple[str, ...]) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized not in allowed:
+        raise ValueError(f"{field} must be one of {', '.join(allowed)}")
+    return normalized
+
 
 class ProjectCreate(ProjectBase):
     # Set when "Connect GitHub"/"Connect GitLab" was authorized on the
@@ -59,6 +95,8 @@ class ProjectCreate(ProjectBase):
     # pending-connection store). Consumed once at creation time — never
     # persisted as a project field itself.
     git_connection_id: str | None = None
+    # Write-only; ProjectOut only reports llm_api_key_set.
+    llm_api_key: SecretStr | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -80,6 +118,10 @@ class ProjectUpdate(BaseModel):
     max_derived_semgrep_rules: int | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
+    llm_base_url: str | None = None
+    llm_data_policy: str | None = None
+    # Write-only. Omit to keep the stored key; send "" to clear it.
+    llm_api_key: SecretStr | None = None
     fallback_llm_provider: str | None = None
     fallback_llm_model: str | None = None
     owasp_mode: str | None = None
@@ -87,6 +129,21 @@ class ProjectUpdate(BaseModel):
     nvd_mode: str | None = None
     nvd_urls: list[str] | None = None
     reference_sources: list[ReferenceSource] | None = None
+
+    @field_validator("llm_provider")
+    @classmethod
+    def _known_llm_provider(cls, value):
+        return _check_choice("llm_provider", value, SAST_LLM_PROVIDERS)
+
+    @field_validator("fallback_llm_provider")
+    @classmethod
+    def _known_fallback_provider(cls, value):
+        return _check_choice("fallback_llm_provider", value, SAST_FALLBACK_PROVIDERS)
+
+    @field_validator("llm_data_policy")
+    @classmethod
+    def _known_data_policy(cls, value):
+        return _check_choice("llm_data_policy", value, DATA_POLICIES)
 
 
 class ProjectOut(ProjectBase):
@@ -99,6 +156,14 @@ class ProjectOut(ProjectBase):
     # "Connect GitHub" / "Connect GitLab" status — never the token itself.
     git_provider: str | None = None
     git_connected: bool = False
+    llm_api_key_set: bool = False
+    # Read-only here; entries are removed via DELETE /projects/{id}/learned-rules/{rule_id}.
+    learned_rules: list[dict[str, Any]] = Field(default_factory=list)
+
+    @field_validator("learned_rules", mode="before")
+    @classmethod
+    def _learned_none_to_list(cls, value):
+        return value or []
 
 
 class ProjectDeleteOut(BaseModel):
@@ -464,6 +529,8 @@ class DastEvidenceOut(BaseModel):
     test_excerpt: str | None = None
     signals: list[dict] = Field(default_factory=list)
     audit_ref: str | None = None
+    reproduction: str | None = None
+    severity_source: str | None = None
     request: DastTrafficOut | None = None
 
 

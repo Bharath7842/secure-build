@@ -100,7 +100,7 @@ def analyze_apis(state: GraphState) -> GraphState:
         if outcome.error:
             state.setdefault("warnings", []).append({"event": "api_analysis_failed", "details": f"{outcome.label}: {outcome.error}"})
         runtime.counters.add("tests", outcome.tests_sent)
-        record = analysis_record(outcome, checks, secrets())
+        record = analysis_record(outcome, checks, secrets(), store.get(identity_id).label)
         if record is not None:
             records.append(record)
             state.setdefault("api_analysis", []).append(record)

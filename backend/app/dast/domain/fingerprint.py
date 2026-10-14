@@ -189,6 +189,11 @@ def reconcile(model: Mapping[str, Any] | None, heuristic: Fingerprint) -> Finger
     shape = str(model.get("shape") or "").lower()
     if shape not in SHAPES or shape == heuristic.shape:
         return heuristic
+    # A model must not turn a target that deterministically returned HTML into an API-only
+    # target. That would skip the browser crawl and hide form/page coverage. It may refine an
+    # HTML site between mpa and spa, but only the heuristic may declare an API-only target.
+    if shape == "api" and heuristic.shape != "api":
+        return heuristic
     note = f"model classified the shape as {shape} (heuristics said {heuristic.shape})"
     return Fingerprint(shape, heuristic.auth, heuristic.schema, "model", heuristic.schema_url, heuristic.evidence + (note,))
 

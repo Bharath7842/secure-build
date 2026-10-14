@@ -297,7 +297,7 @@ export default function DastRulePackPicker({ projectId, hasSecondIdentity, oastC
                       className="agent-focus-ring rounded-sm text-left"
                     >
                       <span className="font-medium hover:text-[var(--accent)] hover:underline">{displayPackTitle(pack.title)}</span>
-                      <span className="text-[var(--muted)]"> · {pack.check_ids.length} checks</span>
+                      <span className="text-[var(--muted)]"> · {pack.check_ids.length} check{pack.check_ids.length === 1 ? "" : "s"} in this pack</span>
                     </button>
                     {pack.description && <p className="text-xs text-[var(--muted)]">{pack.description}</p>}
                   </div>
@@ -313,7 +313,7 @@ export default function DastRulePackPicker({ projectId, hasSecondIdentity, oastC
               aria-live="polite"
               data-testid="check-count"
             >
-              {enabled.length} check{enabled.length === 1 ? "" : "s"} will run
+              {enabled.length} unique check{enabled.length === 1 ? "" : "s"} will run
               {selected.length === 0 && " (no pack selected)"}
             </button>
             {touched && (
@@ -322,6 +322,11 @@ export default function DastRulePackPicker({ projectId, hasSecondIdentity, oastC
               </button>
             )}
           </div>
+          {selected.length > 1 && (
+            <p className="text-xs text-[var(--muted)]">
+              Pack totals are not added together: the same check can belong to multiple packs, so the scan runs one deduplicated check set.
+            </p>
+          )}
           {notRun.length > 0 && (
             <details className="rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2 text-xs">
               <summary className="cursor-pointer font-medium text-[var(--ink)]">

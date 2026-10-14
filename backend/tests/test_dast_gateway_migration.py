@@ -303,6 +303,34 @@ def test_live_engine_path_routes_models_from_the_scan_snapshot(monkeypatch, fake
     assert set(seen) == {"runtime", "discovery_writer", "findings_writer", "should_abort"}  # the engine takes no model client
 
 
+def test_live_dast_stops_on_unavailable_llm_before_building_target_runtime(monkeypatch):
+    monkeypatch.setenv("USE_MOCK_ENGINE", "false")
+    monkeypatch.setattr(settings, "use_mock_engine", False)
+    monkeypatch.setattr(settings, "run_dast", True)
+
+    class UnavailableGateway:
+        usage = SimpleNamespace(summary=lambda: {})
+
+        def check_configuration(self):
+            return []
+
+        def check_availability(self):
+            return ["fingerprint (ollama): connection refused"]
+
+    monkeypatch.setattr("app.services.model_gateway.build_gateway", lambda routing=None, **kw: UnavailableGateway())
+    monkeypatch.setattr(
+        "app.services.dast_runtime.build_runtime",
+        lambda **kwargs: pytest.fail("target runtime must not be built when the LLM is unavailable"),
+    )
+
+    with pytest.raises(RuntimeError, match="LLM unavailable"):
+        engine_adapter.run_dast_scan(
+            project=None,
+            dast_input={"target_url": "http://unreachable.invalid"},
+            effective_settings={"model_routing": {"fingerprint": ["ollama", "gpt-oss:20b"]}},
+        )
+
+
 def test_no_engine_module_builds_a_model_client_itself():
     """The old direct callers are gone: no ChatOllama anywhere in the engine sources."""
     from pathlib import Path

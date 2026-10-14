@@ -12,6 +12,12 @@ export interface AgentSection {
 // grouped under an implicit "Preparing scan" section.
 const SECTION_RE = /^###\s*(.+)$/;
 
+// The deep-scan and triage banners name the risk tiers each stage holds in
+// this scan ("Scanning CRITICAL files (deep scan)", "Scanning
+// HIGH/MEDIUM/LOW files (triage)"); the fixed labels are older scans'.
+export const DEEP_SCAN_SECTION_RE = /^Scanning .+ files \(deep scan\)$|^Scanning CRITICAL\/HIGH files$/i;
+export const TRIAGE_SECTION_RE = /^Scanning .+ files \(triage\)$|^Scanning MEDIUM\/LOW files$/i;
+
 // Older scans logged full LLM response dumps (`LLM response (...):` + `│ …`
 // slices). New runs no longer emit these; keep skip helpers so historical
 // logs don't flood the live feed.
@@ -20,6 +26,7 @@ const LLM_RESPONSE_BOUNDARY_RES = [
   /^LLM chunk \d+\/\d+ for /,
   /^Scanning deep-risk file \d+\/\d+: /,
   /^Regex-scanning triage-risk file \d+\/\d+: /,
+  /^Hunting hypothesis \d+\/\d+: /,
   // Pre-rename per-file progress lines, kept for historical scan logs.
   /^Scanning CRITICAL file \d+\/\d+: /,
   /^Scanning LLM-risk file \d+\/\d+: /,

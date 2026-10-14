@@ -49,3 +49,15 @@ def test_infer_progress_monotonic_floor():
 
 def test_infer_progress_ignores_unrelated_lines():
     assert infer_progress_from_lines(["Cloning https://example.com/r.git..."], floor=10) == 10
+
+
+def test_tier_banners_resolve_whatever_tiers_they_name():
+    from app.services.scan_progress import infer_progress_from_lines
+
+    assert infer_progress_from_lines(["### Scanning CRITICAL files (deep scan)"]) == 85
+    assert infer_progress_from_lines(["### Scanning CRITICAL/HIGH files (deep scan)"]) == 85
+    assert infer_progress_from_lines(["### Scanning HIGH/MEDIUM/LOW files (triage)"]) == 97
+    assert infer_progress_from_lines(["### Hunting vulnerabilities (agentic)"]) == 97
+    assert infer_progress_from_lines(["### Grouping HIGH/MEDIUM/LOW findings"]) == 98
+    # Persisted logs from before the banners named the tiers.
+    assert infer_progress_from_lines(["### Scanning MEDIUM/LOW files"]) == 97

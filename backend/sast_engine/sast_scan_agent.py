@@ -51,7 +51,7 @@ import uuid
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -66,9 +66,11 @@ try:
 except ImportError:
     pass
 
-from llm_client import init_usage, usage_cost_summary  # noqa: E402
+import llm_client  # noqa: E402
+from llm_client import RESULT_CACHE_USAGE_KEY, init_usage, usage_cost_summary  # noqa: E402
 import ast_struct  # noqa: E402
-from pipeline import call_graph, call_graph_python, dependency_scan, derive_rules, flow_verify, llm_file_scan, regex_scan  # noqa: E402
+from pipeline import call_graph, call_graph_python, dependency_scan, derive_rules, flow_verify, llm_file_scan, regex_scan, rg_prefilter  # noqa: E402
+from pipeline import joern_findings, joern_flows, joern_runner  # noqa: E402
 
 # ===========================================================================
 # 0. CONFIG — extension map, skip dirs, per-stack risk profiles
@@ -103,7 +105,10 @@ DEFAULT_SKIP_DIRS = {
     ".venv", "venv", "env",
     ".idea", ".vscode", ".vs",
     "vendor", ".gradle", ".mvn", ".angular", ".next", "coverage",
-    "config", "configuration", "cvs", "xsd",
+    "cvs", "xsd",
+    # Not "config"/"configuration": they are walked, keeping only source code
+    # and runtime config there (llm_file_scan.config_dir_file_is_scannable) —
+    # pruning them hid com/<pkg>/config/SecurityConfig.java from every stage.
 }
 _SKIP_DIRS_LOWER = {d.lower() for d in DEFAULT_SKIP_DIRS}
 
@@ -296,6 +301,9 @@ STEP_LABELS = {
     8: "Scanning MEDIUM/LOW files",
     9: "Grouping MEDIUM/LOW findings",
     10: "Generating report",
+    11: "Building Joern code property graph",
+    12: "Running Joern queries",
+    13: "Hunting vulnerabilities (agentic)",
 }
 
 DEFAULT_RECURSION_LIMIT = 500
@@ -322,6 +330,13 @@ class AgentTrace:
         self.verbose = verbose
         self.events: List[Dict[str, Any]] = []
         self._last_step: Optional[int] = None
+        # Per-scan banner overrides (see set_label); STEP_LABELS otherwise.
+        self._labels: Dict[int, str] = {}
+
+    def set_label(self, step: int, label: str) -> None:
+        """Banner text for `step` in this scan, set before the step first
+        logs — e.g. the risk tiers a scan stage actually holds."""
+        self._labels[step] = label
 
     def log(self, step: int, node: str, message: str, detail: Optional[str] = None,
             narrative: Optional[str] = None) -> None:
@@ -335,7 +350,7 @@ class AgentTrace:
         self.events.append(entry)
         if self.verbose and step != self._last_step:
             self._last_step = step
-            print(f"### {STEP_LABELS.get(step, node.replace('_', ' '))}")
+            print(f"### {self._labels.get(step) or STEP_LABELS.get(step, node.replace('_', ' '))}")
         if self.verbose and narrative:
             print(narrative)
 
@@ -404,6 +419,44 @@ class SastState(TypedDict, total=False):
     call_graph: Dict[str, Any]
     flow_candidates: List[Dict[str, Any]]
     flow_scan_results: Dict[str, Any]
+    # Joern (pipeline/joern_runner.py). Both default True and are no-ops when
+    # Joern isn't installed. joern_dataflow feeds Joern source->sink paths into
+    # discover_flows/verify_flow_slices (so it also needs inter_file_flow and
+    # use_llm); joern_scan_queries runs joern/queries.sc and writes its hits as
+    # unverified kind=joern findings. scan_limitations ids "joern-dataflow" /
+    # "joern-scan-queries".
+    joern_dataflow: bool
+    joern_scan_queries: bool
+    joern_timeout_sec: int
+    joern_max_languages: int
+    # Caller-owned scratch dir for CPGs (agent_bridge deletes it in a finally,
+    # so a crashed scan can't leak multi-GB graphs). A temp dir otherwise.
+    joern_work_dir: str
+    joern: Dict[str, Any]                # node_build_joern_cpg output (holds the session)
+    joern_scan_results: Dict[str, Any]   # node_joern_scan output
+    # Agentic hunt (pipeline/hunt/). "agentic" turns it on (limitations id
+    # "agentic-security-hunt", CLI --hunt); anything else is a logged no-op,
+    # as is a host without ripgrep or a scan without LLM use. hunt_profile
+    # "benchmark" includes test/generated paths. hunt_max_* and
+    # hunt_budget_usd bound the hunt; None uses the engine defaults.
+    hunt_mode: str
+    hunt_profile: str
+    hunt_max_hypotheses: int
+    hunt_max_steps: int
+    hunt_workers: int
+    hunt_budget_usd: Optional[float]
+    hunt_test_paths: str
+    hunt_generated_paths: str
+    hunt_scan_results: Dict[str, Any]    # node_hunt_security output
+    # ripgrep literal prefilter for the triage catalog pass (default False:
+    # measured slower than the plain Python pass on a ~1k-file repo, roughly
+    # break-even extrapolated to 30k; limitations id
+    # "ripgrep-catalog-prefilter", CLI --catalog-prefilter).
+    catalog_prefilter: bool
+    # Agentic-hunt patterns promoted on earlier scans of this project (rule
+    # dicts, app/services/learned_rules.py); run with the catalog via
+    # _scan_context. Limitations id "learned-hunt-rules".
+    learned_rules: List[Dict[str, Any]]
     # Runtime regex derived from this scan's analysis (call-graph wrappers +
     # optional LLM pass). Default on; CLI --no-derived-regex / limitations id
     # "runtime-derived-regex". Merged onto the static catalog in _scan_context.
@@ -752,9 +805,14 @@ def node_scan_directory(state: SastState) -> dict:
                         detail=", ".join(sorted(pruned)),
                         narrative=f"Skipping {', '.join(sorted(pruned))} — generated or vendor files, nothing to scan there.")
 
+        in_config_dir = any(part.lower() in llm_file_scan.CONFIG_DIR_SEGMENTS for part in rel_dir.split("/") if part)
         for fname in filenames:
             ext = os.path.splitext(fname)[1].lower()
             if _is_skipped_walk_file(fname, ext):
+                continue
+            # Legacy XML/data under config/ stays out of Discovery, as it did
+            # when these directories were pruned outright.
+            if in_config_dir and not llm_file_scan.config_dir_file_is_scannable(fname):
                 continue
             rel_path = to_posix(os.path.join(rel_dir, fname)) if rel_dir else fname
             lang = EXT_LANG_MAP.get(ext)
@@ -1408,6 +1466,8 @@ def _scan_context(state: SastState) -> tuple:
     rules_path = Path(state.get("regex_rules_path") or (_ENGINE_DIR / "rules"))
     static_rules = regex_scan.load_rules(rules_path)
     derived_rules = list(state.get("derived_rules") or [])
+    learned = _learned_rules(state, {r.id for r in static_rules} | {r.id for r in derived_rules})
+    derived_rules = derived_rules + learned
     rules = static_rules + derived_rules
     llm_analysis = state.get("llm_analysis") or {}
     dependency_summary = llm_analysis.get("dependency_summary") or {}
@@ -1423,7 +1483,25 @@ def _scan_context(state: SastState) -> tuple:
             priority_rule_ids, stack_context, usage)
 
 
-def _inter_file_enabled(state: SastState) -> bool:
+def _learned_rules(state: SastState, taken_ids: Set[str]) -> List[regex_scan.RegexRule]:
+    """state["learned_rules"] compiled to catalog rules. A pattern that no
+    longer compiles, or an id already in use, is skipped — never fatal."""
+    out: List[regex_scan.RegexRule] = []
+    for raw in state.get("learned_rules") or []:
+        if not isinstance(raw, dict) or not raw.get("id") or not raw.get("pattern"):
+            continue
+        if raw["id"] in taken_ids:
+            continue
+        try:
+            rule = regex_scan.RegexRule({**raw, "derived": True})
+        except (re.error, KeyError, TypeError):
+            continue
+        taken_ids.add(rule.id)
+        out.append(rule)
+    return out
+
+
+def _tree_sitter_graph_enabled(state: SastState) -> bool:
     if state.get("inter_file_flow") is False:
         return False
     if not state.get("use_llm", True):
@@ -1433,9 +1511,93 @@ def _inter_file_enabled(state: SastState) -> bool:
     return call_graph.is_java_stack(state) or call_graph_python.is_python_stack(state)
 
 
+def _joern_session(state: SastState) -> Optional[joern_runner.JoernSession]:
+    session = (state.get("joern") or {}).get("_session")
+    return session if session is not None and session.cpgs else None
+
+
+def _joern_dataflow_enabled(state: SastState) -> bool:
+    return (
+        state.get("joern_dataflow", True) is not False
+        and state.get("inter_file_flow") is not False
+        and bool(state.get("use_llm", True))
+        and _joern_session(state) is not None
+    )
+
+
+def _inter_file_enabled(state: SastState) -> bool:
+    """Flow verification runs when either graph can produce flows — Joern
+    covers languages (JS/TS, C, Go, ...) the tree-sitter graph doesn't."""
+    return _tree_sitter_graph_enabled(state) or _joern_dataflow_enabled(state)
+
+
+# ===========================================================================
+# STEP 4b — node_build_joern_cpg
+#   Builds one Joern CPG per dominant language (pipeline/joern_runner.py),
+#   shared by discover_flows (flows.sc) and joern_scan (queries.sc). Skipped
+#   with a log line — never an error — when Joern isn't installed.
+# ===========================================================================
+
+def node_build_joern_cpg(state: SastState) -> dict:
+    tracer: AgentTrace = state["_tracer"]
+    want_flows = (
+        state.get("joern_dataflow", True) is not False
+        and state.get("inter_file_flow") is not False
+        and bool(state.get("use_llm", True))
+    )
+    want_queries = state.get("joern_scan_queries", True) is not False
+    if not (want_flows or want_queries):
+        tracer.log(11, "build_joern_cpg", "Skipping Joern — disabled for this scan",
+                    narrative="Joern dataflow and Joern queries are both off for this run.")
+        return {"joern": {"status": "disabled"}}
+    if not joern_runner.joern_available():
+        tracer.log(11, "build_joern_cpg", "Skipping Joern — joern/joern-parse not found",
+                    detail="set JOERN_HOME or put joern on PATH",
+                    narrative="Joern is not installed on this host, so the scan uses the built-in "
+                              "call graph only.")
+        return {"joern": {"status": "unavailable"}}
+
+    paths = [f.get("path") or "" for f in (state.get("scan") or {}).get("files", [])]
+    languages = joern_runner.languages_for_scan(
+        paths, max_languages=state.get("joern_max_languages", joern_runner.DEFAULT_MAX_LANGUAGES),
+    )
+    if not languages:
+        tracer.log(11, "build_joern_cpg", "Skipping Joern — no language with a Joern frontend",
+                    narrative="No source language in this repo has a supported Joern frontend.")
+        return {"joern": {"status": "no_language"}}
+
+    root = _resolve_scan_root(state)
+    work_dir = state.get("joern_work_dir")
+    tracer.log(11, "build_joern_cpg",
+                f"Building Joern CPG(s) for: {', '.join(languages)}",
+                narrative=f"Building Joern code property graph(s) for {', '.join(languages)} — "
+                          f"this parses the whole repo once and can take a few minutes on large codebases...")
+    session = joern_runner.start_session(
+        root, languages,
+        work_dir=Path(work_dir) if work_dir else None,
+        timeout=state.get("joern_timeout_sec"),
+    )
+    summary = session.summary()
+    failed_note = "; ".join(f"{k}: {v}" for k, v in summary["failed"].items())
+    tracer.log(11, "build_joern_cpg",
+                f"Joern CPG ready for {summary['languages'] or 'no language'} "
+                f"in {summary['cpg_seconds']}s",
+                detail=f"failed: {failed_note}" if failed_note else None,
+                narrative=(f"Joern graph built for {', '.join(summary['languages'])} "
+                           f"({summary['cpg_seconds']}s)."
+                           if summary["languages"] else
+                           "Joern could not build a graph for this repo, so the scan continues "
+                           "with the built-in call graph only.")
+                          + (f" Failed: {failed_note}." if failed_note else ""))
+    status = "ready" if session.cpgs else "failed"
+    if not session.cpgs:
+        session.cleanup()
+    return {"joern": {"status": status, **summary, "_session": session if session.cpgs else None}}
+
+
 def node_build_call_graph(state: SastState) -> dict:
     tracer: AgentTrace = state["_tracer"]
-    if not _inter_file_enabled(state):
+    if not _tree_sitter_graph_enabled(state):
         tracer.log(5, "build_call_graph", "Skipping call graph — disabled or not a Java/Python scan",
                     narrative="Inter-file call-graph tracing is off for this run "
                               "(flag, no LLM, missing tree-sitter, or not maven-java/python).")
@@ -1497,34 +1659,96 @@ def node_build_call_graph(state: SastState) -> dict:
     return {"call_graph": summary}
 
 
+def _merge_flows(joern: List[Any], tree_sitter: List[Any], cap: int) -> List[Any]:
+    """Joern flows first (expression-level taint, higher precision), but up to
+    a third of the cap stays reserved for tree-sitter flows Joern didn't also
+    find — that graph models sinks Joern can't see, notably Spring Data
+    repository interfaces whose implementation only exists at runtime."""
+    joern_sinks = {(f.hops[-1].file, f.hops[-1].line) for f in joern}
+    extra = [f for f in tree_sitter if (f.hops[-1].file, f.hops[-1].line) not in joern_sinks]
+    reserved = min(len(extra), cap // 3) if joern else len(extra)
+    take_joern = joern[: max(0, cap - reserved)]
+    merged = take_joern + extra[: max(0, cap - len(take_joern))]
+    return merged[: max(0, cap)]
+
+
 def node_discover_flows(state: SastState) -> dict:
     tracer: AgentTrace = state["_tracer"]
     packed = state.get("call_graph") or {}
     graph = packed.get("_graph")
     graph_lang = packed.get("_graph_lang")
-    if graph is None:
+    use_joern = _joern_dataflow_enabled(state)
+    if graph is None and not use_joern:
         tracer.log(6, "discover_flows", "No call graph — skipping flow discovery",
                     narrative="No call graph was built, so there are no inter-file flows to walk.")
         return {"flow_candidates": [], "call_graph": packed}
 
-    lang_module = call_graph_python if graph_lang == "python" else call_graph
     cap = state.get("flow_verify_cap", call_graph.FLOW_VERIFY_CAP)
     max_hop_depth = state.get("flow_max_hop_depth", call_graph.MAX_HOP_DEPTH)
-    flows = lang_module.discover_flows(graph, cap=cap, max_hop_depth=max_hop_depth)
-    packed["entry_tier"] = graph.entry_tier
+
+    ts_flows: List[Any] = []
+    ts_total = 0
+    if graph is not None:
+        lang_module = call_graph_python if graph_lang == "python" else call_graph
+        ts_flows = lang_module.discover_flows(graph, cap=cap, max_hop_depth=max_hop_depth)
+        packed["entry_tier"] = graph.entry_tier
+        ts_total = graph.flows_discovered_total
+
+    jn_flows: List[Any] = []
+    jn_total = 0
+    if use_joern:
+        session = _joern_session(state)
+        tracer.log(6, "discover_flows",
+                    f"Running Joern dataflow over {len(session.cpgs)} CPG(s)",
+                    narrative="Asking Joern for source→sink dataflow paths (request input reaching "
+                              "SQL, command, file, XSS, SSRF, deserialization sinks)...")
+        raws = [
+            joern_runner.run_flows(b.cpg_path, timeout=state.get("joern_timeout_sec"))
+            for b in session.cpgs
+        ]
+        failed = sum(1 for r in raws if r is None)
+        # flows.sc writes after each sink kind, so a timeout still returns
+        # the kinds it finished (most severe first) marked complete=false.
+        partial = sum(1 for r in raws if r is not None and r.get("complete") is False)
+        deep_paths = set((state.get("module_plan") or {}).get("deep_scan_paths") or [])
+        jn_flows, jn_total = joern_flows.flows_from_joern(
+            raws, _resolve_scan_root(state), cap=cap, deep_scanned_paths=deep_paths,
+        )
+        joern_state = dict(state.get("joern") or {})
+        joern_state.update({"flows_found": jn_total, "flow_script_failures": failed,
+                            "flow_script_partial": partial})
+        tracer.log(6, "discover_flows",
+                    f"Joern found {jn_total} dataflow path(s)"
+                    + (f" ({failed} CPG script failure(s))" if failed else "")
+                    + (f" ({partial} CPG(s) stopped early — lower-priority sink kinds skipped)"
+                       if partial else ""),
+                    narrative=f"Joern found {jn_total} source→sink dataflow path(s)."
+                              + (" Joern's dataflow script failed on some graphs; continuing "
+                                 "with what it returned." if failed else "")
+                              + (" Joern ran out of time before the lowest-priority sink kinds "
+                                 "(logging, response bodies) on some graphs; the injection-class "
+                                 "kinds it finished are kept." if partial else ""))
+
+    flows = _merge_flows(jn_flows, ts_flows, cap)
     packed["_flows"] = flows
-    candidates = [lang_module.flow_to_dict(f) for f in flows]
-    total_found = graph.flows_discovered_total
+    candidates = [call_graph.flow_to_dict(f) for f in flows]
+    total_found = ts_total + jn_total
+    sent_joern = sum(1 for f in flows if f.entry_tier == joern_flows.ENTRY_TIER)
     flows_note = (
-        f"Found {total_found} inter-file flow(s) from typed sinks — sending the top {len(flows)} to the LLM."
+        f"Found {total_found} flow(s) ({jn_total} from Joern, {ts_total} from the call graph) — "
+        f"sending the top {len(flows)} ({sent_joern} Joern) to the LLM."
         if total_found > len(flows)
-        else f"Found {len(flows)} inter-file flow(s) from typed sinks."
+        else f"Found {len(flows)} flow(s) ({sent_joern} from Joern, "
+             f"{len(flows) - sent_joern} from the call graph)."
     )
     tracer.log(6, "discover_flows",
-                f"Discovered {len(flows)} multi-file flow(s) (entry_tier={graph.entry_tier or 'none'}, "
-                f"cap={cap}, max_hop_depth={max_hop_depth}, total_found={total_found})",
+                f"Discovered {len(flows)} flow(s) (entry_tier={packed.get('entry_tier') or 'none'}, "
+                f"cap={cap}, max_hop_depth={max_hop_depth}, total_found={total_found}, joern={jn_total})",
                 narrative=flows_note)
-    return {"flow_candidates": candidates, "call_graph": packed}
+    out: Dict[str, Any] = {"flow_candidates": candidates, "call_graph": packed}
+    if use_joern:
+        out["joern"] = joern_state
+    return out
 
 
 def node_verify_flow_slices(state: SastState) -> dict:
@@ -1563,9 +1787,11 @@ def node_verify_flow_slices(state: SastState) -> dict:
         ),
     )
     tracer.log(6, "verify_flow_slices",
-                f"Flow verification complete: {results['flows_verified']} verified, "
+                f"Flow verification complete: {results['flows_verified']} verified "
+                f"in {results.get('llm_calls', 0)} LLM call(s), "
                 f"{results['tp_count']} TP, {results['fp_count']} FP, "
-                f"{results['flows_skipped_large']} skipped (slice too large)",
+                f"{results['flows_skipped_large']} skipped (slice too large), "
+                f"{results.get('flows_failed', 0)} failed (unparseable response)",
                 narrative=f"Inter-file flows — {results['tp_count']} confirmed, "
                           f"{results['fp_count']} dismissed "
                           f"({results['flows_skipped_large']} skipped as too large).")
@@ -1644,6 +1870,24 @@ def node_derive_runtime_rules(state: SastState) -> dict:
     return {"derived_rules": derived, "derived_rules_summary": derived_rules_summary, "usage": usage}
 
 
+_TIER_ORDER = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+
+
+def _tier_label(entries: List[Dict[str, Any]], fallback: str) -> str:
+    """"CRITICAL", "HIGH/MEDIUM/LOW", ... — the risk levels a scan stage
+    actually holds. Which tier HIGH lands in depends on deep-scan-critical-only
+    and the deep-scan cap, so a fixed label was wrong half the time."""
+    present = {str(e.get("risk_level") or "").upper() for e in entries}
+    levels = [lvl for lvl in _TIER_ORDER if lvl in present]
+    return "/".join(levels) or fallback
+
+
+def _triage_tier(state: SastState) -> str:
+    module_plan = state.get("module_plan") or {}
+    entries = llm_file_scan.files_for_paths(module_plan, module_plan.get("triage_scan_paths") or [])
+    return _tier_label(entries, "MEDIUM/LOW")
+
+
 def node_scan_deep_files(state: SastState) -> dict:
     tracer: AgentTrace = state["_tracer"]
     module_plan = state["module_plan"]
@@ -1652,11 +1896,13 @@ def node_scan_deep_files(state: SastState) -> dict:
     # truth for what this tier scans, not a raw risk_level re-derivation.
     deep_files = llm_file_scan.files_for_paths(module_plan, module_plan["deep_scan_paths"])
     deep_file_count = len(deep_files)
+    tier = _tier_label(deep_files, "CRITICAL/HIGH")
+    tracer.set_label(7, f"Scanning {tier} files (deep scan)")
 
     if not state.get("use_llm"):
         tracer.log(7, "scan_deep_files",
                     "Skipping LLM file scan — use_llm is disabled for this scan",
-                    narrative="LLM scanning is disabled for this run, so CRITICAL/HIGH files aren't scanned for findings "
+                    narrative=f"LLM scanning is disabled for this run, so {tier} files aren't scanned for findings "
                               "(the risk mapping above is path-heuristic only).")
         return {"scan_results": dict(_EMPTY_SCAN_RESULTS)}
 
@@ -1673,7 +1919,7 @@ def node_scan_deep_files(state: SastState) -> dict:
     tracer.log(7, "scan_deep_files",
                 f"Starting LLM scan of {deep_file_count} file(s) "
                 f"({len(rules)} catalog rule(s) loaded)",
-                narrative=f"Scanning {deep_file_count} CRITICAL/HIGH-risk file(s) with the LLM "
+                narrative=f"Scanning {deep_file_count} {tier}-risk file(s) with the LLM "
                           f"(rule catalog + OWASP context guide the review, but the LLM owns detection)...")
 
     def _on_file_start(index: int, total: int, path: str) -> None:
@@ -1727,7 +1973,7 @@ def node_scan_deep_files(state: SastState) -> dict:
                 f"{scan_results['tp_count']} TP, {scan_results['fp_count']} FP",
                 detail=f"files_scanned={scan_results['files_scanned']}",
                 narrative=f"Done — {scan_results['tp_count']} finding(s) confirmed across "
-                          f"{scan_results['files_scanned']} CRITICAL/HIGH file(s) "
+                          f"{scan_results['files_scanned']} {tier} file(s) "
                           f"({scan_results['fp_count']} dismissed).")
 
     return {"scan_results": scan_results, "usage": usage}
@@ -1786,6 +2032,9 @@ def node_scan_triage_files(state: SastState) -> dict:
     # deep-scan cap, not a raw risk_level re-derivation.
     triage_files = llm_file_scan.files_for_paths(module_plan, module_plan["triage_scan_paths"])
     triage_count = len(triage_files)
+    tier = _tier_label(triage_files, "MEDIUM/LOW")
+    tracer.set_label(8, f"Scanning {tier} files (triage)")
+    tracer.set_label(9, f"Grouping {tier} findings")
 
     triage_mode = state.get("triage_mode") or llm_file_scan.DEFAULT_TRIAGE_MODE
     regex_only = triage_mode == llm_file_scan.TRIAGE_MODE_REGEX_ONLY
@@ -1795,12 +2044,12 @@ def node_scan_triage_files(state: SastState) -> dict:
     # produces a full set of regex findings.
     if not state.get("use_llm") and not regex_only:
         tracer.log(8, "scan_triage_files",
-                    "Skipping MEDIUM/LOW regex+triage scan — use_llm is disabled for this scan",
-                    narrative="MEDIUM/LOW regex triage is skipped because LLM scanning is disabled.")
+                    f"Skipping {tier} regex+triage scan — use_llm is disabled for this scan",
+                    narrative=f"{tier} regex triage is skipped because LLM scanning is disabled.")
         return {"triage_scan_results": dict(_EMPTY_SCAN_RESULTS)}
 
     if triage_count == 0:
-        tracer.log(8, "scan_triage_files", "No MEDIUM/LOW-risk files to regex-scan",
+        tracer.log(8, "scan_triage_files", f"No {tier}-risk files to regex-scan",
                     narrative="No MEDIUM- or LOW-risk files were flagged for regex scanning.")
         return {"triage_scan_results": dict(_EMPTY_SCAN_RESULTS)}
 
@@ -1812,15 +2061,30 @@ def node_scan_triage_files(state: SastState) -> dict:
     batch_size = state.get("triage_batch_size", _DEFAULT_TRIAGE_BATCH_SIZE)
     batches = _batch_triage_entries(triage_files, batch_size)
 
+    # Opt-in: ripgrep narrows which (file, rule) pairs Python checks — never
+    # which hits it finds (pipeline/rg_prefilter.py). Off, or no rg: every
+    # rule runs on every file, exactly as before.
+    prefilter = None
+    if state.get("catalog_prefilter", False):
+        prefilter = rg_prefilter.build_prefilter(root, [e["path"] for e in triage_files], rules)
+        if prefilter is not None:
+            narrowed = sum(len(prefilter.rules_for(e["path"], rules)) for e in triage_files)
+            full = len(rules) * triage_count
+            tracer.log(8, "scan_triage_files",
+                        f"ripgrep prefilter: {len(prefilter.eligible)} of {len(rules)} rule(s) narrowed by literal, "
+                        f"{narrowed} of {full} file/rule check(s) left in {prefilter.elapsed_ms} ms",
+                        detail=f"rg_calls={prefilter.rg_calls}; ineligible={len(prefilter.ineligible)}")
+    rules_for_path = rg_prefilter.rules_for_path_fn(prefilter, rules)
+
     mode_note = (
         "hits are recorded directly as unverified findings (no LLM call)"
         if regex_only else
         "only hits go to the LLM for TP/FP"
     )
     tracer.log(8, "scan_triage_files",
-                f"Starting MEDIUM/LOW regex scan of {triage_count} file(s) across {len(batches)} batch(es) "
+                f"Starting {tier} regex scan of {triage_count} file(s) across {len(batches)} batch(es) "
                 f"({len(rules)} rule(s), mode={triage_mode}); {mode_note}",
-                narrative=f"Regex-scanning {triage_count} MEDIUM/LOW-risk file(s) in {len(batches)} batch(es). "
+                narrative=f"Regex-scanning {triage_count} {tier}-risk file(s) in {len(batches)} batch(es). "
                           f"Files with no hit are skipped entirely, and machine-generated files are skipped too; "
                           + ("every surviving hit is saved as an unverified finding for review..."
                              if regex_only else
@@ -1885,6 +2149,7 @@ def node_scan_triage_files(state: SastState) -> dict:
             on_file_start=_on_file_start,
             on_file=_on_file,
             triage_mode=triage_mode,
+            rules_for_path=rules_for_path,
         )
 
         for key in ("files_scanned", "files_regex_scanned", "files_skipped_generated",
@@ -1928,26 +2193,214 @@ def node_scan_triage_files(state: SastState) -> dict:
     if regex_only:
         unverified = triage_scan_results.get("unverified_count") or 0
         tracer.log(8, "scan_triage_files",
-                    f"MEDIUM/LOW regex scan complete: {triaged} of {regex_scanned} file(s) had hits, "
+                    f"{tier} regex scan complete: {triaged} of {regex_scanned} file(s) had hits, "
                     f"{unverified} unverified finding(s)",
                     detail=f"files_regex_scanned={regex_scanned}, mode=regex_only, "
                            f"generated_skipped={generated_skipped}, vendored_skipped={vendored_skipped}",
-                    narrative=f"Done — {unverified} unverified finding(s) recorded from MEDIUM/LOW regex hits "
+                    narrative=f"Done — {unverified} unverified finding(s) recorded from {tier} regex hits "
                               f"(pattern matches, not LLM-reviewed). "
                               f"{max(regex_scanned - triaged - skipped_total, 0)} file(s) had no regex hit."
                               f"{generated_note}{vendored_note}")
     else:
         tracer.log(8, "scan_triage_files",
-                    f"MEDIUM/LOW scan complete: {triaged} of {regex_scanned} file(s) had hits, "
+                    f"{tier} scan complete: {triaged} of {regex_scanned} file(s) had hits, "
                     f"{triage_scan_results['tp_count']} TP, {triage_scan_results['fp_count']} FP",
                     detail=f"files_regex_scanned={regex_scanned}, mode={triage_mode}, "
                            f"generated_skipped={generated_skipped}, vendored_skipped={vendored_skipped}",
-                    narrative=f"Done — {triage_scan_results['tp_count']} finding(s) confirmed from MEDIUM/LOW regex hits "
+                    narrative=f"Done — {triage_scan_results['tp_count']} finding(s) confirmed from {tier} regex hits "
                               f"({triage_scan_results['fp_count']} dismissed). "
                               f"{max(regex_scanned - triaged - skipped_total, 0)} file(s) had no regex hit and cost no LLM call."
                               f"{generated_note}{vendored_note}")
 
     return {"triage_scan_results": triage_scan_results, "usage": usage}
+
+
+# ===========================================================================
+# STEP 8b — node_joern_scan
+#   Runs joern/queries.sc over each CPG and writes hits as unverified
+#   kind=joern findings, then LLM-confirms them in groups. Confirmation is
+#   done here rather than by node_group/confirm_triage_groups because those
+#   only act when triage_mode is regex_only, and API scans default to
+#   llm_triage — Joern hits would otherwise stay unverified forever.
+# ===========================================================================
+
+def node_joern_scan(state: SastState) -> dict:
+    tracer: AgentTrace = state["_tracer"]
+    empty = {**dict(_EMPTY_SCAN_RESULTS), "unverified_count": 0}
+    if state.get("joern_scan_queries", True) is False:
+        return {"joern_scan_results": empty}
+    session = _joern_session(state)
+    if session is None:
+        return {"joern_scan_results": empty}
+
+    root = _resolve_scan_root(state)
+    tracer.log(12, "joern_scan", f"Running Joern queries over {len(session.cpgs)} CPG(s)",
+                narrative="Running Joern structural queries (unhardened XML parsers, trust-all TLS, "
+                          "non-literal format strings, weak crypto, hardcoded credentials, ...)...")
+    raws = [joern_runner.run_queries(b.cpg_path, timeout=state.get("joern_timeout_sec")) for b in session.cpgs]
+    failed = sum(1 for r in raws if r is None)
+    file_results, skipped = joern_findings.file_results_from_hits(raws, root)
+    rules = joern_findings.rules_for_hits(raws)
+    hit_count = sum(len(r["findings"]) for r in file_results)
+
+    writer = state.get("findings_writer")
+    if writer is not None:
+        for r in file_results:
+            writer(r["file_path"], r["findings"])
+
+    skipped_note = ", ".join(f"{k}={v}" for k, v in skipped.items() if v)
+    tracer.log(12, "joern_scan",
+                f"Joern queries: {hit_count} hit(s) in {len(file_results)} file(s)"
+                + (f" ({failed} script failure(s))" if failed else ""),
+                detail=f"rules={sorted(r.id for r in rules)}; skipped {skipped_note or 'none'}",
+                narrative=f"Joern queries matched {hit_count} location(s) in {len(file_results)} file(s) "
+                          f"— recorded as unverified."
+                          + (f" Skipped generated/vendored files: {skipped_note}." if skipped_note else ""))
+
+    confirm_result: Dict[str, Any] = {}
+    usage = None
+    if hit_count and state.get("use_llm", True) and state.get("confirm_triage_groups"):
+        (_, _, _, _, _, stack_context, usage) = _scan_context(state)
+        confirm_result = llm_file_scan.group_confirm_unverified_findings(
+            file_results=file_results, repo_root=root, rules=rules,
+            stack_context=stack_context, usage=usage,
+            llm_provider=state.get("llm_provider"), llm_model=state.get("llm_model"),
+            group_cap=state.get("triage_confirm_group_cap", llm_file_scan.TRIAGE_CONFIRM_GROUP_CAP),
+            groups_per_call=state.get("triage_confirm_groups_per_call", llm_file_scan.DEFAULT_GROUPS_PER_CALL),
+            verdict_updates_writer=state.get("verdict_updates_writer"),
+        )
+        tracer.log(12, "joern_scan",
+                    f"Confirmed {confirm_result['confirm_group_count']} Joern group(s): "
+                    f"{confirm_result['tp_group_count']} TP, {confirm_result['fp_group_count']} FP, "
+                    f"{confirm_result['error_group_count']} error(s)",
+                    narrative=f"LLM-reviewed {confirm_result['confirm_group_count']} Joern pattern group(s) — "
+                              f"{confirm_result['tp_group_count']} true positive, "
+                              f"{confirm_result['fp_group_count']} false positive.")
+
+    for r in file_results:
+        findings = r["findings"]
+        r["tp_count"] = sum(1 for f in findings if f.get("verdict") == "true_positive")
+        r["fp_count"] = sum(1 for f in findings if f.get("verdict") == "false_positive")
+        r["unverified_count"] = sum(1 for f in findings if f.get("verdict") == llm_file_scan.VERDICT_UNVERIFIED)
+    results = {
+        "files_scanned": len(file_results),
+        "files": file_results,
+        "tp_count": sum(r["tp_count"] for r in file_results),
+        "fp_count": sum(r["fp_count"] for r in file_results),
+        "unverified_count": sum(r["unverified_count"] for r in file_results),
+        "hit_count": hit_count,
+        "script_failures": failed,
+        "skipped": skipped,
+        "confirm_result": {k: v for k, v in confirm_result.items() if not k.startswith("_")},
+    }
+    out: Dict[str, Any] = {"joern_scan_results": results}
+    if usage is not None:
+        out["usage"] = usage
+    return out
+
+
+# ===========================================================================
+# STEP 13 — node_hunt_security
+#   Agentic hunt (pipeline/hunt/): an LLM investigator plans vulnerability
+#   hypotheses from a deterministic repo dossier, searches with ripgrep, reads
+#   only the code it needs, follows data across methods via the call graph,
+#   and publishes kind=hunt findings only with evidence it was actually shown.
+#   Seeds from the non-CRITICAL tier (triage_scan_paths) but may trace into,
+#   and publish in, any file of the inventory; findings matching one another
+#   tier already wrote are counted as corroboration, not re-published.
+# ===========================================================================
+
+HUNT_MODE_AGENTIC = "agentic"
+
+
+def node_hunt_security(state: SastState) -> dict:
+    tracer: AgentTrace = state["_tracer"]
+    if (state.get("hunt_mode") or "off") != HUNT_MODE_AGENTIC:
+        # Say so: a silent skip reads as "the hunt ran and found nothing".
+        tracer.log(13, "hunt_security", "Agentic hunt is off for this scan",
+                    narrative="Agentic hunt is off for this project — enable \"Agentic Security Hunt\" "
+                              "under the project's Settings → Scan limitations (CLI: --hunt).")
+        return {}
+    if not state.get("use_llm", True):
+        tracer.log(13, "hunt_security", "Agentic hunt skipped: LLM use is off for this scan",
+                    narrative="Skipping the agentic hunt — this scan runs without an LLM.")
+        return {}
+
+    from pipeline.hunt import engine as hunt_engine
+    from pipeline.hunt.rg_runner import find_rg_binary
+
+    if find_rg_binary() is None:
+        tracer.log(13, "hunt_security", "Agentic hunt skipped: ripgrep (rg) is not installed",
+                    narrative="Skipping the agentic hunt — ripgrep is not installed on this host "
+                              "(pip install ripgrep, or set RG_PATH).")
+        return {"hunt_scan_results": {"skipped_reason": "ripgrep (rg) is not installed", "files": []}}
+
+    (root, _rules, active_frameworks, _dep_index, _priority, stack_context, usage) = _scan_context(state)
+    scan = state.get("scan") or {}
+    inventory = [f["path"] for f in scan.get("files") or [] if f.get("path")]
+    module_plan = state.get("module_plan") or {}
+    seed_entries = llm_file_scan.files_for_paths(module_plan, module_plan.get("triage_scan_paths") or [])
+    rules_path = Path(state.get("regex_rules_path") or (_ENGINE_DIR / "rules"))
+    surfaces = _resolve_active_surfaces(state, rules_path)
+    triage_files = list((state.get("triage_scan_results") or {}).get("files") or [])
+    catalog_hits = Counter(
+        f.get("rule_id") for fr in triage_files for f in fr.get("findings") or [] if f.get("rule_id")
+    )
+    packed = state.get("call_graph") or {}
+    graph = packed.get("_graph") if packed.get("_graph_lang") == "java" else None
+    existing = []
+    for key in ("scan_results", "triage_scan_results", "flow_scan_results", "joern_scan_results"):
+        existing.extend((state.get(key) or {}).get("files") or [])
+
+    options = hunt_engine.HuntOptions(
+        max_hypotheses=state.get("hunt_max_hypotheses") or hunt_engine.DEFAULT_MAX_HYPOTHESES,
+        max_steps=state.get("hunt_max_steps") or hunt_engine.DEFAULT_MAX_STEPS,
+        workers=state.get("hunt_workers") or hunt_engine.DEFAULT_WORKERS,
+        max_usd=state.get("hunt_budget_usd"),
+        test_paths=state.get("hunt_test_paths") or hunt_engine.POLICY_DEPRIORITIZE,
+        generated_paths=state.get("hunt_generated_paths") or hunt_engine.POLICY_EXCLUDE,
+        profile=state.get("hunt_profile") or hunt_engine.PROFILE_DEFAULT,
+        suppress_no_cwe=state.get("suppress_no_cwe_findings", True),
+        suppress_http_findings=state.get("suppress_http_findings", False),
+        suppress_low_confidence_false_positives=state.get("suppress_low_confidence_false_positives", False),
+    )
+    tracer.log(13, "hunt_security",
+                f"Agentic hunt over {len(inventory)} file(s), seeded from {len(seed_entries)} non-CRITICAL file(s)",
+                narrative=f"Starting the agentic hunt: planning vulnerability hypotheses for {len(inventory)} "
+                          f"file(s) and investigating each with ripgrep searches and targeted reads.")
+    results = hunt_engine.run_hunt(
+        root=root,
+        inventory=inventory,
+        seed_entries=seed_entries,
+        stack=stack_context,
+        frameworks=sorted(active_frameworks),
+        surfaces=surfaces,
+        catalog_hits=dict(catalog_hits),
+        flow_candidates=state.get("flow_candidates") or [],
+        graph=graph,
+        java_paths=call_graph.java_paths_from_scan(scan) if graph is None else (),
+        existing_file_results=existing,
+        usage=usage,
+        llm_provider=state.get("llm_provider"),
+        llm_model=state.get("llm_model"),
+        findings_writer=state.get("findings_writer"),
+        options=options,
+        on_event=lambda msg: tracer.say(msg),
+    )
+    status = results.get("hypothesis_status") or {}
+    budget = results.get("budget") or {}
+    tracer.log(13, "hunt_security",
+                f"Agentic hunt: {results.get('published', 0)} published "
+                f"({results['tp_count']} TP, {results['unverified_count']} unverified), "
+                f"{results.get('corroborated', 0)} corroborated, {results.get('hallucinated_dropped', 0)} "
+                f"ungrounded dropped; hypotheses {status}",
+                detail=f"evidence_levels={results.get('evidence_levels')}; rg_calls={budget.get('rg_calls')}; "
+                       f"llm_calls={budget.get('llm_calls')}; spent=${budget.get('spent_usd', 0):.4f}"
+                       + (f"; stopped: {budget.get('exhausted_reason')}" if budget.get("exhausted_reason") else ""),
+                narrative=f"Agentic hunt finished — {results['tp_count']} confirmed and "
+                          f"{results['unverified_count']} needs-review finding(s); "
+                          f"{results.get('corroborated', 0)} matched findings other stages already reported.")
+    return {"hunt_scan_results": results, "usage": usage}
 
 
 # ===========================================================================
@@ -1960,6 +2413,7 @@ def node_scan_triage_files(state: SastState) -> dict:
 
 def node_group_triage_findings(state: SastState) -> dict:
     tracer: AgentTrace = state["_tracer"]
+    tier = _triage_tier(state)
     triage_scan_results = state.get("triage_scan_results") or dict(_EMPTY_SCAN_RESULTS)
     file_results = triage_scan_results.get("files") or []
 
@@ -1970,7 +2424,7 @@ def node_group_triage_findings(state: SastState) -> dict:
     if not regex_only:
         tracer.log(9, "group_triage_findings",
                     "Skipping grouping — triage_mode already produced reviewed verdicts",
-                    narrative="MEDIUM/LOW findings were already LLM-triaged, so there is nothing unverified to group.")
+                    narrative=f"{tier} findings were already LLM-triaged, so there is nothing unverified to group.")
         return {"triage_scan_results": triage_scan_results}
 
     if not group_triage_mode:
@@ -1980,8 +2434,8 @@ def node_group_triage_findings(state: SastState) -> dict:
 
     unverified_before = triage_scan_results.get("unverified_count") or 0
     if unverified_before == 0:
-        tracer.log(9, "group_triage_findings", "No unverified MEDIUM/LOW findings to group",
-                    narrative="No unverified MEDIUM/LOW findings were produced, so there is nothing to group.")
+        tracer.log(9, "group_triage_findings", f"No unverified {tier} findings to group",
+                    narrative=f"No unverified {tier} findings were produced, so there is nothing to group.")
         return {"triage_scan_results": triage_scan_results}
 
     grouping = llm_file_scan.group_unverified_findings(file_results)
@@ -1994,7 +2448,7 @@ def node_group_triage_findings(state: SastState) -> dict:
                 f"Grouped {grouping['candidate_count']} unverified finding(s) into "
                 f"{grouping['group_count']} unique pattern(s)",
                 detail=f"top patterns: {top_lines}",
-                narrative=f"Grouped {grouping['candidate_count']} unverified MEDIUM/LOW finding(s) by matched "
+                narrative=f"Grouped {grouping['candidate_count']} unverified {tier} finding(s) by matched "
                           f"pattern into {grouping['group_count']} unique construct(s) — no LLM call made, "
                           f"verdicts are still unverified. "
                           f"Top pattern(s) by occurrence: {top_lines}.")
@@ -2011,17 +2465,18 @@ def node_group_triage_findings(state: SastState) -> dict:
 
 def node_confirm_triage_groups(state: SastState) -> dict:
     tracer: AgentTrace = state["_tracer"]
+    tier = _triage_tier(state)
     triage_scan_results = state.get("triage_scan_results") or dict(_EMPTY_SCAN_RESULTS)
     triage_group_summary = state.get("triage_group_summary")
 
     if not state.get("confirm_triage_groups"):
         tracer.log(9, "confirm_triage_groups", "Skipping group confirmation — disabled for this scan",
-                    narrative="LLM confirmation of unverified MEDIUM/LOW groups is disabled for this run.")
+                    narrative=f"LLM confirmation of unverified {tier} groups is disabled for this run.")
         return {"triage_scan_results": triage_scan_results}
 
     if not triage_group_summary or not triage_group_summary.get("group_count"):
         tracer.log(9, "confirm_triage_groups", "No unverified groups to confirm",
-                    narrative="No unverified MEDIUM/LOW groups were produced, so there is nothing to confirm.")
+                    narrative=f"No unverified {tier} groups were produced, so there is nothing to confirm.")
         return {"triage_scan_results": triage_scan_results}
 
     (root, rules, active_frameworks, dependency_index,
@@ -2064,7 +2519,28 @@ def node_generate_report(state: SastState) -> dict:
     deep_files = list((state.get("scan_results") or {}).get("files") or [])
     triage_files = list((state.get("triage_scan_results") or {}).get("files") or [])
     flow_files = list((state.get("flow_scan_results") or {}).get("files") or [])
-    report = llm_file_scan.build_report_from_file_results(deep_files + triage_files + flow_files)
+    joern_files = list((state.get("joern_scan_results") or {}).get("files") or [])
+    hunt_results = state.get("hunt_scan_results") or {}
+    hunt_files = list(hunt_results.get("files") or [])
+    report = llm_file_scan.build_report_from_file_results(
+        deep_files + triage_files + flow_files + joern_files + hunt_files
+    )
+    # Only when the hunt actually ran — scans without it keep the report
+    # shape they always had.
+    if hunt_results.get("hypotheses") is not None and not hunt_results.get("skipped_reason"):
+        report["hunt"] = {k: v for k, v in hunt_results.items() if k != "files"}
+    joern_state = state.get("joern") or {}
+    # Only when a CPG build was actually attempted — a host without Joern
+    # keeps exactly the report shape it had before Joern support existed.
+    if joern_state.get("status") in ("ready", "failed"):
+        report["joern"] = {
+            **{k: v for k, v in joern_state.items() if not k.startswith("_")},
+            "query_hits": (state.get("joern_scan_results") or {}).get("hit_count", 0),
+        }
+    session = joern_state.get("_session")
+    if session is not None and not state.get("joern_work_dir"):
+        # Caller-owned work dirs are cleaned by the caller (agent_bridge).
+        session.cleanup()
     unverified = report.get("unverified_count") or 0
     unverified_note = f", {unverified} unverified" if unverified else ""
 
@@ -2197,18 +2673,24 @@ def build_graph():
     graph.add_node("group_triage_findings", node_group_triage_findings)
     graph.add_node("confirm_triage_groups", node_confirm_triage_groups)
     graph.add_node("generate_report", node_generate_report)
+    graph.add_node("build_joern_cpg", node_build_joern_cpg)
+    graph.add_node("joern_scan", node_joern_scan)
+    graph.add_node("hunt_security", node_hunt_security)
 
     graph.add_edge(START, "scan_directory")
     graph.add_edge("scan_directory", "analyze_tech_stack")
     graph.add_edge("analyze_tech_stack", "categorize_files")
     graph.add_edge("categorize_files", "map_modules_and_risk")
-    graph.add_edge("map_modules_and_risk", "build_call_graph")
+    graph.add_edge("map_modules_and_risk", "build_joern_cpg")
+    graph.add_edge("build_joern_cpg", "build_call_graph")
     graph.add_edge("build_call_graph", "derive_runtime_rules")
     graph.add_edge("derive_runtime_rules", "discover_flows")
     graph.add_edge("discover_flows", "verify_flow_slices")
     graph.add_edge("verify_flow_slices", "scan_deep_files")
     graph.add_edge("scan_deep_files", "scan_triage_files")
-    graph.add_edge("scan_triage_files", "group_triage_findings")
+    graph.add_edge("scan_triage_files", "joern_scan")
+    graph.add_edge("joern_scan", "hunt_security")
+    graph.add_edge("hunt_security", "group_triage_findings")
     graph.add_edge("group_triage_findings", "confirm_triage_groups")
     graph.add_edge("confirm_triage_groups", "generate_report")
     graph.add_edge("generate_report", END)
@@ -2234,8 +2716,19 @@ def main() -> None:
     parser.add_argument("--out", default="./sast_output", help="Directory for the JSON output file")
     parser.add_argument("--db", default="./sast_history.db", help="SQLite DB path for historical tracking")
     parser.add_argument("--no-llm", action="store_true", help="Skip the LLM call; heuristics only")
-    parser.add_argument("--llm-provider", choices=["bedrock", "ollama"], default=None)
+    parser.add_argument("--llm-provider", choices=list(llm_client.KNOWN_PROVIDERS), default=None)
     parser.add_argument("--llm-model", default=None)
+    parser.add_argument("--llm-base-url", default=None,
+                        help="openai_compat endpoint incl. version prefix, e.g. http://localhost:8000/v1 "
+                             "(API key: OPENAI_COMPAT_API_KEY env, never a flag)")
+    parser.add_argument("--fallback-llm-provider",
+                        choices=[llm_client.PROVIDER_NONE, *llm_client.KNOWN_PROVIDERS], default=None,
+                        help="Provider to continue on past the cost cutoff (default: none = stop LLM work)")
+    parser.add_argument("--fallback-llm-model", default=None)
+    parser.add_argument("--llm-data-policy",
+                        choices=[llm_client.DATA_POLICY_ALLOW_EXTERNAL, llm_client.DATA_POLICY_LOCAL_ONLY],
+                        default=None,
+                        help="local_only refuses any provider that would send code off the local network")
     parser.add_argument("--verbose-files", action="store_true",
                          help="Log every individual file (noisy — off by default; summaries always shown)")
     parser.add_argument("--quiet", action="store_true", help="Suppress live trace printing (still saved to JSON)")
@@ -2292,12 +2785,35 @@ def main() -> None:
     parser.add_argument("--flow-max-depth", type=int, default=None,
                          help="Override max call-graph hops (source to sink) when walking "
                               f"inter-file flows (default: {call_graph.MAX_HOP_DEPTH})")
+    parser.add_argument("--no-joern", action="store_true",
+                         help="Skip Joern entirely (no CPG, no Joern dataflow, no Joern queries)")
+    parser.add_argument("--no-joern-dataflow", action="store_true",
+                         help="Build the Joern CPG but don't feed its dataflow paths into flow verification")
+    parser.add_argument("--no-joern-queries", action="store_true",
+                         help="Build the Joern CPG but skip joern/queries.sc findings")
+    parser.add_argument("--joern-timeout", type=int, default=None,
+                         help=f"Per-Joern-subprocess timeout in seconds (default "
+                              f"{joern_runner.DEFAULT_TIMEOUT_SEC}, or JOERN_TIMEOUT_SEC)")
     parser.add_argument("--no-derived-regex", action="store_true",
                          help="Skip runtime regex derive (call-graph wrappers + LLM pass); "
                               "use the static catalog only")
     parser.add_argument("--max-derived-regex-rules", type=int, default=None,
                          help="Cap on runtime-derived regex rules merged onto the catalog "
                               f"(default: {derive_rules.DEFAULT_MAX_DERIVED})")
+    parser.add_argument("--catalog-prefilter", action="store_true",
+                         help="Narrow the triage catalog pass with a ripgrep literal prefilter (same findings; "
+                              "pays off only when most rules have a literal and the repo is large)")
+    parser.add_argument("--hunt", action="store_true",
+                         help="Run the agentic hunt after the catalog/Joern passes (needs an LLM and ripgrep)")
+    parser.add_argument("--hunt-profile", choices=["default", "benchmark"], default=None,
+                         help="'benchmark' also hunts in test-like and generated paths (OWASP Benchmark, Juliet)")
+    parser.add_argument("--hunt-max-hypotheses", type=int, default=None)
+    parser.add_argument("--hunt-max-steps", type=int, default=None,
+                         help="Tool-call steps per hypothesis")
+    parser.add_argument("--hunt-workers", type=int, default=None,
+                         help="Hypotheses investigated in parallel")
+    parser.add_argument("--hunt-budget-usd", type=float, default=None,
+                         help="USD ceiling for the hunt (default: 30%% of the cost cutoff left when it starts)")
     args = parser.parse_args()
 
     use_llm = not args.no_llm
@@ -2315,7 +2831,16 @@ def main() -> None:
         "persist_to_disk": not args.no_persist,
         "output_dir": args.out,
         "db_path": args.db,
-        "usage": init_usage(args.llm_provider, args.llm_model),
+        "usage": init_usage(
+            args.llm_provider, args.llm_model,
+            fallback_provider=args.fallback_llm_provider,
+            fallback_model=args.fallback_llm_model,
+            provider_options=(
+                {llm_client.PROVIDER_OPENAI_COMPAT: {"base_url": args.llm_base_url}}
+                if args.llm_base_url else None
+            ),
+            data_policy=args.llm_data_policy,
+        ),
         "group_triage_mode": not args.no_group_triage,
         "confirm_triage_groups": args.confirm_triage_groups,
         "suppress_no_cwe_findings": not args.allow_no_cwe_findings,
@@ -2325,8 +2850,24 @@ def main() -> None:
         "deep_scan_critical_only": args.critical_only_deep_scan,
         "inter_file_flow": use_llm and not args.no_inter_file_flow,
         "derive_runtime_rules": not args.no_derived_regex,
+        "joern_dataflow": not (args.no_joern or args.no_joern_dataflow),
+        "joern_scan_queries": not (args.no_joern or args.no_joern_queries),
+        "catalog_prefilter": args.catalog_prefilter,
         "_tracer": tracer,
     }
+    if args.hunt:
+        initial_state["hunt_mode"] = HUNT_MODE_AGENTIC
+        for key, value in (
+            ("hunt_profile", args.hunt_profile),
+            ("hunt_max_hypotheses", args.hunt_max_hypotheses),
+            ("hunt_max_steps", args.hunt_max_steps),
+            ("hunt_workers", args.hunt_workers),
+            ("hunt_budget_usd", args.hunt_budget_usd),
+        ):
+            if value is not None:
+                initial_state[key] = value
+    if args.joern_timeout is not None:
+        initial_state["joern_timeout_sec"] = args.joern_timeout
     if args.flow_verify_cap is not None:
         initial_state["flow_verify_cap"] = args.flow_verify_cap
     if args.flow_max_depth is not None:

@@ -418,6 +418,15 @@ def test_ollama_connection_errors_become_unavailable():
         OllamaAdapter("http://x", "m", chat_factory=Down, emit=lambda _: None).call("s", "p", None, None, None)
 
 
+def test_ollama_availability_probe_reports_a_down_server(monkeypatch):
+    def down(*args, **kwargs):
+        raise ConnectionRefusedError("connection refused")
+
+    monkeypatch.setattr("urllib.request.urlopen", down)
+    with pytest.raises(ModelUnavailable, match="connection refused"):
+        OllamaAdapter("http://127.0.0.1:11434", "gpt-oss:20b").check_availability()
+
+
 def test_default_ollama_model_is_gpt_oss():
     assert adapter_for("ollama", "").model == "gpt-oss:20b"
 

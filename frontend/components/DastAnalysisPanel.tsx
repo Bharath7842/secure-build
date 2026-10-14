@@ -134,6 +134,8 @@ function CheckRow({ check, api }: { check: DastApiCheck; api: DastApiAnalysis })
 
           <DastHttpExchange
             request={request}
+            proposedPayload={check.proposed_payload ?? check.payload}
+            source={check.source}
             baseline={baseline}
             response={check.response.evidence || check.response.error}
             responseStatus={check.response.status_code}
@@ -144,7 +146,7 @@ function CheckRow({ check, api }: { check: DastApiCheck; api: DastApiAnalysis })
           {check.guardrail && check.guardrail.overridden && (
             <Field label="Guardrail">
               <p className="text-amber-800">
-                The model's verdict was overridden:{" "}
+                The model&apos;s verdict was overridden:{" "}
                 {hideInconclusive(check.guardrail.reason || "")}
               </p>
             </Field>

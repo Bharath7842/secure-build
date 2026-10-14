@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-LlmProvider = Literal["bedrock", "ollama"]
+LlmProvider = Literal["bedrock", "openai_compat", "ollama"]
 OllamaSizeClass = Literal["small", "large"]
 
 
@@ -26,10 +26,39 @@ LLM_PRESETS: tuple[LlmPreset, ...] = (
         model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
     ),
     LlmPreset(
+        id="bedrock-sonnet",
+        label="AWS Bedrock — Claude Sonnet 4.5",
+        provider="bedrock",
+        model="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    ),
+    # Any OpenAI-compatible /chat/completions server (vLLM, LM Studio,
+    # llama.cpp server, SGLang, a hosted gateway, ...). The model id is
+    # whatever that server serves; the project's llm_base_url picks the server.
+    LlmPreset(
+        id="openai-compat-qwen-coder-32b",
+        label="OpenAI-compatible — Qwen2.5-Coder-32B-Instruct (vLLM / LM Studio)",
+        provider="openai_compat",
+        model="Qwen/Qwen2.5-Coder-32B-Instruct",
+    ),
+    LlmPreset(
         id="ollama-granite-3b",
         label="Ollama — granite-code:3b (local)",
         provider="ollama",
         model="granite-code:3b",
+        ollama_size="small",
+    ),
+    LlmPreset(
+        id="ollama-granite4-2-3b",
+        label="Ollama — granite4.2:3b (local)",
+        provider="ollama",
+        model="granite4.2:3b",
+        ollama_size="small",
+    ),
+    LlmPreset(
+        id="ollama-granite-3b-instruct",
+        label="Ollama — granite-code:3b-instruct (local)",
+        provider="ollama",
+        model="granite-code:3b-instruct",
         ollama_size="small",
     ),
     LlmPreset(

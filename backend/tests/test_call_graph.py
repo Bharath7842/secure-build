@@ -471,3 +471,132 @@ def test_build_graph_inserts_flow_nodes_before_deep_scan(agent):
     assert "verify_flow_slices" in nodes
     assert "derive_runtime_rules" in nodes
     assert "scan_deep_files" in nodes
+
+
+# ---------------------------------------------------------------------------
+# Spring Data repository calls — regression coverage for the false-positive
+# "SQL injection" flows a plain _SINK_BASE_TYPES match used to produce on
+# every repository method, derived or JPQL alike. See _spring_data_repository_sink.
+# ---------------------------------------------------------------------------
+
+REPO_CONTROLLER = """
+package com.example;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class PartyController {
+    private PartyService svc;
+
+    @GetMapping("/party")
+    public String find(@RequestParam("name") String name) {
+        return svc.find(name) + svc.findNative(name) + svc.findJpql(name);
+    }
+}
+"""
+
+REPO_SERVICE = """
+package com.example;
+
+public class PartyService {
+    private PartyRepository repo;
+
+    public String find(String name) {
+        return repo.findByName(name).toString();
+    }
+
+    public String findNative(String name) {
+        return repo.findByNameNative(name).toString();
+    }
+
+    public String findJpql(String name) {
+        return repo.findByNameJpql(name).toString();
+    }
+
+    public void save(Object entity) {
+        repo.save(entity);
+    }
+}
+"""
+
+# One derived-query method (no @Query at all), one JPQL @Query (parameterized,
+# no nativeQuery flag), and one nativeQuery=true @Query — the only shape that
+# can run a literal SQL string the project wrote itself.
+PARTY_REPOSITORY = """
+package com.example;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.repository.query.Param;
+
+public interface PartyRepository extends JpaRepository<Object, Long> {
+    Object findByName(String name);
+
+    @Query(value = "SELECT * FROM party WHERE name = :name", nativeQuery = true)
+    Object findByNameNative(@Param("name") String name);
+
+    @Query("SELECT p FROM Party p WHERE p.name = :name")
+    Object findByNameJpql(@Param("name") String name);
+}
+"""
+
+
+def _repo_tree(tmp_path: Path) -> list[str]:
+    _write(tmp_path, "src/main/java/com/example/PartyController.java", REPO_CONTROLLER)
+    _write(tmp_path, "src/main/java/com/example/PartyService.java", REPO_SERVICE)
+    _write(tmp_path, "src/main/java/com/example/PartyRepository.java", PARTY_REPOSITORY)
+    return [
+        "src/main/java/com/example/PartyController.java",
+        "src/main/java/com/example/PartyService.java",
+        "src/main/java/com/example/PartyRepository.java",
+    ]
+
+
+def test_derived_query_method_is_not_a_sink(cg, tmp_path):
+    paths = _repo_tree(tmp_path)
+    graph = cg.build_call_graph(tmp_path, paths)
+    assert not any(s.method_name == "findByName" for s in graph.sinks)
+
+
+def test_jpql_query_method_is_not_a_sink(cg, tmp_path):
+    paths = _repo_tree(tmp_path)
+    graph = cg.build_call_graph(tmp_path, paths)
+    assert not any(s.method_name == "findByNameJpql" for s in graph.sinks)
+
+
+def test_inherited_crud_method_is_not_a_sink(cg, tmp_path):
+    paths = _repo_tree(tmp_path)
+    graph = cg.build_call_graph(tmp_path, paths)
+    assert not any(s.method_name == "save" for s in graph.sinks)
+
+
+def test_native_query_method_is_still_a_sink_with_declaration(cg, tmp_path):
+    paths = _repo_tree(tmp_path)
+    graph = cg.build_call_graph(tmp_path, paths)
+    sinks = [s for s in graph.sinks if s.method_name == "findByNameNative"]
+    assert len(sinks) == 1
+    assert sinks[0].kind == "jpa"
+    assert "nativeQuery = true" in sinks[0].declaration
+    assert "findByNameNative" in sinks[0].declaration
+
+
+def test_no_flow_discovered_through_derived_or_jpql_methods(cg, tmp_path):
+    # Previously: every one of findByName/findByNameJpql/findByNameNative
+    # produced a flow, each misreported by the LLM as SQL injection. Only the
+    # nativeQuery=true call should survive as a candidate flow now.
+    paths = _repo_tree(tmp_path)
+    graph = cg.build_call_graph(tmp_path, paths)
+    flows = cg.discover_flows(graph)
+    sink_methods = {f.hops[-1].label for f in flows}
+    assert sink_methods == {"PartyRepository.findByNameNative(...)"}
+
+
+def test_native_query_flow_carries_declaration_in_sink_hop_body(cg, tmp_path):
+    paths = _repo_tree(tmp_path)
+    graph = cg.build_call_graph(tmp_path, paths)
+    flows = cg.discover_flows(graph)
+    assert len(flows) == 1
+    sink_hop = flows[0].hops[-1]
+    assert "nativeQuery = true" in sink_hop.body
+    assert "Declaration of the sink call above" in sink_hop.body

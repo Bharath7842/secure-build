@@ -441,6 +441,12 @@ def test_schema_cvs_log4j_are_dropped_from_discovery(agent, tmp_path):
     (tmp_path / "META-INF").mkdir()
     (tmp_path / "META-INF" / "MANIFEST.MF").write_text("Manifest-Version: 1.0\n", encoding="utf-8")
     (tmp_path / ".project").write_text("<projectDescription/>\n", encoding="utf-8")
+    # Source code and runtime config inside config/ directories are scanned.
+    sec = tmp_path / "src" / "main" / "java" / "com" / "acme" / "config"
+    sec.mkdir(parents=True)
+    (sec / "SecurityConfig.java").write_text("class SecurityConfig {}\n", encoding="utf-8")
+    (tmp_path / "config" / "application.yml").parent.mkdir()
+    (tmp_path / "config" / "application.yml").write_text("spring:\n  datasource:\n    password: x\n", encoding="utf-8")
 
     state = _initial_state(agent, tmp_path)
     state.update(agent.node_scan_directory(state))
@@ -466,6 +472,8 @@ def test_schema_cvs_log4j_are_dropped_from_discovery(agent, tmp_path):
     assert "app/auth.py" in queued
     assert "app/config.py" in queued
     assert queued.isdisjoint(skipped)
+    for path in ("src/main/java/com/acme/config/SecurityConfig.java", "config/application.yml"):
+        assert path in discovered and path in queued, path
 
 
 def test_node_map_modules_and_risk_caps_deep_scan_and_overflows_to_triage(agent, tmp_path):
@@ -1231,7 +1239,7 @@ def test_run_real_scan_threads_confirm_triage_groups(monkeypatch, project_tree, 
 def test_run_real_scan_threads_scan_limitation_suppression_flags(monkeypatch, project_tree, tmp_path_factory):
     """agent_bridge reads Project.limitations_config for the suppression
     toggles and the inter-file call-graph flag: cwe-less-findings-suppressed
-    (default True when unset), https-enforced-suppress-http (default False),
+    (default True when unset), https-enforced-suppress-http (default True),
     low-confidence-fp-suppressed (default True), inter-file-call-graph
     (default True, AND use_llm), runtime-derived-regex (default True),
     and Project.max_derived_regex_rules (default 50)."""
@@ -1284,7 +1292,7 @@ def test_run_real_scan_threads_scan_limitation_suppression_flags(monkeypatch, pr
     )
 
     assert captured_states[0]["suppress_no_cwe_findings"] is True
-    assert captured_states[0]["suppress_http_findings"] is False
+    assert captured_states[0]["suppress_http_findings"] is True
     assert captured_states[0]["suppress_low_confidence_false_positives"] is True
     assert captured_states[0]["inter_file_flow"] is True
     assert captured_states[0]["derive_runtime_rules"] is True
@@ -1294,3 +1302,112 @@ def test_run_real_scan_threads_scan_limitation_suppression_flags(monkeypatch, pr
     assert captured_states[1]["suppress_low_confidence_false_positives"] is False
     assert captured_states[1]["inter_file_flow"] is False
     assert captured_states[1]["derive_runtime_rules"] is False
+
+
+def test_run_real_scan_threads_agentic_hunt_toggle_and_llm_endpoint(monkeypatch, project_tree, tmp_path_factory):
+    """agentic-security-hunt (default on) maps to hunt_mode, and only when the
+    scan uses an LLM; the project's openai_compat endpoint, key and data
+    policy reach the engine's usage dict (never the scan row)."""
+    monkeypatch.setenv("SAST_AST_CACHE_DIR", str(tmp_path_factory.mktemp("ast_cache")))
+    engine_dir = Path(__file__).resolve().parents[1] / "sast_engine"
+    monkeypatch.setattr(settings, "sast_framework_path", str(engine_dir))
+    import sys
+
+    sys.modules.pop("sast_scan_agent", None)
+
+    from app.models import Project
+    from app.services import agent_bridge
+
+    real_agent = agent_bridge._load_agent_module()
+    captured_states = []
+    monkeypatch.setattr(real_agent, "invoke_graph", lambda graph, state, **_k: captured_states.append(state) or {})
+    monkeypatch.setattr(agent_bridge, "_load_agent_module", lambda: real_agent)
+
+    class FakeScan:
+        llm_provider = "openai_compat"
+        llm_model = "qwen2.5-coder"
+        fallback_llm_provider = None
+        fallback_llm_model = None
+        llm_base_url = "http://127.0.0.1:1234/v1"
+        llm_data_policy = "local_only"
+        metadata_json = {"use_llm": True}
+
+    class FakeScanNoLlm(FakeScan):
+        metadata_json = {"use_llm": False}
+
+    default_project = Project(name="hunt-default", default_git_url="https://example.com/r.git", languages=["Java"],
+                              limitations_config={"agentic-security-hunt": False})
+    hunting = Project(
+        name="hunt-on", default_git_url="https://example.com/r.git", languages=["Java"],
+        limitations_config={"agentic-security-hunt": True}, llm_api_key="sk-local",
+    )
+    for project, scan in ((default_project, FakeScan()), (hunting, FakeScan()), (hunting, FakeScanNoLlm())):
+        agent_bridge.run_real_scan(project=project, workspace=project_tree, changed_paths=None, scan_id=None, scan=scan)
+
+    assert [s["hunt_mode"] for s in captured_states] == ["off", "agentic", "off"]
+    assert captured_states[0]["learned_rules"] == []
+    usage = captured_states[1]["usage"]
+    assert usage["_provider_options"]["openai_compat"] == {"base_url": "http://127.0.0.1:1234/v1", "api_key": "sk-local"}
+    assert usage["_data_policy"] == "local_only"
+    assert usage["fallback_provider"] == "none"
+
+
+def test_tier_banners_name_the_risk_levels_each_tier_holds(agent, capsys):
+    """With deep-scan-critical-only, HIGH files are triaged — the banner must
+    say so instead of a fixed "MEDIUM/LOW"."""
+    tracer = agent.AgentTrace(verbose=True)
+    files = [
+        {"path": "a/Ctrl.java", "risk_level": "CRITICAL"},
+        {"path": "a/Svc.java", "risk_level": "HIGH"},
+        {"path": "a/Dao.java", "risk_level": "MEDIUM"},
+        {"path": "a/Util.java", "risk_level": "LOW"},
+    ]
+    state = {
+        "_tracer": tracer, "use_llm": False, "triage_mode": "llm_triage",
+        "module_plan": {"files": files, "deep_scan_paths": ["a/Ctrl.java"],
+                        "triage_scan_paths": ["a/Svc.java", "a/Dao.java", "a/Util.java"]},
+    }
+    agent.node_scan_deep_files(state)
+    agent.node_scan_triage_files(state)
+    agent.node_group_triage_findings({**state, "triage_scan_results": {}})
+    out = capsys.readouterr().out
+    assert "### Scanning CRITICAL files (deep scan)" in out
+    assert "### Scanning HIGH/MEDIUM/LOW files (triage)" in out
+    assert "### Grouping HIGH/MEDIUM/LOW findings" in out
+    assert "\nHIGH/MEDIUM/LOW regex triage is skipped" in out
+
+
+
+def test_untouched_project_runs_every_sast_toggle_at_its_catalog_default(monkeypatch, project_tree, tmp_path_factory):
+    """No hard-coded second copy of the defaults: a project that never saved
+    its limitations gets exactly what the settings page shows — all on."""
+    monkeypatch.setenv("SAST_AST_CACHE_DIR", str(tmp_path_factory.mktemp("ast_cache")))
+    monkeypatch.setattr(settings, "sast_framework_path", str(Path(__file__).resolve().parents[1] / "sast_engine"))
+    import sys
+
+    sys.modules.pop("sast_scan_agent", None)
+    from app.defaults.scan_limitations import SCAN_LIMITATIONS
+    from app.models import Project
+    from app.services import agent_bridge
+
+    assert all(lim.enabled_by_default for lim in SCAN_LIMITATIONS)
+    real_agent = agent_bridge._load_agent_module()
+    captured = []
+    monkeypatch.setattr(real_agent, "invoke_graph", lambda graph, state, **_k: captured.append(state) or {})
+    monkeypatch.setattr(agent_bridge, "_load_agent_module", lambda: real_agent)
+
+    class FakeScan:
+        llm_provider = None
+        llm_model = None
+        fallback_llm_provider = None
+        fallback_llm_model = None
+        metadata_json = {"use_llm": True}
+
+    project = Project(name="defaults", default_git_url="https://example.com/r.git", languages=["Java"])
+    agent_bridge.run_real_scan(project=project, workspace=project_tree, changed_paths=None, scan_id=None, scan=FakeScan())
+    state = captured[0]
+    assert state["hunt_mode"] == "agentic"
+    assert state["catalog_prefilter"] is True
+    assert state["suppress_http_findings"] is True
+    assert state["inter_file_flow"] and state["joern_dataflow"] and state["derive_runtime_rules"]
+    assert state["triage_mode"] == real_agent.llm_file_scan.TRIAGE_MODE_LLM

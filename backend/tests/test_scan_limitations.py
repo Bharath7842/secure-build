@@ -47,6 +47,8 @@ def test_scan_limitations_expected_ids():
         "absence-checks-llm-only",
         "inter-file-call-graph",
         "runtime-derived-regex",
+        "joern-dataflow",
+        "joern-scan-queries",
         "cwe-less-findings-suppressed",
         "https-enforced-suppress-http",
         "low-confidence-fp-suppressed",

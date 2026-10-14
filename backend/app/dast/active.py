@@ -599,7 +599,12 @@ def _recorded_line(target: Endpoint) -> str:
     return f"{snap['method'].upper()} {snap['url']} → {status}, {ctype}; {param_s}"
 
 
-def analysis_record(outcome: TargetOutcome, checks: Mapping[str, EffectiveCheck], secrets: Sequence[str] = ()) -> dict[str, Any] | None:
+def analysis_record(
+    outcome: TargetOutcome,
+    checks: Mapping[str, EffectiveCheck],
+    secrets: Sequence[str] = (),
+    identity_label: str | None = None,
+) -> dict[str, Any] | None:
     """The per-target record kept in `discovery["api_analysis"]` (the shape the analysis panel reads),
     or None when nothing was tested for the target."""
     if not outcome.records:
@@ -614,13 +619,16 @@ def analysis_record(outcome: TargetOutcome, checks: Mapping[str, EffectiveCheck]
             {
                 "check_id": check.check_id, "check": check.title, "cwe": cwe_of(standards_for(check)) or "",
                 "owasp_category": owasp_category_of(standards_for(check)) or "", "target": record.parameter, "location": record.location,
-                "payload": record.input, "expected_signal": record.expected_signal,
+                "payload": record.input, "proposed_payload": record.input, "expected_signal": record.expected_signal,
                 "request": {
                     "method": outcome.endpoint.method,
                     "url": outcome.endpoint.url,
                     "parameter": record.parameter,
                     "location": record.location,
                     "payload": record.input,
+                    "identity_label": identity_label,
+                    "allowed": result.sent if result else None,
+                    "deny_reason": result.error if result and not result.sent else None,
                     "seq": result.audit_seq if result else None,
                     "response_status": result.status if result else None,
                 },

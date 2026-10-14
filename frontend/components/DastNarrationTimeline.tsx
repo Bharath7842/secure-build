@@ -2,15 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { ApiWalkthroughList } from "@/components/DastAnalysisPanel";
 import { displayLogLine, hideInconclusive, originOf } from "@/lib/httpLabel";
 import type {
-  DastApiAnalysis,
-  DastApiCall,
-  DastInventoryEntry,
   DastNarration,
   DastNarrationStep,
   DastPage,
+  DastSessionAssessment,
 } from "@/lib/types";
 
 const SCROLL_THROTTLE_MS = 100;
@@ -231,6 +228,46 @@ function Message({
   );
 }
 
+function SessionAssessmentCard({ assessment }: { assessment: DastSessionAssessment }) {
+  const positive = assessment.verdict === "true_positive";
+  const label = positive ? "True positive" : "False positive";
+  const source = assessment.model || assessment.provider || "Rules";
+  const confidence =
+    typeof assessment.confidence === "number"
+      ? `${Math.round(assessment.confidence * 100)}% confidence · `
+      : "";
+
+  return (
+    <section
+      className={`rounded-xl border bg-white p-4 ${positive ? "border-red-200" : "border-emerald-200"}`}
+      aria-label={`Session warning verdict: ${label}`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-[var(--ink)]">Session warning checked</h3>
+          <p className="mt-0.5 text-xs text-[var(--muted)]">Claim checked: {assessment.claim.toLowerCase()}</p>
+        </div>
+        <span
+          className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-semibold ${
+            positive
+              ? "border-red-200 bg-red-50 text-red-700"
+              : "border-emerald-200 bg-emerald-50 text-emerald-700"
+          }`}
+        >
+          {label}
+        </span>
+      </div>
+      <p className="mt-3 text-sm leading-relaxed text-[var(--ink)]">
+        <strong>Why:</strong> {assessment.why}
+      </p>
+      <p className="mt-2 text-xs leading-relaxed text-[var(--muted)]">
+        <strong>Evidence:</strong> {assessment.evidence.join(" · ")}
+      </p>
+      <p className="mt-2 text-[11px] text-slate-400">{confidence}{source}</p>
+    </section>
+  );
+}
+
 /** Show reached steps in order, stopping at the first one still running so
  * the next step does not appear until this one is done. */
 function sequentialVisibleSteps(steps: DastNarrationStep[], liveScan: boolean): DastNarrationStep[] {
@@ -249,11 +286,9 @@ export default function DastNarrationTimeline({
   scanId,
   pages,
   targetUrl,
-  apiAnalysis,
-  inventory,
-  apiCalls,
   discoveryCard,
   analysisCard,
+  browserCard,
   findingsCard,
   matrixCard,
   reportCard,
@@ -265,16 +300,14 @@ export default function DastNarrationTimeline({
   pages?: DastPage[] | null;
   /** Scan target, used to expand `GET /api/x` log lines into full http URLs. */
   targetUrl?: string | null;
-  /** Per-API results as they finish — shown under Testing REST APIs in discovery order. */
-  apiAnalysis?: DastApiAnalysis[] | null;
-  inventory?: DastInventoryEntry[] | null;
-  apiCalls?: DastApiCall[] | null;
   /** Rendered right after the crawl finishes, like SAST's "Discovery
    * results" card — opens the full results in the side panel on click. */
   discoveryCard?: ReactNode | null;
   /** Rendered right after the API-testing phase — opens the per-API security
    * analysis drill-down in the side panel on click. */
   analysisCard?: ReactNode | null;
+  /** Rendered after testing to make browser/form coverage visible beside API testing. */
+  browserCard?: ReactNode | null;
   /** Rendered after passive analysis and active testing, where the findings first exist. */
   findingsCard?: ReactNode | null;
   /** Rendered after the authorization step: the role-pair matrix. */
@@ -367,15 +400,11 @@ export default function DastNarrationTimeline({
               <div key={step.id} className="space-y-3">
                 <Message step={step} scanId={scanId} pages={pages} origin={origin} />
                 {step.id === "discovery" && step.status !== "running" && discoveryCard}
-                {step.id === "testing" && (
-                  <ApiWalkthroughList
-                    apis={apiAnalysis ?? []}
-                    inventory={inventory}
-                    apiCalls={apiCalls}
-                    origin={origin}
-                  />
-                )}
+                {step.id === "discovery" && step.status !== "running" && narration.assessment ? (
+                  <SessionAssessmentCard assessment={narration.assessment} />
+                ) : null}
                 {step.id === "testing" && step.status !== "running" && analysisCard}
+                {step.id === "testing" && step.status !== "running" && browserCard}
                 {step.id === "testing" && step.status !== "running" && findingsCard}
                 {step.id === "authorization" && step.status !== "running" && matrixCard}
               </div>

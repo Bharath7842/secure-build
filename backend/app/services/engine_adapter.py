@@ -269,8 +269,10 @@ def run_dast_scan(
     routing = {task: tuple(route) for task, route in (snapshot.get("model_routing") or {}).items()} or None
     gateway = gateway or build_gateway(routing)
     problems = gateway.check_configuration() if hasattr(gateway, "check_configuration") else []
-    for problem in problems:  # not fatal: the task falls back, but the operator should know why
-        print(f"Model configuration problem: {problem}")
+    availability = gateway.check_availability() if hasattr(gateway, "check_availability") else []
+    if problems or availability:
+        details = "; ".join([*problems, *availability])
+        raise RuntimeError(f"LLM unavailable; DAST scan stopped before target checks: {details}")
 
     if credentials is None:
         from app.services.credential_holder import InMemoryCredentialHolder

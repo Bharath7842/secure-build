@@ -1,0 +1,70 @@
+{
+  "_comment": "Read by flows.sc. Sources/sinks for Joern reachableByFlows. Sink kinds mirror pipeline/call_graph.py _SINK_SEVERITY so flows rank the same way; kind_order is the order flows.sc runs them in (most severe first, so a timeout only loses the low-value tail) and must stay sorted by that severity. Regexes are full-match (Joern semantics). full_name is matched against CALL.methodFullName; omit it to match on name alone. The first matching sink entry wins. A sink is reported only when a tainted value reaches one of its arguments. Sanitizers never drop a flow: flows.sc lists the ones a path passes through (limited to 'kinds' when given) so the LLM verifier sees them and joern_flows ranks the flow lower.",
+  "sources": {
+    "entry_annotations": "(Get|Post|Put|Delete|Patch|Request)Mapping|GET|POST|PUT|DELETE|PATCH|Path|WebMethod|JmsListener|KafkaListener|RabbitListener",
+    "param_annotations": "RequestParam|PathVariable|RequestBody|RequestHeader|CookieValue|ModelAttribute|QueryParam|PathParam|FormParam|HeaderParam|CookieParam",
+    "non_source_param_types": ".*\\b(HttpServletResponse|ServletResponse|ServerHttpResponse|ServerWebExchange|Model|ModelMap|ModelAndView|BindingResult|Errors|RedirectAttributes|Principal|Authentication|Locale|HttpSession|SessionStatus|UriComponentsBuilder)\\b.*",
+    "accessor_calls": [
+      {"name": "getParameter|getParameterValues|getParameterMap|getHeader|getHeaders|getQueryString|getRequestURI|getRequestURL|getCookies|getInputStream|getReader|getPathInfo|getPart|getParts", "full_name": "(jakarta|javax)\\.servlet.*"},
+      {"name": "getParameter|getHeader|getQueryString|getRequestURI|getRequestURL"}
+    ],
+    "code_patterns": [
+      "request\\.(args|form|values|json|data|files|cookies|headers|GET|POST|body|query_params|path_params|FILES|COOKIES|META)\\b.*",
+      "req\\.(body|query|params|headers|cookies)\\b.*",
+      "input\\(.*",
+      "sys\\.argv.*",
+      "\\$_(GET|POST|REQUEST|COOKIE|SERVER|FILES)\\b.*"
+    ]
+  },
+  "kind_order": ["sql", "jpa", "jdbc_template", "eval", "command", "ssrf", "ldap", "deser", "xxe", "xss", "reflect", "files", "redirect", "header", "response_body", "log"],
+  "sinks": [
+    {"kind": "sql", "name": "executeQuery|executeUpdate|execute|executeBatch|executeLargeUpdate|addBatch|prepareStatement|prepareCall", "full_name": "java\\.sql\\..*"},
+    {"kind": "jpa", "name": "createQuery|createNativeQuery|createSQLQuery", "full_name": ".*(persistence|hibernate).*"},
+    {"kind": "jdbc_template", "name": "query|queryForObject|queryForList|queryForMap|queryForRowSet|update|batchUpdate|execute", "full_name": "org\\.springframework\\.jdbc\\..*"},
+    {"kind": "sql", "name": "execute|executemany|executescript|raw|extra", "code": ".*(cursor|conn|connection|db|session|objects)\\b.*"},
+    {"kind": "sql", "name": "query|raw|\\$queryRawUnsafe|\\$executeRawUnsafe", "code": ".*(db|pool|conn|connection|client|knex|sequelize|prisma)\\b.*"},
+    {"kind": "command", "name": "exec", "full_name": "java\\.lang\\.Runtime\\..*"},
+    {"kind": "command", "name": "<init>|command|start", "full_name": "java\\.lang\\.ProcessBuilder\\..*"},
+    {"kind": "command", "name": "system|popen|call|run|check_call|check_output|Popen|spawn|execSync|execFile|execFileSync|spawnSync|shell_exec|passthru|proc_open"},
+    {"kind": "eval", "name": "eval|exec|compile|Function|setTimeout|setInterval|assert"},
+    {"kind": "eval", "name": "parseExpression|eval", "full_name": ".*(expression|script).*"},
+    {"kind": "deser", "name": "readObject|readUnshared", "full_name": "java\\.io\\.ObjectInputStream\\..*"},
+    {"kind": "deser", "name": "loads|load|unsafe_load|full_load", "code": ".*(pickle|yaml|marshal|shelve|jsonpickle)\\..*"},
+    {"kind": "deser", "name": "unserialize"},
+    {"kind": "xxe", "name": "parse|unmarshal|transform", "full_name": ".*(xml|XML|Unmarshaller|Transformer|SAXParser|DocumentBuilder).*"},
+    {"kind": "ldap", "name": "search|lookup", "full_name": "javax\\.naming\\..*"},
+    {"kind": "reflect", "name": "forName", "full_name": "java\\.lang\\.Class\\..*"},
+    {"kind": "reflect", "name": "invoke", "full_name": "java\\.lang\\.reflect\\..*"},
+    {"kind": "ssrf", "name": "getForObject|getForEntity|postForObject|postForEntity|exchange|patchForObject", "full_name": ".*RestTemplate.*"},
+    {"kind": "ssrf", "name": "openConnection|openStream|send|sendAsync", "full_name": "java\\.net\\..*"},
+    {"kind": "ssrf", "name": "<init>", "full_name": "java\\.net\\.(URL|URI)\\..*"},
+    {"kind": "ssrf", "name": "get|post|put|delete|patch|request|urlopen|fetch", "code": ".*(requests|httpx|urllib|axios|fetch|http|https|got)\\b.*"},
+    {"kind": "files", "name": "<init>", "full_name": "java\\.io\\.(File|FileInputStream|FileOutputStream|FileReader|FileWriter|RandomAccessFile)\\..*"},
+    {"kind": "files", "name": "get|of|resolve", "full_name": "java\\.nio\\.file\\.(Paths|Path)\\..*"},
+    {"kind": "files", "name": "write|writeString|newInputStream|newOutputStream|readAllBytes|readString|delete|copy|move", "full_name": "java\\.nio\\.file\\.Files\\..*"},
+    {"kind": "files", "name": "open|send_file|send_from_directory|readFile|readFileSync|writeFile|writeFileSync|createReadStream|sendFile|unlink|fopen|file_get_contents|include|require"},
+    {"kind": "xss", "name": "print|println|write|append|format|printf", "full_name": "(java\\.io\\.(PrintWriter|Writer)|(jakarta|javax)\\.servlet\\.ServletOutputStream)\\..*"},
+    {"kind": "xss", "name": "render_template_string|Markup|mark_safe|HttpResponse|send|write|innerHTML|echo"},
+    {"kind": "redirect", "name": "sendRedirect", "full_name": "(jakarta|javax)\\.servlet\\.http\\.HttpServletResponse\\..*"},
+    {"kind": "redirect", "name": "setHeader|addHeader", "full_name": "(jakarta|javax)\\.servlet\\.http\\.HttpServletResponse\\..*", "code": "(?i).*\"location\".*"},
+    {"kind": "header", "name": "setHeader|addHeader|addCookie", "full_name": "(jakarta|javax)\\.servlet\\.http\\.HttpServletResponse\\..*"},
+    {"kind": "response_body", "name": "ok|body|badRequest|status|<init>", "full_name": "org\\.springframework\\.http\\.ResponseEntity.*"},
+    {"kind": "log", "name": "trace|debug|info|warn|warning|error|fatal|severe|fine|finer|finest|critical|exception|log", "full_name": "(org\\.slf4j|org\\.apache\\.(logging\\.)?log4j|java\\.util\\.logging|org\\.apache\\.commons\\.logging)\\..*"},
+    {"kind": "log", "name": "trace|debug|info|warn|warning|error|fatal|severe|fine|finer|finest|critical|exception|log", "code": "(?i)(.*\\.)?_?(log|logger|logging)\\.\\w+\\(.*"},
+    {"kind": "redirect", "name": "redirect|HttpResponseRedirect"}
+  ],
+  "sanitizers": [
+    {"name": "parseInt|parseLong|parseShort|parseByte|parseDouble|parseFloat|parseBoolean|valueOf|fromString", "full_name": "(?:java\\.lang\\.)?(Integer|Long|Short|Byte|Double|Float|Boolean|UUID)\\..*|java\\.util\\.UUID\\..*", "kinds": ["sql", "jpa", "jdbc_template", "command", "files", "ldap", "header", "redirect", "log", "eval"]},
+    {"name": "int|float|bool|parseInt|parseFloat|Number", "kinds": ["sql", "command", "files", "ldap", "header", "redirect", "log", "eval"]},
+    {"name": "escapeSql", "kinds": ["sql", "jpa", "jdbc_template"]},
+    {"name": "htmlEscape|htmlEscapeDecimal|htmlEscapeHex|escapeHtml|escapeHtml3|escapeHtml4|escapeXml|escapeXml10|escapeXml11|escapeEcmaScript|forHtml|forHtmlContent|forHtmlAttribute|forJavaScript|forXml|escape|sanitize|clean|encodeURIComponent", "kinds": ["xss", "response_body"]},
+    {"name": "encodeForHTML|encodeForHTMLAttribute|encodeForJavaScript|encodeForCSS|encodeForURL|encodeForXML", "kinds": ["xss", "response_body", "redirect"]},
+    {"name": "encodeForSQL", "kinds": ["sql", "jpa", "jdbc_template"]},
+    {"name": "encodeForOS", "kinds": ["command"]},
+    {"name": "encodeForLDAP|encodeForDN|escapeLDAPSearchFilter|escapeDN|escape_filter_chars|escape_rdn", "kinds": ["ldap"]},
+    {"name": "quote|shlex_quote|escapeshellarg|escapeshellcmd", "kinds": ["command"]},
+    {"name": "getName|basename|secure_filename|getFileName", "code": "(?i).*(FilenameUtils|basename|secure_filename|getFileName).*", "kinds": ["files"]},
+    {"name": "replace|replaceAll|strip|rstrip|translate", "code": ".*\\\\[rn].*", "kinds": ["log", "header", "redirect"]},
+    {"name": "encode", "full_name": "java\\.net\\.URLEncoder\\..*", "kinds": ["header", "redirect", "log", "xss"]}
+  ]
+}

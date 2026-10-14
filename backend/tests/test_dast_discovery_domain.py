@@ -85,6 +85,12 @@ def test_reconcile_lets_the_model_change_shape_but_not_facts():
     assert fp.reconcile({"shape": "bogus"}, base) is base and fp.reconcile(None, base) is base and fp.reconcile({"shape": "mpa"}, base) is base
 
 
+def test_model_cannot_hide_browser_coverage_by_calling_an_html_site_api_only():
+    base = fp.heuristic_fingerprint(resp("<html><body><form><input name='q'></form></body></html>"), [], IDS())
+    assert base.shape == "mpa"
+    assert fp.reconcile({"shape": "api"}, base) is base
+
+
 def test_routing_plan_per_shape_and_auth():
     api = fp.Fingerprint("api", "token", "openapi")
     plan = fp.routing_plan(api, IDS(TOKEN))

@@ -178,3 +178,48 @@ def test_create_project_without_git_url_for_dast_only_use(client):
     )
     assert resp.status_code == 201
     assert resp.json()["default_git_url"] == ""
+
+
+def test_llm_api_key_is_write_only(client):
+    resp = client.post(
+        "/projects",
+        json=_payload(
+            name="openai-compat",
+            llm_provider="openai_compat",
+            llm_model="qwen2.5-coder-32b",
+            llm_base_url="http://localhost:8000/v1",
+            llm_api_key="sk-secret-value",
+        ),
+        headers=AUTH_HEADER,
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["llm_provider"] == "openai_compat"
+    assert body["llm_base_url"] == "http://localhost:8000/v1"
+    assert body["llm_api_key_set"] is True
+    assert "sk-secret-value" not in resp.text
+    assert "llm_api_key" not in body
+
+    project_id = body["id"]
+    # Omitting the key keeps it.
+    kept = client.patch(f"/projects/{project_id}", json={"llm_model": "other"}, headers=AUTH_HEADER)
+    assert kept.json()["llm_api_key_set"] is True
+    # An empty string clears it.
+    cleared = client.patch(f"/projects/{project_id}", json={"llm_api_key": ""}, headers=AUTH_HEADER)
+    assert cleared.json()["llm_api_key_set"] is False
+
+
+def test_new_project_has_no_ollama_fallback(client):
+    body = client.post("/projects", json=_payload(name="fallback"), headers=AUTH_HEADER).json()
+    assert body["fallback_llm_provider"] == "none"
+    assert body["llm_data_policy"] == "allow_external"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("llm_provider", "openai"),
+    ("fallback_llm_provider", "gpt"),
+    ("llm_data_policy", "sometimes"),
+])
+def test_project_rejects_unknown_llm_settings(client, field, value):
+    resp = client.post("/projects", json=_payload(name=f"bad-{field}", **{field: value}), headers=AUTH_HEADER)
+    assert resp.status_code == 422

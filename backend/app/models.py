@@ -40,16 +40,28 @@ class Project(Base):
     # Hard caps on LLM-derived (OWASP-driven) regex/Semgrep rules per scan.
     max_derived_regex_rules: Mapped[int] = mapped_column(Integer, default=50)
     max_derived_semgrep_rules: Mapped[int] = mapped_column(Integer, default=20)
-    # Which LLM backend the batched OWASP agent calls: bedrock
-    # (Claude Haiku) or ollama (local model, e.g. granite-code:3b).
+    # Which LLM backend scans call: bedrock (Claude), openai_compat (any
+    # OpenAI-compatible /chat/completions server, local or hosted) or ollama.
     llm_provider: Mapped[str] = mapped_column(String(20), default="bedrock")
     llm_model: Mapped[str] = mapped_column(
         String(200), default="us.anthropic.claude-haiku-4-5-20251001-v1:0"
     )
-    # After Bedrock spend hits the soft cutoff, continue on this local model.
-    # Ignored when llm_provider is already ollama.
-    fallback_llm_provider: Mapped[str] = mapped_column(String(20), default="ollama")
-    fallback_llm_model: Mapped[str] = mapped_column(String(200), default="granite-code:3b")
+    # openai_compat endpoint; None = settings.openai_compat_base_url.
+    llm_base_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Write-only, like git_access_token: never returned (ProjectOut only
+    # exposes llm_api_key_set) and never snapshotted onto a Scan row.
+    llm_api_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # "allow_external" or "local_only" — the latter refuses any provider that
+    # would send repository code off localhost/private networks.
+    llm_data_policy: Mapped[str] = mapped_column(String(20), default="allow_external")
+    # Agentic-hunt patterns promoted on earlier scans (app/services/learned_rules.py),
+    # run with the regex catalog on later scans unless "learned-hunt-rules" is off.
+    learned_rules: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # After spend hits the soft cutoff, continue on this provider/model;
+    # "none" stops LLM work and leaves the rest unverified. Ignored when
+    # llm_provider is ollama.
+    fallback_llm_provider: Mapped[str] = mapped_column(String(20), default="none")
+    fallback_llm_model: Mapped[str] = mapped_column(String(200), default="")
     owasp_mode: Mapped[str] = mapped_column(String(20), default="top10")  # top10|top15|custom
     owasp_urls: Mapped[list] = mapped_column(JSON, default=list)
     nvd_mode: Mapped[str] = mapped_column(String(20), default="top10")  # top10|top15|custom
@@ -74,6 +86,10 @@ class Project(Base):
     def git_connected(self) -> bool:
         return bool(self.git_access_token)
 
+    @property
+    def llm_api_key_set(self) -> bool:
+        return bool(self.llm_api_key)
+
 
 class Scan(Base):
     __tablename__ = "scans"
@@ -97,6 +113,10 @@ class Scan(Base):
     llm_model: Mapped[str | None] = mapped_column(String(200), nullable=True)
     fallback_llm_provider: Mapped[str | None] = mapped_column(String(20), nullable=True)
     fallback_llm_model: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # openai_compat endpoint and data policy in force for this scan (the API
+    # key is deliberately not snapshotted — it is read from the project).
+    llm_base_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    llm_data_policy: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # Who triggered the scan: "app" (Secure Build UI) or "jenkins" (CI).
     triggered_by: Mapped[str | None] = mapped_column(String(20), nullable=True)
     metadata_json: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
@@ -249,6 +269,8 @@ class DastEvidence(Base):
     )
     baseline_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
     test_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reproduction: Mapped[str | None] = mapped_column(Text, nullable=True)
+    severity_source: Mapped[str | None] = mapped_column(String(40), nullable=True)
     # Named detector signals that proved the finding: [{"name": ..., "detail": ...}].
     signals: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # Pointer into `dast_request_audit`, as "<seq>" for the scan the finding belongs to.
@@ -316,3 +338,27 @@ class FileSnapshot(Base):
     path: Mapped[str] = mapped_column(String(700))
     content_hash: Mapped[str] = mapped_column(String(64))
     commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class LlmResultCache(Base):
+    """A validated LLM response, reused verbatim by later scans of the same
+    project when the exact same prompt is sent to the same model.
+
+    `key` hashes the full system + user prompt, provider/model, generation
+    parameters and llm_client.RESULT_CACHE_VERSION — any change to the code
+    under review, its context, the rule catalog or the prompt wording yields
+    a different key, so there is no separate invalidation step. Only complete,
+    untruncated JSON responses are stored (llm_client.is_complete_json_response)."""
+
+    __tablename__ = "llm_result_cache"
+    __table_args__ = (Index("ix_llm_result_cache_project_key", "project_id", "key", unique=True),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    key: Mapped[str] = mapped_column(String(64))
+    step: Mapped[str] = mapped_column(String(80), default="")
+    model: Mapped[str] = mapped_column(String(200), default="")
+    response_text: Mapped[str] = mapped_column(Text)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)

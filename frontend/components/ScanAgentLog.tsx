@@ -12,9 +12,18 @@ import {
 import type { Scan, ScanLogLine } from "@/lib/types";
 
 export interface SectionCard {
-  /** Match against a `### <label>` section from STEP_LABELS (case-insensitive). */
-  afterLabel: string;
+  /** Match against a `### <label>` section from STEP_LABELS: a string compares
+   * case-insensitively; a RegExp suits banners whose text varies per scan
+   * (e.g. "Scanning HIGH/MEDIUM/LOW files (triage)"). */
+  afterLabel: string | RegExp;
   node: ReactNode;
+}
+
+function cardMatchesSection(card: SectionCard, label: string): boolean {
+  if (typeof card.afterLabel === "string") {
+    return card.afterLabel.trim().toLowerCase() === label.trim().toLowerCase();
+  }
+  return card.afterLabel.test(label.trim());
 }
 
 interface ScanAgentLogProps {
@@ -381,34 +390,23 @@ export default function ScanAgentLog({
   const terminal = !live;
   const progressValue = Math.max(0, Math.min(100, progress ?? 0));
 
-  const cardsByLabel = useMemo(() => {
-    const map = new Map<string, ReactNode[]>();
+  // Each card goes after the first section it matches; unmatched cards are
+  // shown after the log.
+  const { cardsBySection, fallbackCards } = useMemo(() => {
+    const bySection = new Map<number, ReactNode[]>();
+    const unplaced: ReactNode[] = [];
     for (const card of sectionCards) {
-      const key = card.afterLabel.trim().toLowerCase();
-      const list = map.get(key) ?? [];
+      const section = sections.find((s) => cardMatchesSection(card, s.label));
+      if (section === undefined) {
+        unplaced.push(card.node);
+        continue;
+      }
+      const list = bySection.get(section.seq) ?? [];
       list.push(card.node);
-      map.set(key, list);
+      bySection.set(section.seq, list);
     }
-    return map;
-  }, [sectionCards]);
-
-  const placedLabels = useMemo(() => {
-    const found = new Set<string>();
-    for (const section of sections) {
-      const key = section.label.trim().toLowerCase();
-      if (cardsByLabel.has(key)) found.add(key);
-    }
-    return found;
-  }, [sections, cardsByLabel]);
-
-  const fallbackCards = useMemo(() => {
-    const nodes: ReactNode[] = [];
-    for (const card of sectionCards) {
-      const key = card.afterLabel.trim().toLowerCase();
-      if (!placedLabels.has(key)) nodes.push(card.node);
-    }
-    return nodes;
-  }, [sectionCards, placedLabels]);
+    return { cardsBySection: bySection, fallbackCards: unplaced };
+  }, [sections, sectionCards]);
 
   const hasCards = sectionCards.length > 0;
 
@@ -543,8 +541,7 @@ export default function ScanAgentLog({
                 const isLatest = index === sections.length - 1;
                 const isLiveSection = live && isLatest;
                 const muted = live && !isLatest;
-                const sectionKey = section.label.trim().toLowerCase();
-                const afterCards = cardsByLabel.get(sectionKey);
+                const afterCards = cardsBySection.get(section.seq);
 
                 return (
                   <div key={section.seq}>

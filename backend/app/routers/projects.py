@@ -12,7 +12,7 @@ from app.config import settings
 from app.db import get_db
 from app.defaults.reference_sources import normalize_sources, sync_legacy_fields
 from app.defaults.scan_limitations import SCAN_LIMITATIONS
-from app.models import FileSnapshot, Finding, Project, Scan
+from app.models import FileSnapshot, Finding, LlmResultCache, Project, Scan
 from app.routers.git_auth import consume_pending_connection
 from app.schemas import ProjectCreate, ProjectDeleteOut, ProjectOut, ProjectUpdate
 from app.services import scan_log
@@ -36,6 +36,13 @@ def _commit_or_raise_duplicate(db: Session) -> None:
             status_code=status.HTTP_409_CONFLICT,
             detail="Project name already exists",
         )
+
+
+def _plain_secret(value) -> str | None:
+    if value is None:
+        return None
+    raw = value.get_secret_value() if hasattr(value, "get_secret_value") else str(value)
+    return raw.strip() or None
 
 
 def _apply_reference_sources(data: dict) -> None:
@@ -65,6 +72,7 @@ def create_project(
 ):
     data = payload.model_dump()
     data["scan_mode"] = "full"
+    data["llm_api_key"] = _plain_secret(data.get("llm_api_key"))
     connection_id = data.pop("git_connection_id", None)
     _apply_reference_sources(data)
     project = Project(**data)
@@ -108,6 +116,9 @@ def update_project(
     project = _get_project_or_404(db, project_id)
     updates = payload.model_dump(exclude_unset=True)
     updates["scan_mode"] = "full"
+    if "llm_api_key" in updates:
+        # Omitted keeps the stored key; "" (or null) clears it.
+        updates["llm_api_key"] = _plain_secret(updates["llm_api_key"])
     if "reference_sources" in updates:
         _apply_reference_sources(updates)
     for field, value in updates.items():
@@ -146,6 +157,7 @@ def delete_project(
         db.query(Finding).filter(Finding.scan_id.in_(scan_ids)).delete(synchronize_session=False)
         db.query(Scan).filter(Scan.project_id == project_id).delete(synchronize_session=False)
     db.query(FileSnapshot).filter(FileSnapshot.project_id == project_id).delete(synchronize_session=False)
+    db.query(LlmResultCache).filter(LlmResultCache.project_id == project_id).delete(synchronize_session=False)
 
     for scan_id in scan_ids:
         scan_log.delete(scan_id)
@@ -170,6 +182,25 @@ def delete_project(
 
 class UpdateLimitationsPayload(BaseModel):
     enabled_ids: list[str]
+
+
+@router.delete("/{project_id}/learned-rules/{rule_id}", response_model=ProjectOut)
+def delete_learned_rule(
+    project_id: str,
+    rule_id: str,
+    db: Session = Depends(get_db),
+    _: None = Depends(verify_bearer),
+):
+    """Stop running one agentic-hunt learned rule on future scans."""
+    project = _get_project_or_404(db, project_id)
+    rules = list(project.learned_rules or [])
+    kept = [r for r in rules if r.get("id") != rule_id]
+    if len(kept) == len(rules):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learned rule not found")
+    project.learned_rules = kept
+    db.commit()
+    db.refresh(project)
+    return project
 
 
 @router.patch("/{project_id}/limitations", response_model=ProjectOut)

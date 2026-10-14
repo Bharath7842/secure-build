@@ -1,274 +1,258 @@
-# DAST Implementation (current state)
+# Agentic DAST — Technical Overview
 
-Snapshot of how DAST works in this repo today, including the uncommitted `analyze_apis` stage on `feature/sbom-scan-type`.
+## What it is
 
-## 1. Summary
+Dynamic Application Security Testing tests a running web application from the outside, in the same
+way a user, browser, API client, or attacker interacts with it.
 
-DAST is a third scan type (`scan_type = "dast"`, next to `sast`, `sca` and `sbom`). It does **not** use git or a repository. It targets a running web app by URL:
+The scanner does not need the application's source code. It works with:
 
-1. A Playwright-driven Chromium browser logs in (if credentials were given) and crawls the app.
-2. A local Ollama LLM (`gpt-oss:20b` by default) makes the judgment calls a pentester would make.
-3. Observed REST APIs are then actively tested with LLM-constructed payloads.
-4. Results are stored as `Finding` rows (`kind=dast`) plus a discovery dict on `Scan.metadata_json`.
-5. A chat-style "narration" timeline is generated from the engine log.
+- A running application URL
+- Test-user identities, when authenticated coverage is required
+- Browser and API traffic generated during the scan
+- Published OpenAPI, Swagger, or GraphQL information when available
 
-It is meant for local practice apps (DVWA, Juice Shop, etc.) that the operator owns or is authorized to test. The trigger endpoint requires an explicit `authorized` confirmation.
+The solution combines browser automation, API testing, deterministic security detectors, and AI
+reasoning. AI helps the scanner understand the application and choose relevant tests, while fixed
+safety controls decide what traffic may be sent and what evidence is required to confirm a finding.
 
-## 2. Layout
+It is **Agentic DAST** because it works autonomously: it understands the application, selects
+relevant tests, adapts its next actions, and completes the scan from discovery to reporting without
+routine human intervention.
 
-| Layer | Location | Role |
-|---|---|---|
-| Engine (LangGraph) | `backend/app/dast/` | Browser, crawl and API testing pipeline |
-| Engine entry point | `backend/app/dast/runner.py` | Called by FastAPI; owns Playwright lifecycle and builds the discovery dict |
-| Engine bridge | `backend/app/services/engine_adapter.py` (`run_dast_scan`) | Mock vs. real gate |
-| Lifecycle | `backend/app/services/scan_runner.py` (`_execute_dast_scan`) | Status, log capture, persistence, cancel |
-| Narration | `backend/app/services/dast_narration.py` | Log to chat-style step timeline (LLM or template) |
-| HTTP | `backend/app/routers/scans.py` | Create scan, `/narration`, `/narration/stream` |
-| UI | `frontend/app/dast/page.tsx`, `frontend/components/Dast*.tsx` | Dashboard, form, detail, analysis panel, timeline |
-| Standalone tools | `backend/app/dast/app.py`, `server.py`, `static/` | CLI and Flask UI that run the same graph (not used by FastAPI) |
+## How it can be used
 
-## 3. Engine pipeline
+DAST scans can be started in two ways:
 
-Five nodes, defined in `backend/app/dast/graph.py`. Each is wrapped by `_with_banner`, which prints `### DAST: <label>`. The log parsers, progress tracking and narration all key off those banners.
+- **Web UI:** Configure the target, identities, scan intensity, and security checks, then monitor
+  progress and review findings from the dashboard.
+- **CI/CD integration:** Trigger scans automatically from deployment pipelines such as Jenkins or
+  GitHub Actions, monitor the scan result, and use the outcome as part of the release process.
 
-```
-check_connection -> classify_login_type -> login -> crawl -> analyze_apis -> END
-                                                      ^         |
-                                                      +- login -+  (one bounded session-recovery hop)
-```
+## Technologies used
 
-With `--storage-state` (CLI only), the graph skips straight to `crawl`.
+| Capability | Technology | Purpose |
+| --- | --- | --- |
+| Backend | Python with FastAPI | Provides scan APIs, coordinates the DAST workflow, and processes and stores results |
+| Workflow orchestration | LangGraph | Runs the scan as controlled stages with bounded retry and recovery paths |
+| Browser automation | Playwright with Chromium | Handles login, page crawling, browser traffic capture, screenshots, and browser-side security probes |
+| API communication | Guarded HTTP client | Sends baseline, test, authorization-replay, and schema-discovery requests |
+| AI reasoning | Ollama, AWS Bedrock, OpenAI, or Anthropic | Supports application classification, login interaction, crawl prioritization, test construction, evidence explanation, and narration |
+| Security detection | Deterministic detectors | Compares baseline and test behavior and identifies security signals |
+| Rules and standards | Versioned DAST rule catalog | Maps checks to OWASP Top 10, OWASP API Security Top 10, WSTG, and CWE |
+| Data storage | SQLite database | Stores scans, findings, evidence, request audit, configuration snapshots, and scan history |
+| User interface | Next.js and React | Provides scan setup, live progress, findings, evidence, authorization matrix, reports, and exports |
 
-### Nodes
+## How a scan works
 
-- **`check_connection`**: reachability check only. If it fails, the graph ends.
-- **`classify_login_type`**:
-  - Deterministically extracts forms, iframes and keywords, then asks the LLM to classify the login as `simple_form | multi_step | oauth_sso | captcha | otp_2fa | unknown`.
-  - Only `simple_form` continues. The others end the graph with a `stop_reason`. They are detected but intentionally not automated.
-- **`login`**:
-  - The LLM proposes CSS selectors from the form HTML, with a hardcoded selector fallback.
-  - It fills and submits, then verifies success through a 4-tier chain: indicator selector, indicator text, URL change, then password field detached.
-  - There is one LLM-driven retry.
-  - `click_with_retry` and `dismiss_overlays` handle cookie/consent overlays that intercept the click.
-- **`crawl`**:
-  - A plain `while` loop inside one node, alternating `plan_next_url` and `visit_url`.
-  - `plan_next_url` checks hard budgets first: max pages, max depth, max runtime, and 5 consecutive low-value visits. Otherwise the LLM picks the next queued URL, biased toward admin/account/checkout paths. It falls back to FIFO on a bad answer.
-  - `visit_url` navigates with retry and backoff, waits for `networkidle`, extracts same-domain links and forms, and enqueues them. Dedup is `normalize_url` plus `get_url_pattern` with `max_per_pattern`.
-  - A Playwright `response` listener captures API calls (JSON responses, xhr/fetch, `/api/` and `/graphql` URLs).
-  - If the session is lost, it routes back to `login` once (`MAX_RELOGIN_ATTEMPTS = 1`).
-- **`analyze_apis`** (new, uncommitted): the active-testing stage. See section 4.
+1. **Target and identities**
+2. **Connection and application fingerprinting**
+3. **Authentication and isolated user sessions**
+4. **Page, form, JavaScript, API and schema discovery**
+5. **Unified endpoint inventory**
+6. **Passive security analysis**
+7. **Controlled active security tests**
+8. **Browser-side input probes**
+9. **Cross-user authorization testing**
+10. **Evidence-backed findings and reports**
 
-### Supporting modules
+## 01. Target and identities
 
-- `state.py`: `GraphState` TypedDict. It is a plain TypedDict because it carries Playwright handles. It also carries `findings_writer` and `should_abort` hooks injected by FastAPI, which are `None` in the CLI.
-- `llm_utils.py`: all LLM calls go through `call_llm_json` (strict JSON, retries, streams `[thinking]` tokens to stdout) or `call_llm_tool_choice` (crawl planner). Both use the same "ethical hacker, authorized DAST" system prompt.
-- `url_utils.py`: pure string normalization and pattern dedup. No embeddings.
+The scan starts with the application URL and any test-user identities required for authenticated or
+cross-role coverage.
 
-## 4. API security analysis (`nodes/analyze_apis.py` + `api_analysis.py`)
+## 02. Connection and application fingerprinting
 
-Runs after the crawl.
+The scanner confirms that the target is reachable and identifies whether it is a traditional web
+application, single-page application, or API service.
 
-1. **Select APIs.** Discovered `api_calls` are deduped to one per `(method, path)` and capped at `DEFAULT_MAX_APIS = 15`. State can override with `dast_max_apis`.
-2. **Build target.** `build_api_target` gives method, URL, query params, content type and status. It adds any crawled form whose action matches the path as a hint for the request body shape.
-3. **Construct tests** (LLM call 1, `construct_test_cases`):
-   - The model picks which checks from `CHECK_CATALOG` apply to this specific endpoint.
-   - For each test it chooses the target parameter, `location` (`query|path|header|body`), payload and expected signal.
-   - Maximum `DEFAULT_MAX_TESTS_PER_API = 12`.
-   - Payload strings are entirely the model's output. None are hard-coded. Unknown `check_id`s are dropped.
-4. **Execute** (`execute_test`): sent through `page.request`, so requests carry the crawl's authenticated session cookies. `fail_on_status_code=False`, 10s timeout, response body truncated to 1500 characters. It never raises. Transport errors are recorded as evidence.
-5. **Rule** (LLM call 2, `rule_on_results`): the model returns PASS/FAIL/INCONCLUSIVE per test with a finding sentence, severity, confidence and evidence.
-6. **Roll up.** `overall_verdict` is computed deterministically and ignores the model's own overall:
-   - any FAIL gives FAIL
-   - all INCONCLUSIVE gives INCONCLUSIVE
-   - otherwise PASS
-7. **Persist.** Per-API results are appended to `state["api_analysis"]`. FAIL and INCONCLUSIVE checks are converted to finding dicts (`finding_rows_from_analysis`) and written immediately via `findings_writer`, so results appear mid-scan.
+## 03. Authentication and isolated user sessions
 
-### Check catalog (10 categories)
+Configured users are authenticated using a login form, token, or saved session. Each user receives
+an isolated session so cookies, tokens, and browser storage are not shared between identities.
 
-| id | CWE | OWASP |
-|---|---|---|
-| `dast-sqli` | CWE-89 | A03 Injection |
-| `dast-xss` | CWE-79 | A03 Injection |
-| `dast-cmdi` | CWE-78 | A03 Injection |
-| `dast-misconfig` | CWE-16 | A05 Misconfiguration |
-| `dast-authn` | CWE-287 | A07 Auth Failures |
-| `dast-session` | CWE-384 | A07 Auth Failures |
-| `dast-authz` | CWE-639 | A01 Broken Access Control |
-| `dast-input-validation` | CWE-20 | A03 Injection |
-| `dast-info-disclosure` | CWE-209 | A05 Misconfiguration |
-| `dast-robustness` | CWE-248 | A05 Misconfiguration |
+## 04. Application discovery
 
-### Verdict mapping to `Finding`
+Discovery builds a map of the application's reachable attack surface.
 
-| Check verdict | Finding verdict | Written as row? |
-|---|---|---|
-| FAIL | `true_positive` | yes |
-| INCONCLUSIVE | `unverified` (`UNVERIFIED_VERDICT`) | yes |
-| PASS | none | no (kept only in the `api_analysis` tree) |
+The scanner collects information from:
 
-Finding shape:
+- Pages and links reached through the browser
+- Forms and input fields
+- XHR and Fetch requests generated by the application
+- Request methods, parameters, headers, and body shapes
+- Endpoints referenced by JavaScript files
+- Bounded hidden-path discovery
+- OpenAPI or Swagger operations
+- GraphQL operations when introspection is available and permitted
 
-| Field | Value |
-|---|---|
-| `kind` | `dast` |
-| `rule_id` | the check id |
-| `file_path` | `"<METHOD> <path>"` |
-| `snippet` | check, target, payload, HTTP status, evidence |
-| `source` | tested parameter |
-| `sink` | API URL |
-| `verdict_reason` | model's finding sentence |
-| `confidence` | HIGH 0.9, MEDIUM 0.6, LOW 0.3 |
+The browser crawl runs separately for each authenticated identity. This reveals pages and APIs that
+are visible only to particular users or roles.
 
-Every LLM or transport failure degrades to a skipped or inconclusive check. A single API failure never aborts the run (it is recorded as an `api_analysis_failed` warning).
+## 05. Unified endpoint inventory
 
-## 5. Backend integration
+All discovered information is combined into a single endpoint inventory.
 
-### Creating a scan (`routers/scans.py`)
+The inventory contains:
 
-- `POST /scans` with `scan_type: "dast"` requires `dast.target_url` and `dast.authorized`.
-- If `login_url` is given, `username` and `password` are required.
-- The target URL is stored in `Scan.git_url`. There is no commit and no reuse (the `reused` / `resolve_remote_head` logic is skipped for DAST). `use_llm` is forced off, because the DAST LLM is separate (Ollama).
-- `metadata_json["dast_input"]` holds target, login URL, username, `max_depth`, `max_pages`, `headless` and `has_password`.
-- **The password is never persisted.** It is held in an in-memory dict (`scan_runner.set_dast_password` / `_pop_dast_password`) and popped at run start. It is also registered with `scan_log.register_secrets` so it is redacted from logs. If the server restarts between trigger and start, the scan fails with "credentials were lost".
+- HTTP method and URL pattern
+- Query, path, header, and body parameters
+- Observed request-body structure
+- Content type and response status
+- Source of discovery, such as browser traffic, form, JavaScript, or API schema
+- Identities that reached the endpoint
 
-### Engine gate (`engine_adapter.run_dast_scan`)
+## 06. Passive security analysis
 
-- **Mock engine** (default in tests): returns deterministic fake discovery. This includes a mock `api_analysis` tree and mock findings written through the same writer. It prints the same `### DAST:` banners, so the narration and progress code are exercised.
-- **Real engine** needs `USE_MOCK_ENGINE=false` and `RUN_DAST` (`settings.run_dast`, default true). Otherwise the scan fails with an explicit message.
-- Model: `settings.dast_ollama_model` (`gpt-oss:20b`). The Ollama base URL defaults to `http://localhost:11434` and is hardcoded.
-- `runner.run_dast_scan` imports Playwright and `langchain_ollama` lazily, so the mock test suite needs neither installed. It runs the graph, always closes the browser in `finally`, prints `### DAST: summarizing`, and returns `{"discovery": ...}`.
-- Fixed crawl budgets: `MAX_RUNTIME_MINUTES = 10`, `MAX_PER_PATTERN = 3`, same-domain mode `exact`.
+Passive analysis examines traffic already collected during discovery. It does not send additional
+test requests.
 
-### Lifecycle (`scan_runner._execute_dast_scan`)
+Examples include:
 
-1. Status moves `queued -> running`, then log capture starts and a line hook updates `Scan.progress` from the banners.
-2. It calls `engine_adapter.run_dast_scan` with three hooks:
-   - `discovery_writer`
-   - `findings_writer` (the same one SAST uses)
-   - `should_abort` (reads a fresh DB session for cancel)
-3. The discovery dict is saved to `metadata_json["discovery"]`.
-4. Final status:
-   - **failed** if the target was unreachable.
-   - **failed** if no pages were crawled and there was a `stop_reason` or `login_error`. The message is "Crawl did not start: ...".
-   - **cancelled** if the user aborted.
-   - **success** otherwise.
+- Missing or weak security headers
+- Content Security Policy issues
+- Cookie security attributes
+- CORS evidence
+- Technology and error disclosure
+- Sensitive information in responses
+- Session and TLS configuration concerns
 
-### Discovery dict (`runner.build_discovery`)
+Deterministic checks decide whether the condition exists. AI may improve the explanation, severity
+context, or reproduction guidance, but it does not create the underlying finding.
 
-```
-target_url, connection_ok/error, login_type, login_success/error,
-stop_reason, crawl_stop_reason,
-pages[]        {url, depth, title, forms[], links_count, new_link_count}
-api_calls[]
-forms_count, skipped_duplicate_patterns, failed_urls, warnings,
-api_analysis[] {method, url, path, label, checks[], overall_verdict, summary, counts}
-analysis_summary {apis_tested, fail, pass, inconclusive, apis_failing}
+A passive-only scan can stop after this stage.
+
+## 07. Controlled active security tests
+
+For every eligible endpoint, the scanner performs a controlled comparison:
+
+```text
+Normal request -> baseline response
+Test request   -> test response
+                    |
+                    v
+        deterministic comparison
 ```
 
-### Narration (`services/dast_narration.py`)
+The process is:
 
-- **Step splitting.** The engine log is split on `### DAST:` banners into five UI steps: Checking connection, Authenticating, Discovering application, Testing REST APIs, Analyzing attack surface.
-- **Per-step output.** Each finished step gets a first-person narration and 2-4 reasoning bullets from the LLM. It is told to state only facts present in the evidence.
-- **Caching.** Results are cached in memory, keyed by scan, step and an evidence fingerprint. They are persisted to `metadata_json["dast_narration"]` once the scan finishes.
-- **Non-blocking.** `get_narration` returns what is cached and starts background threads for finished-but-unnarrated steps. `pending=True` tells the UI to keep polling.
-- **Fallback.** If the LLM is unavailable (mock engine, Ollama down, bad JSON), it uses a deterministic template (`source="template"`). The page never depends on the model.
-- **Parsing.** `parse_narration_response` strips raw model JSON, `[thinking]` text and log noise. The two most recent commits fixed these leaking into the prose.
-- **Endpoints:**
-  - `GET /scans/{id}/narration` returns the timeline payload.
-  - `GET /scans/{id}/narration/stream?step=...` is an SSE stream of thinking, response and error events for one step.
+1. AI selects relevant enabled checks for the endpoint and proposes minimal test inputs.
+2. A deterministic input validator rejects unsafe, malformed, out-of-scope, or excessive inputs.
+3. The scanner sends a normal baseline request using the observed request structure.
+4. It changes one validated parameter and sends the test request.
+5. Deterministic detectors compare the two responses.
+6. AI explains the evidence and proposes a result.
+7. An evidence guardrail decides whether the issue is confirmed or requires review.
 
-## 6. Frontend
+The scanner may test query parameters, path values, headers, and request bodies. Tests can cover
+areas such as injection, validation, information disclosure, error handling, authentication,
+session behavior, and API security misconfiguration.
 
-All requests go through the Next.js server-side proxy routes under `frontend/app/api/**`, which attach the bearer token.
+Endpoint and per-endpoint test limits prevent uncontrolled traffic. Failure on one endpoint does
+not stop testing of the remaining endpoints.
 
-- **`app/dast/page.tsx`**: dashboard listing DAST scans (`api.scans.list(undefined, "dast")`), with a project filter and delete.
-- **`DastScanForm.tsx`**: new scan form (target URL, optional login URL, username and password, depth, pages, headless, authorization checkbox). It can create a project inline.
-- **`DastScanDetail.tsx`**: the detail page. It polls every 2s until the scan is terminal. It shows click-to-open cards (Discovery, Analysis, Summary, same pattern as SAST Discovery). It contains `DastDiscoveryPanel` (pages, forms and API calls with method styling) and `DastSummaryPanel`.
-- **`DastAnalysisPanel.tsx`** (new, uncommitted): drill-down API, then Check, then Payload, then Response, then Finding, then Verdict, driven by `discovery.api_analysis`.
-- **`DastNarrationTimeline.tsx`**: the chat-style step timeline. It consumes `api.scans.narration` and `narrationStream`.
-- **`AgentArtifactCard.tsx`**: shared card component, modified for DAST.
-- **`lib/types.ts`**: `DastInput`, `DastPage`, `DastApiCall`, `DastApiCheck`, `DastApiAnalysis`, `DastAnalysisSummary`, `DastDiscovery`, `DastStepStatus`, `DastNarration`.
-- Findings appear in the existing `ScanFindingsPanel` and in the PDF/XLSX exports, because DAST writes ordinary `Finding` rows.
+## 08. Browser-side input probes
 
-## 7. Tests
+Some client-side vulnerabilities cannot be confirmed from HTTP responses alone.
 
-`backend/tests/test_dast_scan.py`, `test_dast_narration.py` and `test_dast_api_analysis.py` all run on the mock engine. No browser, Ollama or network is needed. There is no frontend test runner.
+The browser-probe stage places harmless, scan-specific markers into discovered inputs and observes
+what the page does with them.
 
-## 8. Known limitations
+- Reflection alone is treated as a lead.
+- Reaching a browser DOM sink without execution remains unverified.
+- Actual marker execution in the browser confirms browser-side XSS behavior.
 
-- Active testing covers **observed REST APIs only**. Forms and DOM sinks are discovered but not fuzzed.
-- The request body shape is inferred only from matching form inputs. The crawl listener sees responses, not request bodies.
-- `path` location payloads are appended as an extra segment, with no real path-template fuzzing. `body` payloads are sent as a simple `{param: payload}` dict.
-- Login automation covers `simple_form` only. Multi-step, OAuth/SSO, CAPTCHA and OTP/2FA are detected and reported, and the scan stops.
-- A model-produced PASS cannot be independently validated. A weak model can produce false positives or negatives, so INCONCLUSIVE is surfaced as `unverified` rather than hidden.
-- Ollama URL and crawl budgets (runtime, per-pattern, same-domain mode) are hardcoded. `dast_max_apis` and `dast_max_tests_per_api` are state-level only and not exposed in the API or UI.
-- `DastAnalysisPanel`, `api_analysis.py` and `analyze_apis.py` are uncommitted. The root `CLAUDE.md` still calls `app/dast` a UI-only mockup, which is outdated; `backend/app/dast/CLAUDE.md` is current.
-- A scan can fail partway if the server restarts, because the password is in memory only.
+Stored-input submission is disabled by default. It can run only when explicitly enabled and when
+the target is marked as a disposable test environment.
 
-## 9. Tech stack
+## 09. Cross-user authorization testing
 
-### Backend (`backend/`)
+The scanner checks whether one identity can access functionality or data that belongs to another
+identity or role.
 
-| Area | Technology |
-|---|---|
-| Language | Python 3.12 |
-| API framework | FastAPI (>=0.115) served by Uvicorn (`uvicorn[standard]`) |
-| Validation / settings | Pydantic v2, `pydantic-settings` (env-driven `app/config.py`) |
-| Database | SQLAlchemy 2.x. Default is SQLite (`data/secure_build.db`), switchable via `DATABASE_URL`. No Alembic: schema changes are hand-written idempotent `ALTER TABLE` migrations in `db.py` |
-| Auth | Static bearer token (`SAST_API_TOKEN`), checked by `verify_bearer` on every endpoint except `/health` |
-| Background work | Daemon threads (real engine) or inline execution (mock engine). No Celery or queue |
-| Live logs / narration | In-memory log buffer (`scan_log`) polled via `/scans/{id}/logs`. Server-Sent Events for narration streaming |
-| HTTP client | `httpx`, `requests` |
-| Exports | `reportlab` (PDF), `openpyxl` (XLSX) |
-| Tests | `pytest`, `pytest-asyncio`. Mock engine by default, so no network, git or AWS |
+It replays suitable requests:
 
-### DAST engine (`backend/app/dast/`)
+- As an anonymous visitor
+- As another authenticated identity
+- Across different role combinations
 
-| Area | Technology |
-|---|---|
-| Orchestration | LangGraph (`StateGraph`, conditional edges) with `langchain-core` |
-| Browser automation | Playwright (Chromium). `page.request` is reused for authenticated API tests |
-| LLM | Local Ollama via `langchain-ollama` (`ChatOllama`), model `gpt-oss:20b`, `temperature=0.1`, `reasoning=True` |
-| URL handling | `tldextract` for same-domain / root-domain logic, plus custom `url_utils.py` |
-| Standalone UI | Flask + a single vanilla-JS HTML page (CLI/dev use only, not part of the FastAPI app) |
-| Loading | Playwright and `langchain-ollama` are imported lazily, so the mock test suite doesn't need them |
+This provides evidence for issues such as:
 
-### Other engines in the same backend (for context)
+- Broken authentication boundaries
+- Broken Object Level Authorization (BOLA)
+- Broken Function Level Authorization (BFLA)
 
-- **SAST** (`backend/sast_engine/`): LangGraph, AWS Bedrock via `boto3` (Ollama fallback), tree-sitter parsers (Java, Python, TypeScript), Semgrep, NetworkX, PyYAML, BeautifulSoup.
-- **DAST vs. SAST LLMs:** DAST uses only local Ollama. SAST uses Bedrock (Claude Haiku by default) with a $2 cutoff.
+With one authenticated identity, the scanner can compare authenticated behavior with Anonymous.
+Two or more identities are required for meaningful cross-user and cross-role testing.
 
-### Frontend (`frontend/`)
+## 10. Evidence-backed findings and reports
 
-| Area | Technology |
-|---|---|
-| Framework | Next.js 16.2.10, App Router, run with `--webpack` (`next dev --webpack`, `next build --webpack`) |
-| UI library | React 19.2.4 |
-| Language | TypeScript 5 |
-| Styling | Tailwind CSS 4 (`@tailwindcss/postcss`) |
-| Lint | ESLint 9 with `eslint-config-next` |
-| Tests | None configured (only `lint` and the Next build) |
-| Data access | Client components call `lib/api.ts`, which hits server-only Next route handlers in `app/api/**/route.ts`. Those use `lib/server-sast.ts` (`sastFetch`) to attach the bearer token and proxy to FastAPI. The browser never sees the token or talks to FastAPI directly |
-| Live updates | Polling every 2s (scan detail and logs), plus `fetch` stream reading for narration SSE |
-| Note | This Next version has breaking changes versus common training data. Check `node_modules/next/dist/docs/` before writing Next-specific code (per `frontend/AGENTS.md`) |
+The scanner separates AI judgment from security proof.
 
-### Runtime topology
+| Result | Meaning |
+| --- | --- |
+| Confirmed | A deterministic proving signal was observed |
+| Unverified | AI or partial evidence indicates a possible issue, but no proving signal was observed |
+| Passed | No proving signal or supported failure was observed |
+| Dismissed | A finding was reviewed and marked as not applicable or false positive |
 
-```
-Browser --> Next.js (React 19, App Router)
-              |  app/api/** route handlers (adds Bearer token)
-              v
-         FastAPI (Uvicorn) --> SQLAlchemy --> SQLite
-              |
-              +-- thread: LangGraph DAST pipeline --> Playwright/Chromium --> target app
-              |                                   \-> Ollama (localhost:11434, gpt-oss:20b)
-              +-- thread: narration LLM calls    --> Ollama
-```
+During and after the scan, the user can see:
 
-### Local prerequisites for a real DAST run
+- Live scan status and stage-by-stage timeline
+- Pages, forms, APIs, schemas, and identities discovered
+- Requests sent and requests blocked by safety policy
+- Passive, active, browser, and authorization results
+- Confirmed and unverified findings
+- Baseline and test evidence
+- Detector signals and reproduction guidance
+- OWASP, API Security, WSTG, and CWE mappings
+- Remediation guidance
+- Coverage limits and skipped or degraded checks
+- Model usage and cost
+- Changes since a previous comparable scan
 
-- Python 3.12 with `pip install -r backend/requirements.txt`
-- `python -m playwright install chromium`
-- Ollama running locally, with `ollama pull gpt-oss:20b`
-- Env: `USE_MOCK_ENGINE=false` (and `RUN_DAST=1`, the default)
-- Node.js for the frontend (`npm install`, then `npm run dev`)
+Reports are available in the application and can be exported in PDF, Excel, SARIF, and JUnit
+formats. Confirmed and unverified findings remain separate, and severity totals count confirmed
+issues only.
+
+## How AI is used
+
+AI is used where application context matters:
+
+- Classifying the application shape
+- Understanding login pages and choosing the next login action
+- Prioritizing crawl destinations
+- Selecting relevant checks for each endpoint
+- Constructing minimal test inputs
+- Explaining observed evidence
+- Producing a readable scan timeline
+
+AI does not directly control the network and does not independently confirm vulnerabilities.
+
+Every structured AI response is validated. If a response is invalid, the system makes one repair
+attempt and then uses a deterministic fallback. Model provider, model name, token usage, latency,
+fallbacks, and estimated cost are recorded for the scan.
+
+Different AI tasks may use different configured providers or models.
+
+## Rules and coverage
+
+The current catalog contains 59 checks grouped into five rule packs:
+
+- OWASP API Security Top 10
+- OWASP Web Application Top 10
+- OWASP Web Security Testing Guide
+- Thorough opt-in checks
+- Passive-only checks
+
+Each rule includes its standards mapping, severity, applicable endpoint characteristics,
+dependencies, detector signals, and remediation guidance.
+
+## Short version
+
+Agentic DAST uses a real browser and guarded API requests to understand and test a running
+application. It signs in as configured users, discovers pages and APIs, passively reviews observed
+traffic, compares normal requests with controlled test requests, verifies browser behavior, and
+checks access across identities. AI helps decide where and how to test, but deterministic safety
+controls govern every request and deterministic evidence determines whether a vulnerability is
+confirmed.

@@ -105,6 +105,8 @@ def evidence_to_dict(evidence: Evidence | None) -> dict[str, Any] | None:
         "test_excerpt": evidence.test_excerpt,
         "signals": [{"name": s.name, "detail": s.detail} for s in evidence.signals],
         "audit_ref": evidence.audit_ref,
+        "reproduction": evidence.reproduction,
+        "severity_source": evidence.severity_source,
     }
 
 
@@ -114,6 +116,8 @@ def evidence_from_dict(data: Mapping[str, Any]) -> Evidence:
         test_excerpt=data.get("test_excerpt") or "",
         signals=tuple(DetectorSignal(name=s["name"], detail=s.get("detail", "")) for s in data.get("signals") or ()),
         audit_ref=str(data.get("audit_ref") or ""),
+        reproduction=str(data.get("reproduction") or ""),
+        severity_source=str(data.get("severity_source") or ""),
     )
 
 

@@ -140,6 +140,39 @@ def test_get_narration_returns_full_evidence_not_just_the_last_60_lines(monkeypa
     assert step["evidence"][0] == "  line 0" and step["evidence"][-1] == "  line 119"
 
 
+def test_get_narration_shows_model_reasoning_in_visible_evidence(monkeypatch):
+    monkeypatch.setattr(dast_narration, "_llm_enabled", lambda: False)
+    lines = [
+        "### DAST: testing apis",
+        "    [thinking] We need to decide whether robustness applies.",
+        "    [thinking] We need to decide whether robustness applies.",
+        "    [planner] Chose SQL injection — reason: query parameter.",
+        "    [thinking] We need to decide whether robustness applies.",
+        "  [1/3] Testing GET /api/challenges",
+    ]
+
+    payload = dast_narration.get_narration("scratchpad-scan", "success", lines, None, {})
+    step = next(s for s in payload["steps"] if s["id"] == "testing")
+
+    assert step["evidence"] == lines[1:]
+
+
+def test_get_narration_includes_one_compact_session_verdict(monkeypatch):
+    monkeypatch.setattr(dast_narration, "_llm_enabled", lambda: False)
+    lines = [
+        "### DAST: crawling",
+        "[4/4] Starting crawl...",
+        "    POST http://localhost:4200/api/auth/logout  (status 204, )",
+        "    [session_lost] Bounced back to a login-shaped page after visiting http://localhost:4200/home",
+    ]
+
+    payload = dast_narration.get_narration("session-verdict-scan", "success", lines, None, {})
+
+    assert payload["assessment"]["verdict"] == "true_positive"
+    assert payload["assessment"]["claim"] == "The signed-in session was lost"
+    assert "needs_review" not in str(payload["assessment"])
+
+
 # ---- running-step narration is bucketed, not re-called on every poll -----------------------------------------
 
 

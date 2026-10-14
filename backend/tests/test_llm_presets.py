@@ -34,6 +34,10 @@ def test_presets_include_local_ollama_models():
     assert "hf.co/bartowski/Qwen2-72B-Instruct-GGUF:Q4_K_M" in models
 
 
+def test_presets_include_openai_compatible_provider():
+    assert any(p.provider == "openai_compat" for p in LLM_PRESETS)
+
+
 def test_preset_for_model_lookup():
     p = preset_for_model("ollama", "starcoder2:3b")
     assert p is not None

@@ -920,3 +920,43 @@ def test_sbom_export_pdf_and_excel(client, project_id):
     xlsx = client.get(f"/scans/{scan_id}/export.xlsx", headers=HDR)
     assert xlsx.status_code == 200
     assert "spreadsheetml" in xlsx.headers["content-type"]
+
+
+def test_local_only_policy_refuses_external_llm_at_trigger(client, project_id):
+    client.patch(
+        f"/projects/{project_id}",
+        json={"llm_data_policy": "local_only", "llm_provider": "bedrock"},
+        headers=HDR,
+    )
+    resp = client.post(
+        "/scans", headers=HDR, json={"project_id": project_id, "commit_sha": "pol-1", "force": True},
+    )
+    assert resp.status_code == 400
+    assert "local_only" in resp.json()["detail"]
+
+
+def test_local_only_policy_allows_local_openai_compat_and_snapshots_it(client, project_id):
+    client.patch(
+        f"/projects/{project_id}",
+        json={
+            "llm_data_policy": "local_only",
+            "llm_provider": "openai_compat",
+            "llm_model": "qwen2.5-coder-32b",
+            "llm_base_url": "http://127.0.0.1:1234/v1",
+        },
+        headers=HDR,
+    )
+    resp = client.post(
+        "/scans", headers=HDR, json={"project_id": project_id, "commit_sha": "pol-2", "force": True},
+    )
+    assert resp.status_code == 202
+
+    from app.db import SessionLocal
+    from app.models import Scan
+
+    with SessionLocal() as db:
+        scan = db.get(Scan, resp.json()["scan_id"])
+        assert scan.llm_provider == "openai_compat"
+        assert scan.llm_base_url == "http://127.0.0.1:1234/v1"
+        assert scan.llm_data_policy == "local_only"
+        assert scan.fallback_llm_provider == "none"

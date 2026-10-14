@@ -102,7 +102,9 @@ export default function ProjectDetailPage() {
                 ? `${project.llm_model || "Ollama"} (Ollama)`
                 : project.llm_model && /haiku/i.test(project.llm_model)
                   ? "Claude Haiku (Bedrock)"
-                  : project.llm_model
+                  : project.llm_model && /sonnet/i.test(project.llm_model)
+                    ? "Claude Sonnet (Bedrock)"
+                    : project.llm_model
                     ? `${project.llm_model} (Bedrock)`
                     : "Claude Haiku (Bedrock)"}
             </p>

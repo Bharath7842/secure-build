@@ -28,7 +28,9 @@ def test_init_usage_defaults_to_bedrock_haiku(llm):
     assert usage["provider"] == "bedrock"
     assert usage["model"] == llm.BEDROCK_MODEL_ID
     assert usage["cost_cutoff_usd"] == pytest.approx(llm.LLM_COST_CUTOFF_USD)
-    assert usage["fallback_provider"] == "ollama"
+    # No Ollama dependency: past the cutoff, LLM work stops unless a
+    # fallback provider is configured explicitly.
+    assert usage["fallback_provider"] == "none"
 
 
 def test_init_usage_honors_ollama_provider_and_model(llm):
@@ -277,3 +279,171 @@ def test_usage_cost_summary_computes_bedrock_cost(llm):
     expected = llm.BEDROCK_INPUT_PRICE_PER_MTOK + llm.BEDROCK_OUTPUT_PRICE_PER_MTOK
     assert summary["cost_usd"] == pytest.approx(expected)
 
+
+
+def _openai_response(status=200, payload=None, text=""):
+    resp = MagicMock()
+    resp.status_code = status
+    resp.text = text
+    resp.json.return_value = payload or {}
+    if status >= 400:
+        resp.raise_for_status.side_effect = llm_http_error(status)
+    else:
+        resp.raise_for_status = MagicMock()
+    return resp
+
+
+def llm_http_error(status):
+    import requests
+
+    return requests.HTTPError(f"HTTP {status}")
+
+
+@pytest.fixture()
+def openai_llm(llm, monkeypatch):
+    monkeypatch.setattr(llm, "_RESPONSE_FORMAT_UNSUPPORTED", set())
+    monkeypatch.setattr(llm.time, "sleep", lambda _s: None)
+    return llm
+
+
+def test_call_openai_compat_posts_chat_completion_and_records_usage(openai_llm, monkeypatch):
+    llm = openai_llm
+    post = MagicMock(return_value=_openai_response(payload={
+        "choices": [{
+            "message": {"role": "assistant", "content": '<think>hmm</think>{"findings": []}'},
+            "finish_reason": "stop",
+        }],
+        "usage": {
+            "prompt_tokens": 120, "completion_tokens": 8,
+            "prompt_tokens_details": {"cached_tokens": 100},
+        },
+    }))
+    monkeypatch.setattr(llm.requests, "post", post)
+    usage = llm.init_usage(
+        "openai_compat", "qwen2.5-coder-32b",
+        provider_options={"openai_compat": {"base_url": "http://10.0.0.5:8000/v1/", "api_key": "sk-test"}},
+    )
+    text = llm.call_llm("system", "user", usage=usage, step="unit", json_mode=True)
+
+    # A local reasoning model's <think> preamble is stripped in JSON mode.
+    assert text == '{"findings": []}'
+    assert post.call_args.args[0] == "http://10.0.0.5:8000/v1/chat/completions"
+    assert post.call_args.kwargs["headers"]["Authorization"] == "Bearer sk-test"
+    body = post.call_args.kwargs["json"]
+    assert body["model"] == "qwen2.5-coder-32b"
+    assert body["response_format"] == {"type": "json_object"}
+    assert [m["role"] for m in body["messages"]] == ["system", "user"]
+    assert usage["input_tokens"] == 120
+    assert usage["output_tokens"] == 8
+    assert usage["cache_read_input_tokens"] == 100
+    assert usage["calls"][0]["provider"] == "openai_compat"
+    # Local endpoints are free by default.
+    assert usage["cost_usd"] == 0.0
+
+
+def test_call_openai_compat_retries_without_rejected_response_format(openai_llm, monkeypatch):
+    llm = openai_llm
+    ok = _openai_response(payload={
+        "choices": [{"message": {"content": '{"rules": []}'}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+    })
+    rejected = _openai_response(status=400, text='{"error": "response_format is not supported"}')
+    post = MagicMock(side_effect=[rejected, ok, ok])
+    monkeypatch.setattr(llm.requests, "post", post)
+    usage = llm.init_usage("openai_compat", "local-model")
+
+    assert llm.call_llm("s", "u", usage=usage, step="unit", json_mode=True) == '{"rules": []}'
+    assert "response_format" in post.call_args_list[0].kwargs["json"]
+    assert "response_format" not in post.call_args_list[1].kwargs["json"]
+    # Remembered per endpoint: the next call skips the doomed attempt.
+    llm.call_llm("s", "u2", usage=usage, step="unit", json_mode=True)
+    assert post.call_count == 3
+    assert "response_format" not in post.call_args_list[2].kwargs["json"]
+
+
+def test_call_openai_compat_does_not_retry_auth_errors(openai_llm, monkeypatch):
+    llm = openai_llm
+    post = MagicMock(return_value=_openai_response(status=401, text="invalid api key"))
+    monkeypatch.setattr(llm.requests, "post", post)
+    usage = llm.init_usage("openai_compat", "m")
+    with pytest.raises(RuntimeError, match="HTTP 401"):
+        llm.call_llm("s", "u", usage=usage, step="unit")
+    assert post.call_count == 1
+
+
+def test_call_openai_compat_retries_server_errors(openai_llm, monkeypatch):
+    llm = openai_llm
+    ok = _openai_response(payload={"choices": [{"message": {"content": "hi"}}]})
+    post = MagicMock(side_effect=[_openai_response(status=503), ok])
+    monkeypatch.setattr(llm.requests, "post", post)
+    usage = llm.init_usage("openai_compat", "m")
+    assert llm.call_llm("s", "u", usage=usage, step="unit") == "hi"
+    assert post.call_count == 2
+    # No usage block in the response: tokens are estimated, not dropped.
+    assert usage["estimated_tokens"] is True
+
+
+def test_openai_compat_price_is_configurable(openai_llm, monkeypatch):
+    llm = openai_llm
+    monkeypatch.setattr(llm, "OPENAI_COMPAT_INPUT_PRICE_PER_MTOK", 2.0)
+    monkeypatch.setattr(llm, "OPENAI_COMPAT_OUTPUT_PRICE_PER_MTOK", 8.0)
+    usage = llm.init_usage("openai_compat", "gpt-hosted")
+    llm.record_llm_usage(usage, "step", 1_000_000, 1_000_000)
+    assert usage["cost_usd"] == pytest.approx(10.0)
+
+
+def test_call_llm_rejects_unknown_provider(llm, monkeypatch):
+    called = []
+    monkeypatch.setattr(llm, "_call_bedrock", lambda *a, **k: called.append(1) or "x")
+    with pytest.raises(ValueError, match="unknown LLM provider"):
+        llm.call_llm("s", "u", provider="openai", model="gpt", step="unit")
+    # Never silently routed to Bedrock.
+    assert called == []
+
+
+def test_call_llm_without_fallback_stops_at_cutoff(llm, monkeypatch):
+    called = []
+    monkeypatch.setattr(llm, "_call_bedrock", lambda *a, **k: called.append(1) or "x")
+    usage = llm.init_usage("bedrock", llm.BEDROCK_MODEL_ID, cost_cutoff_usd=2.0)
+    usage["cost_usd"] = 2.0
+    with pytest.raises(llm.LlmBudgetExhausted):
+        llm.call_llm("s", "u", usage=usage, step="unit")
+    assert called == []
+    assert usage["budget_exhausted"] is True
+    assert llm.usage_cost_summary(usage)["budget_exhausted"] is True
+
+
+def test_local_only_policy_refuses_external_providers(llm, monkeypatch):
+    monkeypatch.setattr(llm, "_call_bedrock", lambda *a, **k: "x")
+    usage = llm.init_usage("bedrock", llm.BEDROCK_MODEL_ID, data_policy="local_only")
+    with pytest.raises(llm.LlmPolicyViolation, match="Bedrock"):
+        llm.call_llm("s", "u", usage=usage, step="unit")
+
+    remote = llm.init_usage(
+        "openai_compat", "gpt-4o", data_policy="local_only",
+        provider_options={"openai_compat": {"base_url": "https://api.openai.com/v1"}},
+    )
+    with pytest.raises(llm.LlmPolicyViolation, match="api.openai.com"):
+        llm.call_llm("s", "u", usage=remote, step="unit")
+
+
+def test_local_only_policy_allows_local_openai_compat(llm, monkeypatch):
+    monkeypatch.setattr(llm, "_call_openai_compat", lambda *a, **k: "local ok")
+    usage = llm.init_usage(
+        "openai_compat", "m", data_policy="local_only",
+        provider_options={"openai_compat": {"base_url": "http://127.0.0.1:1234/v1"}},
+    )
+    assert llm.call_llm("s", "u", usage=usage, step="unit") == "local ok"
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("http://localhost:8000/v1", True),
+    ("http://127.0.0.1:1234/v1", True),
+    ("http://192.168.1.20:8000/v1", True),
+    ("http://gpu-box.local:8000/v1", True),
+    ("https://api.openai.com/v1", False),
+    ("http://8.8.8.8/v1", False),
+    ("", False),
+])
+def test_is_local_base_url(llm, url, expected):
+    assert llm.is_local_base_url(url) is expected

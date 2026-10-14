@@ -206,6 +206,8 @@ class Evidence:
     test_excerpt: str
     signals: Sequence[DetectorSignal] = ()
     audit_ref: str = ""
+    reproduction: str = ""
+    severity_source: str = ""
 
 
 @dataclass(frozen=True)

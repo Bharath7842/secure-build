@@ -1,3 +1,10 @@
+/** SAST LLM backends (backend app/services/llm_policy.py). */
+export type SastLlmProvider = "bedrock" | "openai_compat" | "ollama";
+/** "none": stop LLM work at the cost cutoff instead of switching providers. */
+export type SastFallbackProvider = SastLlmProvider | "none";
+/** "local_only" refuses any provider that would send code off localhost/private networks. */
+export type LlmDataPolicy = "allow_external" | "local_only";
+
 export interface Project {
   id: string;
   name: string;
@@ -16,9 +23,16 @@ export interface Project {
   max_files_to_scan: number;
   max_derived_regex_rules: number;
   max_derived_semgrep_rules: number;
-  llm_provider: "bedrock" | "ollama";
+  llm_provider: SastLlmProvider;
   llm_model: string;
-  fallback_llm_provider?: "bedrock" | "ollama" | string | null;
+  /** openai_compat endpoint; null = the server's default. */
+  llm_base_url?: string | null;
+  llm_data_policy?: LlmDataPolicy;
+  /** The API key itself is write-only and never returned. */
+  llm_api_key_set?: boolean;
+  /** Agentic-hunt patterns promoted on earlier scans; run with the catalog on later ones. */
+  learned_rules?: Array<{ id: string; title?: string; cwe?: string; pattern: string; learned_from_scan_id?: string; last_confirmed_at?: string }>;
+  fallback_llm_provider?: SastFallbackProvider | string | null;
   fallback_llm_model?: string | null;
   owasp_mode: "top10" | "top15" | "custom";
   owasp_urls: string[];
@@ -64,9 +78,13 @@ export interface ProjectCreateInput {
   max_files_to_scan?: number;
   max_derived_regex_rules?: number;
   max_derived_semgrep_rules?: number;
-  llm_provider?: "bedrock" | "ollama";
+  llm_provider?: SastLlmProvider;
   llm_model?: string;
-  fallback_llm_provider?: "bedrock" | "ollama";
+  llm_base_url?: string | null;
+  llm_data_policy?: LlmDataPolicy;
+  /** Write-only. Omit to keep the stored key; "" clears it. */
+  llm_api_key?: string;
+  fallback_llm_provider?: SastFallbackProvider;
   fallback_llm_model?: string;
   owasp_mode?: "top10" | "top15" | "custom";
   owasp_urls?: string[];
@@ -135,9 +153,9 @@ export interface ScanCreateInput {
   force?: boolean;
   /** When false, skip the LLM tech-stack call and use path heuristics only. */
   use_llm?: boolean;
-  llm_provider?: "bedrock" | "ollama";
+  llm_provider?: SastLlmProvider;
   llm_model?: string;
-  fallback_llm_provider?: "bedrock" | "ollama";
+  fallback_llm_provider?: SastFallbackProvider;
   fallback_llm_model?: string;
 }
 
@@ -412,6 +430,13 @@ export interface UsageStepSummary {
   /** DAST only: calls that used the task's deterministic fallback / needed a repair attempt. */
   fallbacks?: number;
   repairs?: number;
+  /** SAST: input tokens served from / written to the provider prompt cache (already in input_tokens). */
+  cache_read_input_tokens?: number;
+  cache_write_input_tokens?: number;
+  /** SAST: responses reused from an earlier scan's result cache (no call made). */
+  result_cache_hits?: number;
+  /** SAST: responses cut off at max_tokens. */
+  truncated?: number;
 }
 
 export interface UsageSummary {
@@ -420,6 +445,8 @@ export interface UsageSummary {
   active_provider?: string;
   active_model?: string;
   fallback_switched?: boolean;
+  /** SAST: the cost cutoff was reached with no fallback provider, so remaining LLM work was skipped. */
+  budget_exhausted?: boolean;
   cost_cutoff_usd?: number | null;
   input_tokens: number;
   output_tokens: number;
@@ -436,6 +463,12 @@ export interface UsageSummary {
   estimated?: boolean;
   input_price_per_mtok?: number;
   output_price_per_mtok?: number;
+  /** SAST: prompt-cache volume — a billing discount, already counted in input_tokens. */
+  cache_read_input_tokens?: number;
+  cache_write_input_tokens?: number;
+  /** SAST: LLM responses reused from earlier scans of this project instead of being re-sent. */
+  result_cache_hits?: number;
+  result_cache_saved_tokens?: number;
 }
 
 export interface ScanResults {
@@ -501,6 +534,7 @@ export interface DastApiCheck {
   target: string;
   location?: string;
   payload: string;
+  proposed_payload?: string;
   expected_signal: string;
   request?: DastTraffic | null;
   response: {
@@ -584,6 +618,7 @@ export interface DastDiscovery {
   identities?: DastIdentityResult[];
   passive_analysis?: DastPassiveSummary;
   active_testing?: DastActiveSummary;
+  browser_probe?: { probes: number; marker_submits: number; executed: number; findings: number; skipped?: string };
   authorization?: DastAuthorizationSummary;
   skipped_degraded?: DastSkippedCheck[];
   authentication_failed?: string;
@@ -610,6 +645,21 @@ export interface DastNarrationStep {
   narration_pending?: boolean;
 }
 
+export interface DastSessionAssessment {
+  claim: string;
+  verdict: "true_positive" | "false_positive";
+  why: string;
+  evidence: string[];
+  reason_code: string;
+  confidence: number | null;
+  source: "llm" | "rules";
+  provider: string | null;
+  model: string | null;
+  event_order: number;
+  fingerprint: string;
+  algorithm_version: string;
+}
+
 export interface DastNarration {
   scan_id: string;
   status: string;
@@ -618,6 +668,7 @@ export interface DastNarration {
   steps: DastNarrationStep[];
   pending: boolean;
   llm_enabled: boolean;
+  assessment?: DastSessionAssessment | null;
 }
 
 // ===========================================================================
@@ -814,6 +865,8 @@ export interface DastEvidence {
   signals: DastSignal[];
   /** Sequence number of the request in the scan's audit log. */
   audit_ref: string | null;
+  reproduction?: string | null;
+  severity_source?: string | null;
   /** What was sent for this finding (audit log + snippet payload). */
   request?: DastTraffic | null;
 }

@@ -47,6 +47,24 @@ export default function ScanUsagePanel({ usage }: ScanUsagePanelProps) {
           </p>
         )}
 
+        {((usage.result_cache_hits ?? 0) > 0 || (usage.cache_read_input_tokens ?? 0) > 0) && (
+          <p className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+            {(usage.result_cache_hits ?? 0) > 0 && (
+              <>
+                {formatTokenCount(usage.result_cache_hits ?? 0)} response
+                {usage.result_cache_hits === 1 ? "" : "s"} reused from earlier scans of unchanged
+                code (~{formatTokenCount(usage.result_cache_saved_tokens ?? 0)} tokens not re-sent).{" "}
+              </>
+            )}
+            {(usage.cache_read_input_tokens ?? 0) > 0 && (
+              <>
+                {formatTokenCount(usage.cache_read_input_tokens ?? 0)} input tokens were served from
+                the provider prompt cache at a reduced rate (still counted above).
+              </>
+            )}
+          </p>
+        )}
+
         {switched && (
           <p className="mt-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
             Bedrock spend reached the configured cutoff — remaining calls used{" "}
@@ -115,6 +133,9 @@ export default function ScanUsagePanel({ usage }: ScanUsagePanelProps) {
                     <td className="py-2.5 pr-4 font-medium text-[var(--ink)]">{stepLabel(step)}</td>
                     <td className="py-2.5 pr-4 text-right tabular-nums text-[var(--ink)]">
                       {row.calls}
+                      {(row.result_cache_hits ?? 0) > 0 && (
+                        <span className="text-[var(--muted)]"> +{row.result_cache_hits} reused</span>
+                      )}
                     </td>
                     <td className="py-2.5 pr-4 text-right tabular-nums text-[var(--muted)]">
                       {formatTokenCount(row.input_tokens)}

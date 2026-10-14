@@ -29,6 +29,14 @@ def _isolate_dast_screenshots(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "dast_screenshots_dir", str(tmp_path / "dast_screenshots"))
 
 
+@pytest.fixture(autouse=True)
+def _no_joern(tmp_path, monkeypatch):
+    """Point JOERN_HOME at an empty dir so a Joern install on the dev machine
+    never runs inside the offline suite (joern_runner.joern_available() is
+    then False and the Joern graph nodes skip). Live Joern tests undo this."""
+    monkeypatch.setenv("JOERN_HOME", str(tmp_path / "no-joern"))
+
+
 @pytest.fixture()
 def fake_target() -> FakeTarget:
     """A fresh in-process web target with an admin and a user account."""

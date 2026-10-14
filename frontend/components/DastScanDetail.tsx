@@ -66,17 +66,19 @@ function overallLabel(
   status: string,
   confirmed: number,
   dismissed: number,
+  unverified = 0,
   coverage: { complete: boolean; reasons: string[] } = { complete: true, reasons: [] },
 ): { title: string; detail: string; tone: "ok" | "warn" | "bad" | "info" } {
   if (status === "failed") return { title: "Scan failed", detail: "The scan did not finish, so results are incomplete.", tone: "bad" };
   if (status === "cancelled") return { title: "Scan stopped", detail: "Requests already sent cannot be recalled. Findings so far are kept.", tone: "warn" };
   if (status === "queued" || status === "running") return { title: "Scan in progress", detail: "Live counts below update as pages, tests and findings arrive.", tone: "info" };
   if (!coverage.complete) {
-    const base = confirmed > 0 ? `${confirmed} confirmed${dismissed > 0 ? ` · ${dismissed} dismissed` : ""}. ` : "";
+    const base = confirmed > 0 ? `${confirmed} confirmed${unverified > 0 ? ` · ${unverified} unverified` : ""}${dismissed > 0 ? ` · ${dismissed} false positives` : ""}. ` : "";
     return { title: "Partial coverage", detail: `${base}${coverage.reasons.join("; ")}.`, tone: "warn" };
   }
-  if (confirmed > 0) return { title: "Issues found", detail: `${confirmed} confirmed${dismissed > 0 ? ` · ${dismissed} dismissed` : ""}`, tone: "bad" };
-  if (dismissed > 0) return { title: "No confirmed issues", detail: `${dismissed} check${dismissed === 1 ? "" : "s"} dismissed as false positive.`, tone: "ok" };
+  if (confirmed > 0) return { title: "Issues found", detail: `${confirmed} confirmed${unverified > 0 ? ` · ${unverified} unverified` : ""}${dismissed > 0 ? ` · ${dismissed} false positives` : ""}`, tone: "bad" };
+  if (unverified > 0) return { title: "Review needed", detail: `${unverified} unverified result${unverified === 1 ? "" : "s"}${dismissed > 0 ? ` · ${dismissed} false positives` : ""}`, tone: "warn" };
+  if (dismissed > 0) return { title: "No confirmed issues", detail: `${dismissed} false positive${dismissed === 1 ? "" : "s"}.`, tone: "ok" };
   return { title: "No confirmed issues", detail: "The scan finished and did not confirm any vulnerabilities.", tone: "ok" };
 }
 
@@ -182,6 +184,23 @@ function DastAnalysisCard({
   );
 }
 
+function DastBrowserCard({ discovery, active, onOpen }: { discovery: DastDiscovery; active: boolean; onOpen: () => void }) {
+  const probe = discovery.browser_probe;
+  const pages = discovery.pages.length;
+  const forms = discovery.forms_count;
+  return (
+    <AgentArtifactCard
+      icon={iconSvg(<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 8h10M7 12h6M7 16h8" /></>)}
+      tone={(probe?.findings ?? 0) > 0 ? "red" : "blue"}
+      title="Web page and form testing"
+      subtitle={`${pages} pages · ${forms} forms · ${probe?.probes ?? 0} inputs probed · ${probe?.findings ?? 0} browser findings`}
+      active={active}
+      onClick={onOpen}
+      ariaLabel="Open web page and form testing"
+    />
+  );
+}
+
 function iconSvg(paths: React.ReactNode) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -193,12 +212,13 @@ function iconSvg(paths: React.ReactNode) {
 function DastFindingsCard({ summary, active, onOpen }: { summary: DastSummary | null; active: boolean; onOpen: () => void }) {
   const confirmed = summary?.findings.by_verdict.true_positive ?? 0;
   const dismissed = summary?.findings.by_verdict.false_positive ?? 0;
+  const unverified = summary?.findings.by_verdict.unverified ?? 0;
   return (
     <AgentArtifactCard
       icon={iconSvg(<><path d="M12 9v4" /><path d="M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /></>)}
       tone={confirmed > 0 ? "red" : "emerald"}
       title="Findings"
-      subtitle={`${confirmed} confirmed${dismissed > 0 ? ` · ${dismissed} dismissed` : ""}`}
+      subtitle={`${confirmed} confirmed${unverified > 0 ? ` · ${unverified} unverified` : ""}${dismissed > 0 ? ` · ${dismissed} false positives` : ""}`}
       active={active}
       onClick={onOpen}
       ariaLabel="Open findings"
@@ -572,12 +592,12 @@ export default function DastScanDetail({ scanId }: DastScanDetailProps) {
 
   const terminal = status ? isTerminalStatus(status.status) : false;
   const confirmedCount = counters?.findings.by_verdict.true_positive ?? 0;
-  const dismissedCount =
-    (counters?.findings.by_verdict.false_positive ?? 0) + (counters?.findings.by_verdict.unverified ?? 0);
+  const dismissedCount = counters?.findings.by_verdict.false_positive ?? 0;
+  const unverifiedCount = counters?.findings.by_verdict.unverified ?? 0;
 
   useEffect(() => {
     if (autoOpened || !terminal) return;
-    if (confirmedCount + dismissedCount > 0) {
+    if (confirmedCount + dismissedCount + unverifiedCount > 0) {
       setSidePanel("findings");
       setAutoOpened(true);
     } else if ((discovery?.api_analysis?.length ?? 0) > 0) {
@@ -587,7 +607,7 @@ export default function DastScanDetail({ scanId }: DastScanDetailProps) {
       setSidePanel("summary");
       setAutoOpened(true);
     }
-  }, [autoOpened, terminal, confirmedCount, dismissedCount, discovery]);
+  }, [autoOpened, terminal, confirmedCount, dismissedCount, unverifiedCount, discovery]);
 
   if (notFound) {
     return (
@@ -605,7 +625,7 @@ export default function DastScanDetail({ scanId }: DastScanDetailProps) {
     return <p className="px-12 py-10 text-sm text-[var(--muted)]">Loading scan…</p>;
   }
 
-  const overall = overallLabel(status.status, confirmedCount, dismissedCount, coverageNarrative(discovery));
+  const overall = overallLabel(status.status, confirmedCount, dismissedCount, unverifiedCount, coverageNarrative(discovery));
   const llmLabel =
     dastRoutingLabel(dastRouting) ||
     (scanRecord?.llm_provider || scanRecord?.llm_model
@@ -695,9 +715,6 @@ export default function DastScanDetail({ scanId }: DastScanDetailProps) {
                   scanId={scanId}
                   pages={discovery?.pages}
                   targetUrl={discovery?.target_url ?? scanRecord?.git_url}
-                  apiAnalysis={discovery?.api_analysis}
-                  inventory={discovery?.inventory}
-                  apiCalls={discovery?.api_calls}
                   discoveryCard={
                     discovery ? (
                       <DastResultCard
@@ -714,6 +731,11 @@ export default function DastScanDetail({ scanId }: DastScanDetailProps) {
                         active={sidePanel === "analysis"}
                         onOpen={() => setSidePanel("analysis")}
                       />
+                    ) : null
+                  }
+                  browserCard={
+                    discovery && (discovery.pages.length > 0 || discovery.forms_count > 0) ? (
+                      <DastBrowserCard discovery={discovery} active={sidePanel === "discovery"} onOpen={() => setSidePanel("discovery")} />
                     ) : null
                   }
                   findingsCard={

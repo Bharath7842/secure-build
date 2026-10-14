@@ -33,6 +33,7 @@ from app.auth import verify_bearer
 from app.config import settings
 from app.db import get_db
 from app.models import Project, utcnow
+from app.services import git_token
 
 router = APIRouter(prefix="/git-auth", tags=["git-auth"])
 
@@ -276,7 +277,7 @@ def _resolve_token(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Project is not connected to {provider}.",
             )
-        return project.git_access_token
+        return git_token.fresh_access_token(project)
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="Provide either connection_id or project_id.",

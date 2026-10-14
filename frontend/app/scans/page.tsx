@@ -28,6 +28,7 @@ function llmLabel(scan: Scan): string {
   }
   if (provider === "bedrock") {
     if (model && /haiku/i.test(model)) return "Claude Haiku (Bedrock)";
+    if (model && /sonnet/i.test(model)) return "Claude Sonnet (Bedrock)";
     return model ? `${model} (Bedrock)` : "Bedrock";
   }
   if (provider) {

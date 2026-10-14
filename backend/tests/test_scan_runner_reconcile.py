@@ -134,7 +134,7 @@ def _make_fake_agent(*, calls=None, raise_error=False):
         llm_file_scan = _LlmFileScan
 
         @staticmethod
-        def init_usage(provider, model, fallback_provider=None, fallback_model=None):
+        def init_usage(provider, model, fallback_provider=None, fallback_model=None, **_options):
             return {}
 
     return _Agent()

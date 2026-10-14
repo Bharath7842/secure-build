@@ -68,4 +68,6 @@ def build_evidence_row(finding_id: str, evidence: Mapping[str, Any]) -> DastEvid
         test_excerpt=cap_excerpt(evidence.get("test_excerpt")),
         signals=evidence.get("signals"),
         audit_ref=evidence.get("audit_ref"),
+        reproduction=cap_excerpt(evidence.get("reproduction"), 2000),
+        severity_source=evidence.get("severity_source"),
     )

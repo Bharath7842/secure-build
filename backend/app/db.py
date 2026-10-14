@@ -45,6 +45,12 @@ def _run_light_migrations(engine) -> None:
         if "fallback_llm_model" not in existing_cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE scans ADD COLUMN fallback_llm_model VARCHAR(200)"))
+        if "llm_base_url" not in existing_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE scans ADD COLUMN llm_base_url VARCHAR(500)"))
+        if "llm_data_policy" not in existing_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE scans ADD COLUMN llm_data_policy VARCHAR(20)"))
         if "triggered_by" not in existing_cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE scans ADD COLUMN triggered_by VARCHAR(20)"))
@@ -100,6 +106,15 @@ def _run_light_migrations(engine) -> None:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE findings ALTER COLUMN owasp_category TYPE VARCHAR(64)"))
 
+    if "dast_evidence" in table_names:
+        evidence_cols = {col["name"] for col in inspector.get_columns("dast_evidence")}
+        if "reproduction" not in evidence_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE dast_evidence ADD COLUMN reproduction TEXT"))
+        if "severity_source" not in evidence_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE dast_evidence ADD COLUMN severity_source VARCHAR(40)"))
+
     if "projects" in table_names:
         existing_cols = {col["name"] for col in inspector.get_columns("projects")}
         if "max_files_to_scan" not in existing_cols:
@@ -144,6 +159,23 @@ def _run_light_migrations(engine) -> None:
                     text(
                         "ALTER TABLE projects ADD COLUMN fallback_llm_model "
                         "VARCHAR(200) DEFAULT 'granite-code:3b'"
+                    )
+                )
+        if "llm_base_url" not in existing_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE projects ADD COLUMN llm_base_url VARCHAR(500)"))
+        if "llm_api_key" not in existing_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE projects ADD COLUMN llm_api_key VARCHAR(500)"))
+        if "learned_rules" not in existing_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE projects ADD COLUMN learned_rules JSON"))
+        if "llm_data_policy" not in existing_cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE projects ADD COLUMN llm_data_policy "
+                        "VARCHAR(20) DEFAULT 'allow_external'"
                     )
                 )
         if "max_derived_regex_rules" not in existing_cols:

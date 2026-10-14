@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useId, useState, type FormEvent } from "react";
 
 import DastIdentitiesEditor, { identityProblems, newIdentity, toIdentityInput, type IdentityDraft } from "@/components/DastIdentitiesEditor";
 import DastModelPicker from "@/components/DastModelPicker";
@@ -18,15 +18,15 @@ import type {
 } from "@/lib/types";
 
 const NEW_PROJECT_VALUE = "__new__";
-/** Local Juice Shop practice target — pre-filled so a scan can start without retyping. */
-const PRACTICE_TARGET_URL = "http://127.0.0.1:3001";
+/** Local Employee Management practice target — pre-filled so a scan can start without retyping. */
+const PRACTICE_TARGET_URL = "http://localhost:4200";
 const PRACTICE_IDENTITY = {
-  label: "test",
+  label: "Employee Management demo user",
   role: "user" as const,
   method: "form" as const,
-  loginUrl: "http://127.0.0.1:3001/#/login",
-  username: "tester@example.test",
-  password: "Test1234!",
+  loginUrl: "http://localhost:4200/login",
+  username: "Morgan",
+  password: "pwd1",
 };
 const INTENSITIES: { value: DastIntensity; label: string }[] = [
   { value: "light", label: "Light" },
@@ -49,7 +49,7 @@ export function targetUrlProblem(value: string): string | null {
     if (!url.hostname) return "The address needs a host name.";
     return null;
   } catch {
-    return "That is not a valid URL (for example http://localhost:3000).";
+    return "That is not a valid URL (for example http://localhost:4200).";
   }
 }
 
@@ -73,16 +73,10 @@ export default function DastScanForm({ projectId, onSubmit }: DastScanFormProps)
 
   const [targetUrl, setTargetUrl] = useState(PRACTICE_TARGET_URL);
   const [targetTouched, setTargetTouched] = useState(false);
-  const [disposable, setDisposable] = useState(true);
   const [authorized, setAuthorized] = useState(true);
 
   const [intensity, setIntensity] = useState<DastIntensity>("light");
-  const [safeMode, setSafeMode] = useState(true);
-  const [rateLimit, setRateLimit] = useState("5");
-  const [maxDepth, setMaxDepth] = useState("2");
-  const [maxPages, setMaxPages] = useState("5");
   const [headless, setHeadless] = useState(true);
-  const [markerPosts, setMarkerPosts] = useState(false);
 
   const [identities, setIdentities] = useState<IdentityDraft[]>(() => [newIdentity(PRACTICE_IDENTITY)]);
   const [rulePacks, setRulePacks] = useState<string[] | null>(null);
@@ -121,7 +115,6 @@ export default function DastScanForm({ projectId, onSubmit }: DastScanFormProps)
     api.dast.settings.get().then((s) => {
       if (!active || !s) return;
       setSettings(s);
-      if (s.browser_marker_posts) setMarkerPosts(true);
     }).catch(() => undefined);
     api.dast.providers().then((p) => active && setProviders(p)).catch(() => undefined);
     return () => {
@@ -145,20 +138,10 @@ export default function DastScanForm({ projectId, onSubmit }: DastScanFormProps)
   }
 
   const urlProblem = targetUrlProblem(targetUrl);
-  const rateLimits = settings?.limits.rate_limit_per_sec;
-  const rateProblem = useMemo(() => {
-    if (!rateLimit.trim()) return null;
-    const n = Number(rateLimit);
-    if (!Number.isFinite(n) || n <= 0) return "Enter a number greater than zero.";
-    if (rateLimits && (n < rateLimits.min || n > rateLimits.max)) return `Use a value between ${rateLimits.min} and ${rateLimits.max}.`;
-    return null;
-  }, [rateLimit, rateLimits]);
-  const unsafeNeedsDisposable = !safeMode && !disposable;
-  const markerNeedsDisposable = markerPosts && !disposable;
   const identityIssues = identities.map((d) => identityProblems(d, identities));
   const authenticated = identities.length;
 
-  const canSubmit = Boolean(targetUrl.trim()) && !urlProblem && authorized && !unsafeNeedsDisposable && !markerNeedsDisposable && !submitting;
+  const canSubmit = Boolean(targetUrl.trim()) && !urlProblem && authorized && !submitting;
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -169,10 +152,7 @@ export default function DastScanForm({ projectId, onSubmit }: DastScanFormProps)
       return setError("Select a project to scan.");
     }
     if (!targetUrl.trim() || urlProblem) return setError(urlProblem ?? "Target URL is required.");
-    if (rateProblem) return setError(`Request rate limit: ${rateProblem}`);
     if (identityIssues.some((p) => Object.keys(p).length > 0)) return setError("Fix the highlighted identity fields.");
-    if (unsafeNeedsDisposable) return setError("State-changing methods can only be enabled for a target marked as disposable.");
-    if (markerNeedsDisposable) return setError("Stored XSS marker submits can only be enabled for a target marked as disposable.");
     if (!authorized) return setError("Confirm that you are authorized to test this target.");
 
     setError(null);
@@ -197,14 +177,10 @@ export default function DastScanForm({ projectId, onSubmit }: DastScanFormProps)
           target_url: targetUrl.trim(),
           authorized,
           intensity,
-          method_policy: safeMode ? "safe" : "opt_in_mutating",
-          target_disposable: disposable,
-          browser_marker_posts: markerPosts,
+          method_policy: "opt_in_mutating",
+          target_disposable: true,
+          browser_marker_posts: true,
           headless,
-          ...(rateLimit.trim() ? { rate_limit_per_sec: Number(rateLimit) } : {}),
-          ...(maxDepth.trim() ? { max_depth: Number(maxDepth) } : {}),
-          ...(maxPages.trim() ? { max_pages: Number(maxPages) } : {}),
-          max_targets: 5,
           ...(identities.length > 0 ? { identities: identities.map(toIdentityInput) } : {}),
           ...(rulePacks ? { rule_packs: rulePacks } : {}),
           ...(Object.keys(modelRouting).length > 0 ? { model_routing: modelRouting } : {}),
@@ -298,7 +274,7 @@ export default function DastScanForm({ projectId, onSubmit }: DastScanFormProps)
             onChange={(event) => setTargetUrl(event.target.value)}
             onBlur={() => setTargetTouched(true)}
             className={inputClass}
-            placeholder="http://localhost:3000"
+            placeholder="http://localhost:4200"
             aria-invalid={Boolean(urlProblem) && (targetTouched || showErrors)}
             aria-describedby={`dast-target-hint${urlProblem && (targetTouched || showErrors) ? " dast-target-error" : ""}`}
             required
@@ -312,18 +288,6 @@ export default function DastScanForm({ projectId, onSubmit }: DastScanFormProps)
             </p>
           )}
         </div>
-
-        <label className="flex items-start gap-2 text-sm text-[var(--ink)]">
-          <input
-            type="checkbox"
-            checked={disposable}
-            onChange={(event) => setDisposable(event.target.checked)}
-            className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[var(--accent)] focus:ring-[var(--accent)]/30"
-          />
-          <span>
-            This is a disposable target <span className="text-[var(--muted)]">— a test or practice instance I can safely change or break. Needed to allow state-changing methods.</span>
-          </span>
-        </label>
 
         <label className="flex items-start gap-2 text-sm text-[var(--ink)]">
           <input
@@ -344,7 +308,7 @@ export default function DastScanForm({ projectId, onSubmit }: DastScanFormProps)
 
       <section aria-labelledby={`${uid}-scope`} className="space-y-5">
         <SectionLabel>
-          <span id={`${uid}-scope`}>Scope &amp; safety</span>
+          <span id={`${uid}-scope`}>Scan coverage</span>
         </SectionLabel>
 
         <div>
@@ -361,72 +325,6 @@ export default function DastScanForm({ projectId, onSubmit }: DastScanFormProps)
           <p className="mt-1 text-xs text-[var(--muted)]">{presets ? describePreset(presets[intensity]) : "Loading what each preset means…"}</p>
         </div>
 
-        <div
-          className={`rounded-md border px-4 py-3 ${safeMode ? "border-emerald-200 bg-emerald-50/60" : "border-amber-300 bg-amber-50"}`}
-          role="group"
-          aria-labelledby={`${uid}-safe`}
-        >
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p id={`${uid}-safe`} className="text-sm font-medium text-[var(--ink)]">
-              Safe mode is {safeMode ? "ON" : "OFF"}
-              <span className="ml-2 font-normal text-[var(--muted)]">
-                {safeMode ? "Only read-only methods (GET, HEAD, OPTIONS) are sent." : "State-changing methods (POST, PUT, PATCH, DELETE) may be sent."}
-              </span>
-            </p>
-            <button
-              type="button"
-              onClick={() => setSafeMode((v) => !v)}
-              className="agent-focus-ring rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-[var(--ink)] hover:bg-slate-50"
-            >
-              {safeMode ? "Allow state-changing methods…" : "Turn safe mode back on"}
-            </button>
-          </div>
-          {!safeMode && (
-            <div role="alert" className="mt-3 space-y-1 text-sm text-amber-900">
-              <p className="font-medium">Warning: this scan can create, change and delete data.</p>
-              <p>
-                Only do this against a disposable target. Checks may submit forms, call write endpoints and replay requests as other
-                roles. {unsafeNeedsDisposable && <strong>Mark the target as disposable above to continue.</strong>}
-              </p>
-            </div>
-          )}
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <div>
-            <label htmlFor="dast-rate" className="block text-sm font-medium text-[var(--ink)]">
-              Request rate limit <span className="font-normal text-[var(--muted)]">(per second)</span>
-            </label>
-            <input
-              id="dast-rate"
-              inputMode="decimal"
-              value={rateLimit}
-              onChange={(e) => setRateLimit(e.target.value)}
-              className={inputClass}
-              placeholder={settings ? String(settings.rate_limit_per_sec) : "default"}
-              aria-invalid={Boolean(rateProblem)}
-              aria-describedby={rateProblem ? "dast-rate-error" : undefined}
-            />
-            {rateProblem && (
-              <p id="dast-rate-error" role="alert" className="mt-1 text-xs text-red-700">
-                {rateProblem}
-              </p>
-            )}
-          </div>
-          <div>
-            <label htmlFor="dast-depth" className="block text-sm font-medium text-[var(--ink)]">
-              Crawl depth
-            </label>
-            <input id="dast-depth" type="number" min={1} max={10} value={maxDepth} onChange={(e) => setMaxDepth(e.target.value)} className={inputClass} />
-          </div>
-          <div>
-            <label htmlFor="dast-pages" className="block text-sm font-medium text-[var(--ink)]">
-              Max pages
-            </label>
-            <input id="dast-pages" type="number" min={1} max={1000} value={maxPages} onChange={(e) => setMaxPages(e.target.value)} className={inputClass} />
-          </div>
-        </div>
-
         <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
           <input
             type="checkbox"
@@ -437,26 +335,9 @@ export default function DastScanForm({ projectId, onSubmit }: DastScanFormProps)
           Run the browser headless
         </label>
 
-        <label className="flex items-start gap-2 text-sm text-[var(--ink)]">
-          <input
-            type="checkbox"
-            checked={markerPosts}
-            onChange={(event) => setMarkerPosts(event.target.checked)}
-            className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[var(--accent)] focus:ring-[var(--accent)]/30"
-          />
-          <span>
-            Submit stored-XSS markers
-            <span className="block text-xs text-[var(--muted)]">
-              POSTs an inert marker into forms, then revisits pages. This writes data. Only for a disposable target. Safe mode stays on for every other request.
-            </span>
-          </span>
-        </label>
-        {markerPosts && (
-          <p role="alert" className="text-sm text-amber-900">
-            Warning: this scan will store a unique marker in the target. Mark the target disposable
-            {markerNeedsDisposable ? " — it is not disposable yet, so the scan cannot start." : "."}
-          </p>
-        )}
+        <p className="text-xs text-[var(--muted)]">
+          Stored-XSS form markers are submitted automatically for the approved disposable practice target, then checked again on crawled pages.
+        </p>
       </section>
 
       <DastIdentitiesEditor identities={identities} onChange={setIdentities} showErrors={showErrors} />

@@ -5,7 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useConfirmDialog } from "@/components/ConfirmDialog";
-import ScanAgentLog from "@/components/ScanAgentLog";
+import ScanAgentLog, { type SectionCard } from "@/components/ScanAgentLog";
 import ProjectStructurePanel from "@/components/ProjectStructurePanel";
 import AstSummaryCard from "@/components/AstSummaryCard";
 import AstSummaryPanel from "@/components/AstSummaryPanel";
@@ -25,7 +25,7 @@ import SbomScanDetail from "@/components/SbomScanDetail";
 import ScanStatusBadge from "@/components/ScanStatusBadge";
 import { ApiError, api } from "@/lib/api";
 import { hasUsageData } from "@/lib/formatUsage";
-import { extractProjectStructureTree } from "@/lib/parseScanLog";
+import { DEEP_SCAN_SECTION_RE, TRIAGE_SECTION_RE, extractProjectStructureTree } from "@/lib/parseScanLog";
 import { DESKTOP_SPLIT_QUERY, useMediaQuery } from "@/lib/useMediaQuery";
 import type { Project, Scan, ScanDiscovery, ScanLogLine, ScanResults, ScanStatus } from "@/lib/types";
 
@@ -362,7 +362,7 @@ export default function ScanDetailPage() {
   const hasDerivedRules = derivedRules.length > 0 || (derivedRulesSummary?.failed ?? 0) > 0;
 
   const sectionCards = useMemo(() => {
-    const cards: { afterLabel: string; node: ReactNode }[] = [];
+    const cards: SectionCard[] = [];
     if (discovery) {
       cards.push({
         afterLabel: "Mapping module risk",
@@ -403,9 +403,9 @@ export default function ScanDetailPage() {
     if (hasFindingsReport && effectiveReport) {
       cards.push({
         afterLabel: scanningLow
-          ? "Scanning MEDIUM/LOW files"
+          ? TRIAGE_SECTION_RE
           : scanningFindings
-            ? "Scanning CRITICAL/HIGH files"
+            ? DEEP_SCAN_SECTION_RE
             : "Generating report",
         node: (
           <div className="space-y-2">

@@ -63,8 +63,17 @@ CHUNK_LINE_BUDGET = 450
 OVERLAP_LINES = 30
 
 # Skeleton: compact whole-file map prepended to every chunk of a chunked file.
-SKELETON_MAX_LINES = 110
+# SKELETON_MAX_LINES bounds what is *collected* for the whole file; each chunk
+# then gets only the entries outside its own line range, capped at
+# SKELETON_CHUNK_MAX_CHARS (taint source/sink lines first) — lines already in
+# the chunk are never sent twice.
+SKELETON_MAX_LINES = 400
 SKELETON_LINE_MAX_CHARS = 200
+SKELETON_CHUNK_MAX_CHARS = 6_000
+
+# A leading license/copyright comment of at least this many lines is replaced
+# in the prompt by a one-line marker (original line numbers are preserved).
+LICENSE_HEADER_MIN_LINES = 3
 
 # Concurrency. MAX_INFLIGHT_LLM_CALLS bounds *total* simultaneous calls across
 # both pools, so nesting file workers and chunk workers cannot stampede a
@@ -172,9 +181,37 @@ SKIP_FINDING_SCAN_FILENAMES = frozenset({
     ".cvsignore", ".project", ".classpath", ".jsdtscope", ".prefs",
 })
 SKIP_FINDING_SCAN_DIR_SEGMENTS = frozenset({
-    "cvs", "xsd", "configuration", "config",
+    "cvs", "xsd",
     "node_modules", ".settings", ".idea",
 })
+# config/ and configuration/ directories hold legacy XML/data noise, but also
+# Java packages (com/acme/config/SecurityConfig.java — where Spring Security
+# rules usually live) and Spring Boot's own config/application.yml. Only the
+# data files there are excluded; see config_dir_file_is_scannable.
+CONFIG_DIR_SEGMENTS = frozenset({"config", "configuration"})
+_CONFIG_DIR_SOURCE_EXTS = frozenset({
+    ".java", ".kt", ".kts", ".groovy", ".scala",
+    ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+    ".cs", ".go", ".rb", ".php", ".rs", ".swift",
+})
+# Runtime configuration that can embed secrets — the same Spring Boot naming
+# convention the maven-java risk profile flags CRITICAL, plus .env files.
+_CONFIG_DIR_RUNTIME_RE = re.compile(
+    r"^(?:application|bootstrap)(?:-[\w.]+)?\.(?:properties|ya?ml)$|^\.env(?:\..*)?$",
+    re.IGNORECASE,
+)
+
+
+def config_dir_file_is_scannable(filename: str) -> bool:
+    """True for a file inside a config/ or configuration/ directory that is
+    source code or secret-bearing runtime config, not legacy data noise."""
+    name = Path(filename).name
+    return Path(name).suffix.lower() in _CONFIG_DIR_SOURCE_EXTS or bool(_CONFIG_DIR_RUNTIME_RE.match(name))
+
+
+def in_config_dir(rel_path: str) -> bool:
+    parts = Path(str(rel_path).replace("\\", "/")).parts[:-1]
+    return any(part.lower() in CONFIG_DIR_SEGMENTS for part in parts)
 SKIP_FINDING_SCAN_LOG4J_EXTS = frozenset({".xml", ".dtd"})
 
 _JAVA_CLASS_MAGIC = b"\xca\xfe\xba\xbe"
@@ -354,6 +391,66 @@ def chunk_file(text: str, lang: Optional[str]) -> List[Dict[str, Any]]:
     return chunks
 
 
+def build_file_skeleton_entries(
+    text: str, lang: Optional[str], *, max_lines: int = SKELETON_MAX_LINES,
+) -> List[Tuple[int, str, str]]:
+    """(line, kind, text) for imports, declarations, and every line that looks
+    like an untrusted-input source or a dangerous sink. kind is one of
+    "taint", "import", "decl"."""
+    lines = text.splitlines()
+    decl_re = _BOUNDARY_PATTERNS.get(lang or "")
+    picked: List[Tuple[int, str, str]] = []
+    for i, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        kind = ""
+        if i <= 60 and _IMPORT_RE.match(line):
+            kind = "import"
+        elif _TAINT_SOURCE_RE.search(line) or _TAINT_SINK_RE.search(line):
+            kind = "taint"
+        elif decl_re is not None and decl_re.match(line) and (
+            "(" in stripped or " class " in f" {stripped} " or "interface" in stripped
+        ):
+            kind = "decl"
+        if kind:
+            picked.append((i, kind, stripped[:SKELETON_LINE_MAX_CHARS]))
+            if len(picked) >= max_lines:
+                break
+    return picked
+
+
+_SKELETON_KIND_PRIORITY = {"taint": 0, "import": 1, "decl": 2}
+
+
+def skeleton_for_chunk(
+    entries: Sequence[Tuple[int, str, str]],
+    start_line: int,
+    end_line: int,
+    *,
+    max_chars: int = SKELETON_CHUNK_MAX_CHARS,
+) -> str:
+    """The skeleton as seen from one chunk: entries inside [start_line,
+    end_line] are dropped (the chunk already shows them), and if the rest
+    exceeds `max_chars`, taint lines are kept before imports and declarations.
+    Output stays in file order."""
+    outside = [e for e in entries if not (start_line <= e[0] <= end_line)]
+    budget = max_chars
+    chosen: List[Tuple[int, str, str]] = []
+    truncated = False
+    for entry in sorted(outside, key=lambda e: (_SKELETON_KIND_PRIORITY.get(e[1], 9), e[0])):
+        cost = len(entry[2]) + 8
+        if cost > budget:
+            truncated = True
+            continue
+        budget -= cost
+        chosen.append(entry)
+    out = [f"{line}: {text}" for line, _kind, text in sorted(chosen)]
+    if truncated:
+        out.append("… (skeleton truncated)")
+    return "\n".join(out)
+
+
 def build_file_skeleton(text: str, lang: Optional[str], *, max_lines: int = SKELETON_MAX_LINES) -> str:
     """A compact whole-file map: imports, declarations, and every line that
     looks like an untrusted-input source or a dangerous sink.
@@ -362,32 +459,62 @@ def build_file_skeleton(text: str, lang: Optional[str], *, max_lines: int = SKEL
     `stmt.executeQuery(sql)` has no way to know `sql` was built from
     `request.getParameter("id")` 300 lines earlier, and the model correctly but
     uselessly reports "cannot determine if input is trusted"."""
-    lines = text.splitlines()
-    picked: List[str] = []
-    truncated = False
-    for i, line in enumerate(lines, start=1):
-        stripped = line.strip()
-        if not stripped:
+    entries = build_file_skeleton_entries(text, lang, max_lines=max_lines)
+    out = [f"{line}: {stripped}" for line, _kind, stripped in entries]
+    if len(entries) >= max_lines:
+        out.append("… (skeleton truncated)")
+    return "\n".join(out)
+
+
+_LICENSE_RE = re.compile(r"licen[cs]e|copyright|\(c\)", re.IGNORECASE)
+_HASH_COMMENT_RE = re.compile(r"^\s*#(?:\s|$)")
+
+
+def leading_license_header_span(lines: Sequence[str]) -> Optional[Tuple[int, int]]:
+    """1-based (first, last) lines of a leading license/copyright comment
+    block, or None.
+
+    Recognises a /* ... */ or <!-- ... --> block, or a run of `//` or `# `
+    line comments (blank lines and a shebang/coding line before it are
+    skipped, and stay in the prompt). Only blocks of at least
+    LICENSE_HEADER_MIN_LINES lines that actually mention a license or
+    copyright qualify — any other leading comment may carry security-relevant
+    notes and is sent as-is."""
+    i = 0
+    n = len(lines)
+    while i < n:
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#!") or (
+            stripped.startswith("#") and "coding" in stripped[:40]
+        ):
+            i += 1
             continue
-        keep = False
-        if i <= 60 and _IMPORT_RE.match(line):
-            keep = True
-        elif _TAINT_SOURCE_RE.search(line) or _TAINT_SINK_RE.search(line):
-            keep = True
-        else:
-            decl_re = _BOUNDARY_PATTERNS.get(lang or "")
-            if decl_re is not None and decl_re.match(line) and (
-                "(" in stripped or " class " in f" {stripped} " or "interface" in stripped
-            ):
-                keep = True
-        if keep:
-            picked.append(f"{i}: {stripped[:SKELETON_LINE_MAX_CHARS]}")
-            if len(picked) >= max_lines:
-                truncated = True
+        break
+    if i >= n:
+        return None
+    first = lines[i].lstrip()
+    end = -1
+    if first.startswith("/*") or first.startswith("<!--"):
+        closer = "*/" if first.startswith("/*") else "-->"
+        for j in range(i, n):
+            if closer in lines[j]:
+                if lines[j].split(closer, 1)[1].strip():
+                    return None  # code shares the closing line; leave it alone
+                end = j
                 break
-    if truncated:
-        picked.append("… (skeleton truncated)")
-    return "\n".join(picked)
+    elif first.startswith("//") or _HASH_COMMENT_RE.match(first):
+        j = i
+        while j < n and (
+            lines[j].lstrip().startswith("//") if first.startswith("//")
+            else _HASH_COMMENT_RE.match(lines[j])
+        ):
+            j += 1
+        end = j - 1
+    if end < 0 or end - i + 1 < LICENSE_HEADER_MIN_LINES:
+        return None
+    if not _LICENSE_RE.search("\n".join(lines[i:end + 1])):
+        return None
+    return i + 1, end + 1
 
 
 def _read_text(repo_root: Path, rel_path: str) -> Optional[str]:
@@ -402,8 +529,9 @@ def is_non_source_path(rel_path: str) -> bool:
 
 
 def is_excluded_from_finding_scan(rel_path: str) -> bool:
-    """True for schema, IDE, CVS, config/configuration/, log4j config, and
-    shell-script paths.
+    """True for schema, IDE, CVS, log4j config and shell-script paths, and
+    for data files (not source code or runtime config) under config/ or
+    configuration/.
 
     These remain in Discovery; they are not queued for LLM or regex findings.
     """
@@ -415,6 +543,8 @@ def is_excluded_from_finding_scan(rel_path: str) -> bool:
     if name in SKIP_FINDING_SCAN_FILENAMES:
         return True
     if "log4j" in name and suffix in SKIP_FINDING_SCAN_LOG4J_EXTS:
+        return True
+    if in_config_dir(str(path)) and not config_dir_file_is_scannable(name):
         return True
     return any(
         segment.lower() in SKIP_FINDING_SCAN_DIR_SEGMENTS
@@ -531,7 +661,7 @@ def is_non_analyzable_file(repo_root: Path, rel_path: str, text: Optional[str] =
 
 _SYSTEM_HEAD = (
     "You are a senior application security engineer performing manual source-code "
-    "review. You are shown one code chunk from a CRITICAL-risk file, a skeleton map "
+    "review. You are shown one code chunk from a high-risk file, a skeleton map "
     "of the rest of the file, a catalog of known vulnerability patterns as guidance "
     "(not a checklist to match verbatim), and the project's tech-stack context.\n\n"
     "Your job is to find real, concrete security issues — especially where untrusted "
@@ -587,10 +717,60 @@ _SYSTEM_HEAD = (
     "- For every candidate issue decide true_positive or false_positive and always "
     "give a verdict_reason, even for false positives.\n"
     "- If the file is not human-readable source code (bytecode, compiled binary, "
-    "garbled decompiler output, etc.), return [] — do not emit a finding about "
-    "being unable to analyze.\n\n"
-    "Respond with a JSON array only. No prose, no markdown fences."
+    "garbled decompiler output, etc.), return no findings — do not emit a finding "
+    "about being unable to analyze.\n\n"
+    "Respond with the JSON object described under Output format only. No prose, "
+    "no markdown fences."
 )
+
+
+def render_catalog(catalog: Sequence[Dict[str, Any]]) -> str:
+    """One line per rule: `- id | CWE | SEVERITY | title: description`.
+
+    Replaces an indented JSON dump of the same entries (~2x the characters for
+    the same content). OWASP labels are deliberately not repeated per rule —
+    findings that cite a catalog id get the rule's label filled in locally
+    (see `catalog_owasp_index`)."""
+    out = []
+    for rule in catalog:
+        title = str(rule.get("title") or "").strip()
+        desc = str(rule.get("description") or "").strip()
+        text = f"{title}: {desc}" if desc and desc != title else title
+        out.append(
+            f"- {rule.get('id')} | {rule.get('cwe') or '-'} | "
+            f"{rule.get('severity') or '-'} | {text}"
+        )
+    return "\n".join(out)
+
+
+def catalog_owasp_index(catalog: Sequence[Dict[str, Any]]) -> Dict[str, str]:
+    return {
+        str(rule["id"]): str(rule["owasp"])
+        for rule in catalog
+        if rule.get("id") and rule.get("owasp") in OWASP_TOP_10_2021
+    }
+
+
+_RESPONSE_SCHEMA = """Output format — one JSON object:
+{"findings": [
+  {
+    "verdict": "true_positive" | "false_positive",
+    "rule_id": "<catalog id if one matches, else \"llm-extra\">",
+    "title": "short title",
+    "line": <line number from the numbered code>,
+    "snippet": "<the flagged line, copied verbatim — that one line only>",
+    "severity": "CRITICAL" | "HIGH" | "MEDIUM" | "LOW",
+    "confidence": <0.0-1.0, how sure you are this is exploitable>,
+    "cwe": "CWE-XXX or empty string",
+    "owasp_category": "<OWASP Top 10:2021 label; may be omitted for a catalog rule_id>",
+    "source": "<the untrusted input expression, or \"\" if none identified>",
+    "sink": "<the dangerous call this reaches>",
+    "data_flow": "<one line: how source reaches sink, naming intermediate variables>",
+    "verdict_reason": "<required, even for false_positive; at most 2 sentences>",
+    "ai_fix": "<at most 2 sentences; only when verdict is true_positive>"
+  }
+]}
+If there are no issues, return {"findings": []}."""
 
 
 def build_system_prompt(
@@ -598,35 +778,19 @@ def build_system_prompt(
     stack_context: str,
     owasp_labels: Sequence[str] = OWASP_TOP_10_2021,
 ) -> str:
-    """Stable-per-(language, stack) prefix. Kept separate from the user block so
-    providers with prompt caching can reuse it across every chunk and file."""
+    """Stable-per-(language, stack) prefix: instructions, output format and the
+    catalog. Everything static lives here, ahead of any per-chunk content, so
+    the provider prompt cache (llm_client.should_cache_system_prompt) can
+    reuse it across every chunk and file."""
     return (
         f"{_SYSTEM_HEAD}\n\n"
+        f"{_RESPONSE_SCHEMA}\n\n"
         f"Tech stack: {stack_context or 'unknown'}\n"
         f"OWASP Top 10:2021 categories: {', '.join(owasp_labels)}\n\n"
-        "Known vulnerability pattern catalog (guidance only — not exhaustive, not a gate):\n"
-        f"{json.dumps(catalog, indent=2)}"
+        "Known vulnerability pattern catalog (guidance only — not exhaustive, not a gate). "
+        "Format: id | CWE | severity | title: description\n"
+        f"{render_catalog(catalog)}"
     )
-
-
-_RESPONSE_SCHEMA = """Return a JSON array. Each item:
-{
-  "verdict": "true_positive" | "false_positive",
-  "owasp_category": "<one of the OWASP Top 10:2021 labels>",
-  "severity": "CRITICAL" | "HIGH" | "MEDIUM" | "LOW",
-  "confidence": <0.0-1.0, how sure you are this is exploitable>,
-  "cwe": "CWE-XXX or empty string",
-  "rule_id": "<catalog id if this matches one, else \\"llm-extra\\">",
-  "title": "short title",
-  "line": <line number from the numbered code above>,
-  "source": "<the untrusted input expression, or \\"\\" if none identified>",
-  "sink": "<the dangerous call this reaches>",
-  "data_flow": "<one line: how source reaches sink, naming intermediate variables>",
-  "snippet": "<short excerpt; include the vulnerable line plus a few neighbors>",
-  "verdict_reason": "why this is/isn't a real issue — required, even for false_positive",
-  "ai_fix": "<remediation guidance, only when verdict is true_positive>"
-}
-If there are no issues in this chunk, return []."""
 
 
 def build_user_prompt(
@@ -635,12 +799,23 @@ def build_user_prompt(
     chunk_text: str,
     start_line: int,
     skeleton: str = "",
+    omit_span: Optional[Tuple[int, int]] = None,
 ) -> str:
+    """Per-chunk content only. `omit_span` (1-based, inclusive) collapses those
+    lines — a license header — into a single marker line while every other
+    line keeps its true number."""
     lines = chunk_text.splitlines()
-    numbered = "\n".join(f"{start_line + i}: {line}" for i, line in enumerate(lines))
+    numbered: List[str] = []
+    for i, line in enumerate(lines):
+        number = start_line + i
+        if omit_span and omit_span[0] <= number <= omit_span[1]:
+            if number == omit_span[0] or number == start_line:
+                numbered.append(f"{number}-{omit_span[1]}: [license header omitted]")
+            continue
+        numbered.append(f"{number}: {line}")
     skeleton_block = (
         "File skeleton (imports, declarations, and every input source / dangerous "
-        "sink line in the WHOLE file — use it to trace flows that start outside "
+        "sink line elsewhere in the file — use it to trace flows that start outside "
         "this chunk; do not report findings on lines not shown in the code below):\n"
         f"```\n{skeleton}\n```\n\n"
         if skeleton else ""
@@ -649,8 +824,7 @@ def build_user_prompt(
         f"File: {file_path}\n\n"
         f"{skeleton_block}"
         f"Code under review (lines {start_line}-{start_line + max(len(lines) - 1, 0)}):\n"
-        f"```\n{numbered}\n```\n\n"
-        f"{_RESPONSE_SCHEMA}\n"
+        "```\n" + "\n".join(numbered) + "\n```\n"
     )
 
 
@@ -776,7 +950,10 @@ def normalize_finding(
     chunk_end: int,
     source_lines: Optional[Sequence[str]] = None,
     kind: str = "llm",
+    rule_owasp: Optional[Dict[str, str]] = None,
 ) -> Optional[Dict[str, Any]]:
+    """`rule_owasp` (catalog id -> OWASP label) fills the category for a
+    finding that cites a catalog rule without restating its label."""
     if not isinstance(raw, dict):
         return None
     try:
@@ -796,8 +973,9 @@ def normalize_finding(
         severity = "MEDIUM"
     cwe = str(raw.get("cwe") or "").strip() or None
     owasp_category = str(raw.get("owasp_category") or "").strip()
+    rule_id = str(raw.get("rule_id") or "llm-extra").strip() or "llm-extra"
     if owasp_category not in OWASP_TOP_10_2021:
-        owasp_category = owasp_for_rule(cwe, None)
+        owasp_category = (rule_owasp or {}).get(rule_id) or owasp_for_rule(cwe, None)
     reason = str(raw.get("verdict_reason") or "").strip() or "No reason provided by the model."
     ai_fix = raw.get("ai_fix")
     ai_fix = str(ai_fix).strip() if verdict == "true_positive" and ai_fix else None
@@ -809,7 +987,7 @@ def normalize_finding(
         "owasp_category": owasp_category,
         "severity": severity,
         "cwe": cwe,
-        "rule_id": str(raw.get("rule_id") or "llm-extra").strip() or "llm-extra",
+        "rule_id": rule_id,
         "title": str(raw.get("title") or "Untitled finding").strip()[:500],
         "file_path": file_path,
         "line": line,
@@ -1061,6 +1239,7 @@ def scan_chunk(
     system_prompt: Optional[str] = None,
     llm_step: str = "scan_deep_files",
     kind: str = "llm",
+    omit_span: Optional[Tuple[int, int]] = None,
 ) -> Dict[str, Any]:
     """Scan one chunk. Returns {"findings": [...], "error": str|None}.
 
@@ -1074,8 +1253,9 @@ def scan_chunk(
     system = system_prompt or build_system_prompt(catalog, stack_context)
     user = build_user_prompt(
         file_path=file_path, chunk_text=chunk["text"],
-        start_line=chunk["start_line"], skeleton=skeleton,
+        start_line=chunk["start_line"], skeleton=skeleton, omit_span=omit_span,
     )
+    rule_owasp = catalog_owasp_index(catalog)
 
     def _call(prompt: str) -> str:
         with _INFLIGHT:
@@ -1083,7 +1263,7 @@ def scan_chunk(
                 system, prompt,
                 max_tokens=4096, temperature=0.0,
                 usage=usage, step=llm_step,
-                provider=llm_provider, model=llm_model,
+                provider=llm_provider, model=llm_model, json_mode=True,
             )
 
     try:
@@ -1093,7 +1273,8 @@ def scan_chunk(
             retry_user = (
                 user
                 + "\n\nYour previous response could not be parsed as JSON. "
-                "Respond with a valid JSON array only — no prose, no markdown fences."
+                'Respond with the {"findings": [...]} JSON object only — no prose, '
+                "no markdown fences."
             )
             raw_text = _call(retry_user)
             items, err = parse_llm_json_array(raw_text)
@@ -1105,7 +1286,7 @@ def scan_chunk(
         norm = normalize_finding(
             item, file_path=file_path,
             chunk_start=chunk["start_line"], chunk_end=chunk["end_line"],
-            source_lines=source_lines, kind=kind,
+            source_lines=source_lines, kind=kind, rule_owasp=rule_owasp,
         )
         if norm is not None:
             findings.append(norm)
@@ -1161,20 +1342,25 @@ def scan_file(
     chunks = chunk_file(text, lang)
     source_lines = text.splitlines()
     # Single-chunk files already contain everything; the skeleton is redundant.
-    skeleton = build_file_skeleton(text, lang) if len(chunks) > 1 else ""
+    skeleton_entries = build_file_skeleton_entries(text, lang) if len(chunks) > 1 else []
+    omit_span = leading_license_header_span(source_lines)
 
     def _run(indexed: Tuple[int, Dict[str, Any]]) -> Tuple[int, Dict[str, Any]]:
         idx, chunk = indexed
         if on_chunk_start is not None:
             with _CALLBACK_LOCK:
                 on_chunk_start(idx, len(chunks), rel_path)
+        skeleton = (
+            skeleton_for_chunk(skeleton_entries, chunk["start_line"], chunk["end_line"])
+            if skeleton_entries else ""
+        )
         return idx, scan_chunk(
             file_path=rel_path, chunk=chunk, catalog=catalog,
             stack_context=stack_context, skeleton=skeleton,
             source_lines=source_lines, usage=usage,
             llm_provider=llm_provider, llm_model=llm_model,
             call_llm_fn=call_llm_fn, system_prompt=system_prompt,
-            llm_step=llm_step, kind="llm",
+            llm_step=llm_step, kind="llm", omit_span=omit_span,
         )
 
     indexed_chunks = list(enumerate(chunks, start=1))
@@ -1348,10 +1534,31 @@ def scan_deep_files(
 
 _TRIAGE_SYSTEM = (
     "You triage regex-scanner hits. You do not hunt for new issues.\n"
-    "For each candidate decide true_positive or false_positive.\n"
+    "Each candidate has an id (c1, c2, ...); its line is marked `<-- c<n>` in the "
+    "numbered source excerpts. For every candidate id decide true_positive or "
+    "false_positive.\n"
     "A hit is a false_positive when the match is a test fixture, placeholder, "
     "comment, sample data, or otherwise not a real vulnerability.\n"
-    "Respond with a JSON array only. No prose, no markdown fences."
+    "Respond with the JSON object described under Output format only. No prose, "
+    "no markdown fences."
+)
+
+_TRIAGE_RESPONSE_SCHEMA = """Output format — one JSON object, exactly one decision per candidate id:
+{"decisions": [{
+  "id": "<candidate id, e.g. c1>",
+  "verdict": "true_positive" | "false_positive",
+  "confidence": <0.0-1.0, how sure you are this is exploitable>,
+  "verdict_reason": "<required, at most 2 sentences>",
+  "severity": "<optional CRITICAL|HIGH|MEDIUM|LOW — only to correct the rule's default>",
+  "ai_fix": "<at most 2 sentences; only when verdict is true_positive>"
+}]}"""
+
+# Excerpt lines longer than this are cut — the per-window char cap the old
+# ±10-line blocks had (SNIPPET_MAX_CHARS) no longer applies once windows merge.
+TRIAGE_LINE_MAX_CHARS = 400
+TRIAGE_NO_DECISION_REASON = (
+    "LLM triage returned no usable decision for this candidate; it is a regex "
+    "match that nobody has reviewed yet."
 )
 
 
@@ -1368,6 +1575,105 @@ def _hit_matches_finding(finding: Dict[str, Any], hits: Sequence[Dict[str, Any]]
     return False
 
 
+def triage_candidates(hits: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Regex hits as triage candidates: repeat (rule, line) hits collapse, and
+    each survivor gets a stable short id (c1, c2, ...) in hit order."""
+    out: List[Dict[str, Any]] = []
+    seen: Set[Tuple[Optional[str], int]] = set()
+    for hit in hits:
+        rule_id = hit.get("rule")
+        line = int(hit.get("line") or 1)
+        if (rule_id, line) in seen:
+            continue
+        seen.add((rule_id, line))
+        out.append({
+            "id": f"c{len(out) + 1}",
+            "rule_id": rule_id,
+            "line": line,
+            "matched_text": (hit.get("matched_text") or "").strip(),
+            "severity": hit.get("severity"),
+        })
+    return out
+
+
+def merged_context_windows(
+    line_numbers: Sequence[int],
+    total_lines: int,
+    *,
+    before: int = CONTEXT_LINES_BEFORE,
+    after: int = CONTEXT_LINES_AFTER,
+) -> List[Tuple[int, int]]:
+    """±before/after windows around each line, with overlapping or adjacent
+    windows merged — so a line near several hits is sent once, not per hit."""
+    spans = sorted(
+        (max(1, n - before), min(max(total_lines, 1), n + after)) for n in line_numbers
+    )
+    merged: List[List[int]] = []
+    for lo, hi in spans:
+        if merged and lo <= merged[-1][1] + 1:
+            merged[-1][1] = max(merged[-1][1], hi)
+        else:
+            merged.append([lo, hi])
+    return [(lo, hi) for lo, hi in merged]
+
+
+def _triage_prompts_for_candidates(
+    *,
+    file_path: str,
+    source_text: str,
+    candidates: Sequence[Dict[str, Any]],
+    rules_by_id: Dict[str, RegexRule],
+    stack_context: str = "",
+) -> Tuple[str, str]:
+    lines = source_text.splitlines()
+    rule_lines: List[str] = []
+    seen_rules: Set[str] = set()
+    for cand in candidates:
+        rid = cand.get("rule_id") or ""
+        if rid in seen_rules:
+            continue
+        seen_rules.add(rid)
+        rule = rules_by_id.get(rid)
+        title = (rule.title if rule else rid) or "unknown"
+        desc = (rule.description if rule else "") or ""
+        rule_lines.append(
+            f"- {rid} | {(rule.cwe if rule else '') or '-'} | "
+            f"{(rule.severity if rule else cand.get('severity')) or 'LOW'} | "
+            f"{title}{': ' + desc if desc and desc != title else ''}"
+        )
+    cand_lines = [
+        f"{c['id']} | {c['rule_id']} | line {c['line']} | matched: "
+        + json.dumps(c["matched_text"][:200], ensure_ascii=False)
+        for c in candidates
+    ]
+    markers: Dict[int, List[str]] = {}
+    for c in candidates:
+        markers.setdefault(int(c["line"]), []).append(c["id"])
+    excerpts: List[str] = []
+    for lo, hi in merged_context_windows([c["line"] for c in candidates], len(lines)):
+        block = [f"--- lines {lo}-{hi} ---"]
+        for n in range(lo, hi + 1):
+            text = lines[n - 1] if n - 1 < len(lines) else ""
+            if len(text) > TRIAGE_LINE_MAX_CHARS:
+                text = text[:TRIAGE_LINE_MAX_CHARS] + "…"
+            mark = f"  <-- {', '.join(markers[n])}" if n in markers else ""
+            block.append(f"{n}: {text}{mark}")
+        excerpts.append("\n".join(block))
+    system = (
+        f"{_TRIAGE_SYSTEM}\n\n{_TRIAGE_RESPONSE_SCHEMA}\n\n"
+        f"Tech stack: {stack_context or 'unknown'}"
+    )
+    user = (
+        f"File: {file_path}\n\n"
+        "Rules (id | CWE | severity | title: description):\n"
+        + "\n".join(rule_lines) + "\n\n"
+        "Candidates (triage these only; do not add other findings):\n"
+        + "\n".join(cand_lines) + "\n\n"
+        "Source excerpts:\n" + "\n\n".join(excerpts) + "\n"
+    )
+    return system, user
+
+
 def build_triage_prompts(
     *,
     file_path: str,
@@ -1378,44 +1684,122 @@ def build_triage_prompts(
 ) -> Tuple[str, str]:
     """System + user prompts for regex-hit triage (no extra findings).
 
-    Carries only the hit candidates and a context window around each one — the
-    full file body is deliberately never included.
-    """
-    candidates: List[Dict[str, Any]] = []
-    context_blocks: List[str] = []
-    for hit in hits:
-        rule = rules_by_id.get(hit.get("rule") or "")
-        line = int(hit.get("line") or 1)
-        candidates.append({
-            "rule_id": hit.get("rule"),
-            "title": rule.title if rule else (hit.get("rule") or "unknown"),
-            "description": rule.description if rule else "",
-            "cwe": (rule.cwe if rule else "") or "",
-            "severity": (rule.severity if rule else hit.get("severity")) or "LOW",
-            "owasp": (rule.owasp if rule else "") or "",
-            "line": line,
-            "matched_text": hit.get("matched_text") or "",
-        })
-        context_blocks.append(
-            f"--- hit {hit.get('rule')} at line {line} ---\n"
-            + build_code_context(source_text, line, hit.get("matched_text") or "")
-        )
-    system = (
-        f"{_TRIAGE_SYSTEM}\n\n"
-        f"Tech stack: {stack_context or 'unknown'}\n"
-        f"OWASP Top 10:2021 categories: {', '.join(OWASP_TOP_10_2021)}"
+    Carries only the hit candidates and merged context windows around them —
+    the full file body is deliberately never included. Rule descriptions are
+    listed once per rule, not once per hit."""
+    return _triage_prompts_for_candidates(
+        file_path=file_path, source_text=source_text,
+        candidates=triage_candidates(hits), rules_by_id=rules_by_id,
+        stack_context=stack_context,
     )
-    user = (
-        f"File: {file_path}\n\n"
-        "Candidates (triage these only; do not add other findings):\n"
-        f"{json.dumps(candidates, indent=2)}\n\n"
-        "Source context around each hit:\n"
-        f"{chr(10).join(context_blocks)}\n\n"
-        f"{_RESPONSE_SCHEMA}\n"
-        "Return one object per candidate you reviewed. rule_id and line must "
-        "match a candidate. Do not invent findings that are not in the list."
-    )
-    return system, user
+
+
+def _strict_verdict(raw: Any) -> Optional[str]:
+    """Like _normalize_verdict, but an empty or unrecognised verdict is None
+    (no decision) instead of silently becoming false_positive."""
+    text = str(raw or "").strip().lower().replace("-", "_")
+    if not text:
+        return None
+    if text in ("true_positive", "false_positive"):
+        return text
+    if "false" in text or text.startswith("fp") or _NEGATION_RE.search(text):
+        return "false_positive"
+    if "true" in text or "confirm" in text or text.startswith("tp"):
+        return "true_positive"
+    return None
+
+
+def resolve_triage_decisions(
+    items: Sequence[Any], candidates: Sequence[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """{candidate id: decision item} for every candidate the response actually
+    decided. Items are matched by id; an item without a usable id (older
+    array-of-findings shape, or a model ignoring the schema) is matched to the
+    nearest undecided candidate of the same rule within the context window.
+    Items with no usable verdict, and items matching no candidate (invented
+    findings), are ignored."""
+    by_id = {c["id"]: c for c in candidates}
+    decided: Dict[str, Dict[str, Any]] = {}
+    for item in items:
+        if not isinstance(item, dict) or _strict_verdict(item.get("verdict")) is None:
+            continue
+        cid = str(item.get("id") or "").strip().lower()
+        if cid in by_id:
+            decided.setdefault(cid, item)
+            continue
+        rule_id = item.get("rule_id") or item.get("rule")
+        try:
+            line = int(item.get("line"))
+        except (TypeError, ValueError):
+            continue
+        best: Optional[Dict[str, Any]] = None
+        for cand in candidates:
+            if cand["id"] in decided or cand["rule_id"] != rule_id:
+                continue
+            distance = abs(int(cand["line"]) - line)
+            if distance <= CONTEXT_LINES_BEFORE and (
+                best is None or distance < abs(int(best["line"]) - line)
+            ):
+                best = cand
+        if best is not None:
+            decided[best["id"]] = item
+    return decided
+
+
+def _triage_finding(
+    cand: Dict[str, Any],
+    item: Optional[Dict[str, Any]],
+    *,
+    file_path: str,
+    source_text: str,
+    rules_by_id: Dict[str, RegexRule],
+) -> Dict[str, Any]:
+    """Build the finding locally from the candidate and rule; the model only
+    contributes the decision fields."""
+    rule = rules_by_id.get(cand.get("rule_id") or "")
+    cwe = ((rule.cwe if rule else "") or "").strip() or None
+    severity = str((rule.severity if rule else cand.get("severity")) or "LOW").upper()
+    base = {
+        "rule_id": cand["rule_id"],
+        "title": ((rule.title if rule else None) or cand["rule_id"] or "Regex match")[:500],
+        "cwe": cwe,
+        "owasp_category": (rule.owasp if rule else "") or owasp_for_rule(cwe, None),
+        "file_path": file_path,
+        "line": int(cand["line"]),
+        "source": "",
+        "sink": "",
+        "data_flow": "",
+        "matched_text": cand["matched_text"][:500],
+        "group_by_rule": bool(rule.group_by_rule) if rule else False,
+        "derived": bool(rule.derived) if rule else False,
+        "kind": "regex",
+    }
+    if item is None:
+        return {
+            **base,
+            "severity": severity,
+            "snippet": build_code_context(source_text, int(cand["line"]), cand["matched_text"]),
+            "verdict": VERDICT_UNVERIFIED,
+            "verdict_reason": TRIAGE_NO_DECISION_REASON,
+            "confidence": None,
+            "ai_fix": None,
+        }
+    verdict = _strict_verdict(item.get("verdict")) or VERDICT_UNVERIFIED
+    override = str(item.get("severity") or "").strip().upper()
+    ai_fix = item.get("ai_fix")
+    return {
+        **base,
+        "severity": override if override in _VALID_SEVERITIES else severity,
+        # The flagged line itself; finalize_findings swaps in the real context.
+        "snippet": cand["matched_text"],
+        "verdict": verdict,
+        "verdict_reason": (
+            str(item.get("verdict_reason") or item.get("reason") or "").strip()
+            or "No reason provided by the model."
+        ),
+        "confidence": _normalize_confidence(item.get("confidence"), verdict),
+        "ai_fix": str(ai_fix).strip() if verdict == "true_positive" and ai_fix else None,
+    }
 
 
 def triage_regex_hits(
@@ -1430,7 +1814,12 @@ def triage_regex_hits(
     llm_model: Optional[str] = None,
     call_llm_fn: Callable[..., str] = call_llm,
 ) -> Dict[str, Any]:
-    """One LLM call to TP/FP-triage the regex hits in a MEDIUM/LOW-risk file."""
+    """One LLM call to TP/FP-triage the regex hits in a MEDIUM/LOW-risk file.
+
+    Every candidate ends up with exactly one outcome: a model decision, or —
+    when the response omitted it, was unparseable, or the call failed —
+    `unverified`. Candidates the model left out get one follow-up call
+    carrying only their own excerpts before falling back to unverified."""
     if not hits:
         return {
             "file_path": file_path, "chunks": 0, "findings": [],
@@ -1438,72 +1827,71 @@ def triage_regex_hits(
         }
 
     rules_by_id = {rule.id: rule for rule in rules}
-    source_lines = source_text.splitlines()
-    system, user = build_triage_prompts(
-        file_path=file_path, source_text=source_text, hits=hits,
-        rules_by_id=rules_by_id, stack_context=stack_context,
-    )
-    line_lo = min(int(h.get("line") or 1) for h in hits)
-    line_hi = max(int(h.get("line") or 1) for h in hits)
-    line_lo = max(1, line_lo - CONTEXT_LINES_BEFORE)
-    line_hi = min(len(source_lines) or line_hi, line_hi + CONTEXT_LINES_AFTER)
+    candidates = triage_candidates(hits)
+    errors: List[str] = []
 
-    def _call(prompt: str) -> str:
-        with _INFLIGHT:
-            return call_llm_fn(
-                system, prompt,
-                max_tokens=4096, temperature=0.0,
-                usage=usage, step="scan_triage_files",
-                provider=llm_provider, model=llm_model,
-            )
-
-    try:
-        raw_text = _call(user)
+    def _ask(subset: Sequence[Dict[str, Any]]) -> Tuple[Dict[str, Dict[str, Any]], bool]:
+        """(decisions, call_raised)."""
+        system, user = _triage_prompts_for_candidates(
+            file_path=file_path, source_text=source_text, candidates=subset,
+            rules_by_id=rules_by_id, stack_context=stack_context,
+        )
+        try:
+            with _INFLIGHT:
+                raw_text = call_llm_fn(
+                    system, user,
+                    max_tokens=4096, temperature=0.0,
+                    usage=usage, step="scan_triage_files",
+                    provider=llm_provider, model=llm_model, json_mode=True,
+                )
+        except Exception as exc:  # one bad file must not kill the tier
+            errors.append(f"{type(exc).__name__}: {exc}")
+            return {}, True
         items, err = parse_llm_json_array(raw_text)
         if err and not items:
-            retry_user = (
-                user
-                + "\n\nYour previous response could not be parsed as JSON. "
-                "Respond with a valid JSON array only — no prose, no markdown fences."
-            )
-            raw_text = _call(retry_user)
-            items, err = parse_llm_json_array(raw_text)
-    except Exception as exc:
-        return {
-            "file_path": file_path, "chunks": 1, "findings": [],
-            "tp_count": 0, "fp_count": 0, "read_error": False,
-            "chunk_errors": [f"{type(exc).__name__}: {exc}"],
-        }
+            errors.append(err)
+        return resolve_triage_decisions(items, subset), False
 
-    findings: List[Dict[str, Any]] = []
-    for item in items:
-        if isinstance(item, dict) and not item.get("rule_id"):
-            item = dict(item)
-            item["rule_id"] = item.get("rule") or ""
-        norm = normalize_finding(
-            item if isinstance(item, dict) else {},
-            file_path=file_path,
-            chunk_start=line_lo, chunk_end=max(line_hi, line_lo),
-            source_lines=source_lines, kind="regex",
-        )
-        if norm is None:
-            continue
-        if not _hit_matches_finding(norm, hits):
-            continue
-        findings.append(norm)
+    decided, raised = _ask(candidates)
+    missing = [c for c in candidates if c["id"] not in decided]
+    if missing and not raised:
+        # Unparseable, partial, or empty answer: ask again for just the gaps,
+        # carrying only their excerpts. A call that raised is not retried
+        # here — call_llm already retried the transport.
+        more, _raised = _ask(missing)
+        decided.update(more)
+        missing = [c for c in candidates if c["id"] not in decided]
+    if missing:
+        errors.append(f"{len(missing)} candidate(s) left unverified (no decision)")
 
-    merged = finalize_findings(merge_dedupe(findings), source_text)
-    for finding in merged:
+    reviewed = [
+        _triage_finding(c, decided[c["id"]], file_path=file_path,
+                        source_text=source_text, rules_by_id=rules_by_id)
+        for c in candidates if c["id"] in decided
+    ]
+    reviewed = [f for f in reviewed if f["verdict"] != VERDICT_UNVERIFIED]
+    merged = finalize_findings(merge_dedupe(reviewed), source_text)
+    # Undecided candidates bypass suppression, exactly like regex-only
+    # findings: no one has judged them, so nothing may be dropped on a guess.
+    unverified = [
+        _triage_finding(c, None, file_path=file_path,
+                        source_text=source_text, rules_by_id=rules_by_id)
+        for c in missing
+    ]
+    findings = merged + unverified
+    for finding in findings:
         finding["kind"] = "regex"
-    tp_count = sum(1 for f in merged if f["verdict"] == "true_positive")
+    tp_count = sum(1 for f in findings if f["verdict"] == "true_positive")
+    fp_count = sum(1 for f in findings if f["verdict"] == "false_positive")
     return {
         "file_path": file_path,
         "chunks": 1,
-        "findings": merged,
+        "findings": findings,
         "tp_count": tp_count,
-        "fp_count": len(merged) - tp_count,
+        "fp_count": fp_count,
+        "unverified_count": len(unverified),
         "read_error": False,
-        "chunk_errors": [err] if (err and not items) else [],
+        "chunk_errors": errors,
     }
 
 
@@ -1575,6 +1963,7 @@ def scan_triage_files(
     file_workers: int = DEFAULT_FILE_WORKERS,
     entries: Optional[List[Dict[str, Any]]] = None,
     triage_mode: str = DEFAULT_TRIAGE_MODE,
+    rules_for_path: Optional[Callable[[str], List[RegexRule]]] = None,
 ) -> Dict[str, Any]:
     """Regex-scan every MEDIUM/LOW-risk file (plus any CRITICAL/HIGH overflow
     the caller routes here past DEEP_SCAN_FILE_CAP).
@@ -1596,6 +1985,10 @@ def scan_triage_files(
     overflow CRITICAL/HIGH entry (risk_level still "CRITICAL"/"HIGH") run
     through this triage path despite failing the TRIAGE_RISK_LEVELS check;
     when omitted, the working set is derived from `module_plan` as before.
+
+    `rules_for_path` (pipeline/rg_prefilter.py) narrows the rules run on each
+    file to those ripgrep found a required literal for; a file left with no
+    rules is never read. Python stays the authority on every hit.
     """
     triage_files = entries if entries is not None else files_for_risk_levels(module_plan, TRIAGE_RISK_LEVELS)
     total = len(triage_files)
@@ -1609,8 +2002,16 @@ def scan_triage_files(
             with _CALLBACK_LOCK:
                 on_file_start(position + 1, total, path)
         lang = entry.get("lang") or lang_for_path(path)
+        file_rules = rules_for_path(path) if rules_for_path is not None else rules
+        if not file_rules:
+            results[position] = {
+                "file_path": path, "chunks": 0, "findings": [],
+                "tp_count": 0, "fp_count": 0, "read_error": False,
+                "skipped_no_hits": True, "prefiltered": True, "chunk_errors": [],
+            }
+            return
         scanned = scan_one_file(
-            repo_root, path, entry.get("module", "(root)"), rules,
+            repo_root, path, entry.get("module", "(root)"), file_rules,
             file_lang=lang, active_frameworks=active_frameworks,
             dependency_index=dependency_index,
         )
@@ -1729,27 +2130,27 @@ _GROUP_CONFIRM_SYSTEM = (
     "a real issue.\n"
     "A hit is a false_positive when the match is a test fixture, placeholder, "
     "comment, sample data, or otherwise not a real vulnerability.\n"
-    "Respond with a JSON array containing exactly one object. No prose, no "
-    "markdown fences."
+    "Respond with the JSON object described under Output format only. No prose, "
+    "no markdown fences."
 )
 
-_GROUP_RESPONSE_SCHEMA = """Return a JSON array with exactly one object:
-[{
+_GROUP_RESPONSE_SCHEMA = """Output format — one JSON object with exactly one decision:
+{"decisions": [{
   "verdict": "true_positive" | "false_positive",
   "confidence": <0.0-1.0>,
-  "verdict_reason": "why this construct is/isn't a real issue — required",
-  "ai_fix": "<remediation guidance, only when verdict is true_positive>"
-}]"""
+  "verdict_reason": "<why this construct is/isn't a real issue — required, at most 2 sentences>",
+  "ai_fix": "<at most 2 sentences; only when verdict is true_positive>"
+}]}"""
 
 
 def group_key_for_finding(finding: Dict[str, Any]) -> tuple:
     """Same-issue key for unverified regex findings — mirrors
     app.services.scan_export._finding_group_key's regex branch."""
     rule_id = str(finding.get("rule_id") or "").strip()
+    matched = " ".join(str(finding.get("matched_text") or "").split())[:200]
     if rule_id and rule_id.lower() != "llm-extra":
         if finding.get("group_by_rule"):
             return ("rule", rule_id)
-        matched = " ".join(str(finding.get("matched_text") or "").split())[:200]
         return ("rule", rule_id, matched)
     topic = re.sub(r"[^a-z0-9]+", " ", str(finding.get("title") or "").lower()).strip()
     topic = " ".join(topic.split()[:3])
@@ -1784,22 +2185,27 @@ def build_group_confirm_prompt(
         "occurrence_files": occurrence_note,
     }
     system = (
-        f"{_GROUP_CONFIRM_SYSTEM}\n\n"
+        f"{_GROUP_CONFIRM_SYSTEM}\n\n{_GROUP_RESPONSE_SCHEMA}\n\n"
         f"Tech stack: {stack_context or 'unknown'}\n"
         f"OWASP Top 10:2021 categories: {', '.join(OWASP_TOP_10_2021)}"
     )
     user = (
         f"Pattern (matched identically in {len(occurrence_paths)} location(s); "
         f"files: {occurrence_note}):\n"
-        f"{json.dumps(candidate, indent=2)}\n\n"
+        f"{json.dumps(candidate, ensure_ascii=False)}\n\n"
         f"Representative occurrence — {representative.get('file_path')}:\n"
-        f"```\n{context}\n```\n\n"
-        f"{_GROUP_RESPONSE_SCHEMA}\n"
+        f"```\n{context}\n```\n"
     )
     return system, user
 
 
 def _confirm_result_from_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    if not str(item.get("verdict") or "").strip():
+        # No verdict is not a dismissal — leave the group unverified.
+        return {
+            "verdict": VERDICT_UNVERIFIED, "confidence": None,
+            "verdict_reason": "", "ai_fix": None, "error": "missing verdict",
+        }
     verdict = _normalize_verdict(item.get("verdict"))
     confidence = _normalize_confidence(item.get("confidence"), verdict)
     reason = str(item.get("verdict_reason") or "").strip() or "No reason provided by the model."
@@ -1841,7 +2247,7 @@ def confirm_finding_group(
                 system, prompt,
                 max_tokens=512, temperature=0.0,
                 usage=usage, step="group_confirm_triage_findings",
-                provider=llm_provider, model=llm_model,
+                provider=llm_provider, model=llm_model, json_mode=True,
             )
 
     try:
@@ -1851,7 +2257,7 @@ def confirm_finding_group(
             retry_user = (
                 user
                 + "\n\nYour previous response could not be parsed as JSON. "
-                "Respond with a valid JSON array containing exactly one object "
+                'Respond with the {"decisions": [...]} JSON object only '
                 "— no prose, no markdown fences."
             )
             raw_text = _call(retry_user)
@@ -1881,14 +2287,14 @@ _GROUP_CONFIRM_BATCH_SYSTEM = (
     "carrying that same group_index — never merge, skip, or invent patterns."
 )
 
-_GROUP_BATCH_RESPONSE_SCHEMA = """Return a JSON array with exactly one object per pattern shown:
-[{
-  "group_index": <int, matches the pattern's group_index above>,
+_GROUP_BATCH_RESPONSE_SCHEMA = """Output format — one JSON object with exactly one decision per pattern shown:
+{"decisions": [{
+  "group_index": <int, matches the pattern's group_index>,
   "verdict": "true_positive" | "false_positive",
   "confidence": <0.0-1.0>,
-  "verdict_reason": "why this construct is/isn't a real issue — required",
-  "ai_fix": "<remediation guidance, only when verdict is true_positive>"
-}, ...]"""
+  "verdict_reason": "<why this construct is/isn't a real issue — required, at most 2 sentences>",
+  "ai_fix": "<at most 2 sentences; only when verdict is true_positive>"
+}, ...]}"""
 
 
 def build_group_confirm_batch_prompt(
@@ -1929,14 +2335,14 @@ def build_group_confirm_batch_prompt(
             f"Pattern {entry['group_index']} — {representative.get('file_path')}:\n```\n{context}\n```"
         )
     system = (
-        f"{_GROUP_CONFIRM_BATCH_SYSTEM}\n\n"
+        f"{_GROUP_CONFIRM_BATCH_SYSTEM}\n\n{_GROUP_BATCH_RESPONSE_SCHEMA}\n\n"
         f"Tech stack: {stack_context or 'unknown'}\n"
         f"OWASP Top 10:2021 categories: {', '.join(OWASP_TOP_10_2021)}"
     )
     user = (
-        f"Patterns ({len(entries)}):\n{json.dumps(candidates, indent=2)}\n\n"
-        + "\n\n".join(context_blocks) + "\n\n"
-        + f"{_GROUP_BATCH_RESPONSE_SCHEMA}\n"
+        f"Patterns ({len(entries)}), one per line:\n"
+        + "\n".join(json.dumps(c, ensure_ascii=False) for c in candidates) + "\n\n"
+        + "\n\n".join(context_blocks) + "\n"
     )
     return system, user
 
@@ -1973,7 +2379,7 @@ def confirm_finding_group_batch(
                 system, prompt,
                 max_tokens=max_tokens, temperature=0.0,
                 usage=usage, step="group_confirm_triage_findings",
-                provider=llm_provider, model=llm_model,
+                provider=llm_provider, model=llm_model, json_mode=True,
             )
 
     results: Dict[int, Dict[str, Any]] = {}
@@ -1986,7 +2392,8 @@ def confirm_finding_group_batch(
             retry_user = (
                 user
                 + "\n\nYour previous response could not be parsed as JSON. "
-                "Respond with a valid JSON array — no prose, no markdown fences."
+                'Respond with the {"decisions": [...]} JSON object only — no prose, '
+                "no markdown fences."
             )
             raw_text = _call(retry_user)
             items, err = parse_llm_json_array(raw_text)

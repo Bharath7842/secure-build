@@ -5,10 +5,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { ApiError, api } from "@/lib/api";
 import { inputClass, selectClass } from "@/lib/formStyles";
 import {
-  DEFAULT_FALLBACK_PRESET_ID,
   LLM_PRESETS,
   LLM_PRESET_ENTRIES,
-  isBedrockPrimaryPreset,
   llmPresetForProviderModel,
   type LlmPresetId,
 } from "@/lib/llmPresets";
@@ -40,8 +38,6 @@ export default function ScanForm({ projectId, scanType = "sast", onSubmit }: Sca
   // never use it regardless (see isLlmFree below).
   const useLlm = true;
   const [llmPreset, setLlmPreset] = useState<LlmPresetId>("bedrock-haiku");
-  // Fallback-model choice isn't exposed in the UI — always granite-code:3b.
-  const fallbackPreset = DEFAULT_FALLBACK_PRESET_ID;
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -127,12 +123,14 @@ export default function ScanForm({ projectId, scanType = "sast", onSubmit }: Sca
     if (!isLlmFree && useLlm) {
       const preset = LLM_PRESETS[llmPreset];
       payload.llm_provider = preset.provider;
-      payload.llm_model = preset.model;
-      if (isBedrockPrimaryPreset(llmPreset)) {
-        const fallback = LLM_PRESETS[fallbackPreset];
-        payload.fallback_llm_provider = fallback.provider;
-        payload.fallback_llm_model = fallback.model;
-      }
+      // An OpenAI-compatible server serves whatever model id the project
+      // configured; the preset's model is only a placeholder.
+      payload.llm_model =
+        preset.provider === "openai_compat" && selectedProject?.llm_provider === "openai_compat"
+          ? selectedProject.llm_model
+          : preset.model;
+      // The cost-cutoff fallback comes from the project (default "none":
+      // stop LLM work rather than silently switching to a local Ollama).
     }
 
     setError(null);

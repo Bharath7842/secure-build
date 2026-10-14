@@ -89,6 +89,8 @@ export default function DastHttpExchange({
   responseStatus,
   responseMeta,
   signals,
+  proposedPayload,
+  source,
 }: {
   request?: DastTraffic | null;
   baseline?: string | null;
@@ -96,6 +98,8 @@ export default function DastHttpExchange({
   responseStatus?: number | null;
   responseMeta?: string | null;
   signals?: { name: string; detail?: string }[];
+  proposedPayload?: string | null;
+  source?: "model" | "fallback" | string | null;
 }) {
   const hasRequest = Boolean(
     request && (request.method || request.url || request.payload || request.parameter || request.headers),
@@ -119,6 +123,7 @@ export default function DastHttpExchange({
           <Block title="Request sent" status={request.allowed === false ? "not sent" : undefined}>
             {line && <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-[var(--ink)]">{line}</pre>}
             {request.identity_label && <p className="mt-1 text-[11px] text-[var(--muted)]">Identity: {request.identity_label}</p>}
+            {source && <p className="mt-1 text-[11px] text-[var(--muted)]">Payload source: {source === "model" ? "LLM" : source}</p>}
             {request.allowed === false && (
               <p className="mt-1 text-[11px] text-amber-800">Not sent: {request.deny_reason || "denied"}</p>
             )}
@@ -132,6 +137,13 @@ export default function DastHttpExchange({
               <pre className="mt-1 whitespace-pre-wrap break-all font-mono text-[11px] text-[var(--ink)]">
                 Value sent: {request.payload}
               </pre>
+            ) : null}
+            {proposedPayload && proposedPayload !== request.payload ? (
+              <pre className="mt-1 whitespace-pre-wrap break-all font-mono text-[11px] text-[var(--ink)]">
+                LLM proposal: {proposedPayload}
+              </pre>
+            ) : proposedPayload ? (
+              <p className="mt-1 text-[11px] text-[var(--muted)]">LLM proposal: same as value sent</p>
             ) : null}
             {request.headers && <HeaderMap headers={request.headers} />}
           </Block>

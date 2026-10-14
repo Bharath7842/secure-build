@@ -5,7 +5,10 @@
 never needs boto3 / langgraph installed.
 
 Pipeline: scan_directory -> analyze_tech_stack -> categorize_files ->
-map_modules_and_risk -> scan_deep_files -> scan_triage_files -> generate_report.
+map_modules_and_risk -> build_joern_cpg -> build_call_graph -> derive_runtime_rules
+-> discover_flows -> verify_flow_slices -> scan_deep_files -> scan_triage_files
+-> joern_scan -> hunt_security -> group_triage_findings -> confirm_triage_groups
+-> generate_report.
 
 `scan_deep_files` runs the full LLM scan over CRITICAL/HIGH files;
 `scan_triage_files` regex-gates MEDIUM/LOW, sending only regex hits and their
@@ -16,14 +19,20 @@ import importlib
 import importlib.util
 import logging
 import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Callable
 
 from app.config import settings
+from app.defaults.scan_limitations import SCAN_LIMITATIONS
 from app.models import Project, Scan
 
 logger = logging.getLogger(__name__)
+
+# Toggle defaults come from the catalog, never a second hard-coded copy.
+_LIMITATION_DEFAULTS = {lim.id: lim.enabled_by_default for lim in SCAN_LIMITATIONS}
 
 
 _INSTALL_HINT = """Real SAST engine requested but the in-repo agent could not be imported.
@@ -35,8 +44,10 @@ Fix:
   1. Confirm backend/sast_engine contains sast_scan_agent.py
   2. Install backend deps: pip install -r backend/requirements.txt
   3. For Bedrock: configure AWS credentials with bedrock:InvokeModel
-  4. For Ollama: run a local daemon at OLLAMA_BASE_URL with the chosen model
-  5. Re-run with USE_MOCK_ENGINE=false RUN_LIVE_SAST=1.
+  4. For an OpenAI-compatible server: set the project's LLM base URL (or
+     OPENAI_COMPAT_BASE_URL) and model
+  5. For Ollama: run a local daemon at OLLAMA_BASE_URL with the chosen model
+  6. Re-run with USE_MOCK_ENGINE=false RUN_LIVE_SAST=1.
 """
 
 
@@ -45,6 +56,14 @@ def _sync_env_from_settings() -> None:
     os.environ.setdefault("BEDROCK_MODEL_ID", settings.bedrock_model_id)
     os.environ.setdefault("OLLAMA_BASE_URL", settings.ollama_base_url)
     os.environ.setdefault("OLLAMA_REQUEST_TIMEOUT", str(settings.ollama_request_timeout))
+    os.environ.setdefault("OPENAI_COMPAT_BASE_URL", settings.openai_compat_base_url)
+    os.environ.setdefault("OPENAI_COMPAT_REQUEST_TIMEOUT", str(settings.openai_compat_request_timeout))
+    if settings.joern_home:
+        os.environ.setdefault("JOERN_HOME", settings.joern_home)
+    os.environ.setdefault("JOERN_TIMEOUT_SEC", str(settings.joern_timeout_sec))
+    os.environ.setdefault("JOERN_JAVA_OPTS", settings.joern_java_opts)
+    if settings.joern_java_home:
+        os.environ.setdefault("JOERN_JAVA_HOME", settings.joern_java_home)
 
 
 def _load_agent_module():
@@ -73,6 +92,30 @@ def _load_agent_module():
         return module
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(_INSTALL_HINT.format(path=framework_path, error=exc)) from exc
+
+
+def llm_usage_options(project: Project, scan: Scan | None = None) -> dict:
+    """Keyword arguments for the engine's init_usage carrying this scan's
+    openai_compat endpoint/key and data policy. The key comes from the
+    project (never snapshotted); the base URL and policy prefer the scan's
+    snapshot so a re-run matches what the scan originally used."""
+    base_url = (
+        (getattr(scan, "llm_base_url", None) if scan else None)
+        or getattr(project, "llm_base_url", None)
+        or settings.openai_compat_base_url
+    )
+    api_key = getattr(project, "llm_api_key", None) or (
+        settings.openai_compat_api_key.get_secret_value() if settings.openai_compat_api_key else ""
+    )
+    data_policy = (
+        (getattr(scan, "llm_data_policy", None) if scan else None)
+        or getattr(project, "llm_data_policy", None)
+        or "allow_external"
+    )
+    return {
+        "provider_options": {"openai_compat": {"base_url": base_url, "api_key": api_key}},
+        "data_policy": data_policy,
+    }
 
 
 def _project_context_note(project: Project) -> str:
@@ -109,12 +152,12 @@ def run_real_scan(
     fallback_llm_provider = (
         (getattr(scan, "fallback_llm_provider", None) if scan else None)
         or getattr(project, "fallback_llm_provider", None)
-        or "ollama"
+        or "none"
     )
     fallback_llm_model = (
         (getattr(scan, "fallback_llm_model", None) if scan else None)
         or getattr(project, "fallback_llm_model", None)
-        or "granite-code:3b"
+        or None
     )
 
     source_meta = (scan.metadata_json if scan else None) or {}
@@ -127,22 +170,31 @@ def run_real_scan(
 
     # Project-level scan limitations (app/defaults/scan_limitations.py). A
     # project that has never touched the Limitations panel has
-    # limitations_config=None, so .get(...) falls back to each entry's
-    # documented enabled_by_default.
+    # limitations_config=None, so every toggle falls back to its catalog
+    # entry's enabled_by_default — the same rule the settings page uses, so
+    # what the page shows is what the scan does.
     limitations_config = getattr(project, "limitations_config", None) or {}
-    suppress_no_cwe_findings = limitations_config.get("cwe-less-findings-suppressed", True)
-    suppress_http_findings = limitations_config.get("https-enforced-suppress-http", False)
-    suppress_low_confidence_false_positives = limitations_config.get(
-        "low-confidence-fp-suppressed", True
-    )
-    inter_file_flow = use_llm and limitations_config.get("inter-file-call-graph", True)
-    derive_runtime_rules = limitations_config.get("runtime-derived-regex", True)
-    deep_scan_critical_only = limitations_config.get("deep-scan-critical-only", True)
+
+    def enabled(limitation_id: str) -> bool:
+        return bool(limitations_config.get(limitation_id, _LIMITATION_DEFAULTS[limitation_id]))
+
+    suppress_no_cwe_findings = enabled("cwe-less-findings-suppressed")
+    suppress_http_findings = enabled("https-enforced-suppress-http")
+    suppress_low_confidence_false_positives = enabled("low-confidence-fp-suppressed")
+    inter_file_flow = use_llm and enabled("inter-file-call-graph")
+    derive_runtime_rules = enabled("runtime-derived-regex")
+    joern_dataflow = enabled("joern-dataflow")
+    joern_scan_queries = enabled("joern-scan-queries")
+    deep_scan_critical_only = enabled("deep-scan-critical-only")
     triage_mode = (
         agent.llm_file_scan.TRIAGE_MODE_LLM
-        if limitations_config.get("triage-mode-llm-confirm", True)
+        if enabled("triage-mode-llm-confirm")
         else agent.llm_file_scan.TRIAGE_MODE_REGEX_ONLY
     )
+    catalog_prefilter = enabled("ripgrep-catalog-prefilter")
+    learned = list(getattr(project, "learned_rules", None) or []) if enabled("learned-hunt-rules") else []
+    # The hunt needs LLM use; without it the node is a logged no-op anyway.
+    hunt_mode = "agentic" if use_llm and enabled("agentic-security-hunt") else "off"
     max_derived = getattr(project, "max_derived_regex_rules", None)
     if max_derived is None:
         max_derived = 50
@@ -171,8 +223,13 @@ def run_real_scan(
         "suppress_low_confidence_false_positives": suppress_low_confidence_false_positives,
         "inter_file_flow": inter_file_flow,
         "derive_runtime_rules": derive_runtime_rules,
+        "joern_dataflow": joern_dataflow,
+        "joern_scan_queries": joern_scan_queries,
         "deep_scan_critical_only": deep_scan_critical_only,
         "triage_mode": triage_mode,
+        "hunt_mode": hunt_mode,
+        "catalog_prefilter": catalog_prefilter,
+        "learned_rules": learned,
         "max_derived_regex_rules": max_derived,
         "findings_writer": findings_writer,
         "discovery_writer": discovery_writer,
@@ -182,14 +239,32 @@ def run_real_scan(
             llm_model if use_llm else None,
             fallback_provider=fallback_llm_provider if use_llm else None,
             fallback_model=fallback_llm_model if use_llm else None,
+            **llm_usage_options(project, scan),
         ),
         # verbose=True: AgentTrace's narration prints are what scan_log.capture()
         # tails live for the frontend's Agent log tab.
         "_tracer": agent.AgentTrace(verbose=True),
     }
 
+    # Cross-scan LLM result reuse: an identical prompt to the same model (an
+    # unchanged file chunk, flow slice or hit set) is answered from the
+    # project's cache instead of the provider. `metadata.bypass_llm_cache`
+    # on the scan request forces every call live, e.g. to measure a cold run.
+    project_id = getattr(project, "id", None)
+    if use_llm and project_id and not source_meta.get("bypass_llm_cache"):
+        from app.services.llm_result_cache import DbLlmResultCache
+
+        initial_state["usage"][agent.RESULT_CACHE_USAGE_KEY] = DbLlmResultCache(project_id)
+
+    # Joern CPGs can run to gigabytes; own the scratch dir here so it is
+    # removed even when the graph raises partway through.
+    joern_work_dir = Path(tempfile.mkdtemp(prefix="sast-joern-"))
+    initial_state["joern_work_dir"] = str(joern_work_dir)
     graph = agent.build_graph()
-    final_state = agent.invoke_graph(graph, initial_state)
+    try:
+        final_state = agent.invoke_graph(graph, initial_state)
+    finally:
+        shutil.rmtree(joern_work_dir, ignore_errors=True)
 
     scan_summary = dict(final_state.get("scan") or {})
     scan_summary.pop("files", None)  # per-file list lives in module_plan.files instead

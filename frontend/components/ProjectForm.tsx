@@ -8,11 +8,10 @@ import { inputClass, selectClass } from "@/lib/formStyles";
 import {
   LLM_PRESETS,
   LLM_PRESET_ENTRIES,
-  isBedrockPrimaryPreset,
   llmPresetForProviderModel,
   type LlmPresetId,
 } from "@/lib/llmPresets";
-import type { GitRepo, Project, ProjectCreateInput } from "@/lib/types";
+import type { GitRepo, LlmDataPolicy, Project, ProjectCreateInput } from "@/lib/types";
 
 interface ProjectFormProps {
   mode: "create" | "edit";
@@ -37,7 +36,10 @@ interface NewProjectDraft {
   defaultBranch: string;
   monorepoPath: string;
   llmChoice: LlmPresetId;
-  fallbackChoice: LlmPresetId;
+  // Never the API key: a secret has no business in sessionStorage.
+  llmModel?: string;
+  llmBaseUrl?: string;
+  dataPolicy?: LlmDataPolicy;
 }
 
 function FormSection({
@@ -120,12 +122,15 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
   const [llmChoice, setLlmChoice] = useState<LlmPresetId>(
     llmPresetForProviderModel(initial?.llm_provider, initial?.llm_model),
   );
-  const [fallbackChoice, setFallbackChoice] = useState<LlmPresetId>(
-    llmPresetForProviderModel(
-      initial?.fallback_llm_provider || "ollama",
-      initial?.fallback_llm_model || "granite-code:3b",
-    ),
+  // OpenAI-compatible servers serve whatever model id they were started
+  // with, so the model is free text for that provider.
+  const [llmModel, setLlmModel] = useState(
+    initial?.llm_provider === "openai_compat" ? initial.llm_model : LLM_PRESETS["openai-compat"].model,
   );
+  const [llmBaseUrl, setLlmBaseUrl] = useState(initial?.llm_base_url ?? "");
+  const [llmApiKey, setLlmApiKey] = useState("");
+  const [dataPolicy, setDataPolicy] = useState<LlmDataPolicy>(initial?.llm_data_policy ?? "allow_external");
+  const isOpenAiCompat = LLM_PRESETS[llmChoice].provider === "openai_compat";
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -167,7 +172,9 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
           if (draft.defaultBranch !== undefined) setDefaultBranch(draft.defaultBranch);
           if (draft.monorepoPath !== undefined) setMonorepoPath(draft.monorepoPath);
           if (draft.llmChoice !== undefined) setLlmChoice(draft.llmChoice);
-          if (draft.fallbackChoice !== undefined) setFallbackChoice(draft.fallbackChoice);
+          if (draft.llmModel !== undefined) setLlmModel(draft.llmModel);
+          if (draft.llmBaseUrl !== undefined) setLlmBaseUrl(draft.llmBaseUrl);
+          if (draft.dataPolicy !== undefined) setDataPolicy(draft.dataPolicy);
         }
         sessionStorage.removeItem(NEW_PROJECT_DRAFT_KEY);
       } catch {
@@ -240,7 +247,9 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
             defaultBranch,
             monorepoPath,
             llmChoice,
-            fallbackChoice,
+            llmModel,
+            llmBaseUrl,
+            dataPolicy,
           };
           sessionStorage.setItem(NEW_PROJECT_DRAFT_KEY, JSON.stringify(draft));
         } catch {
@@ -301,15 +310,20 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
       enable_secrets: enableSecrets,
       scan_mode: "full",
       llm_provider: LLM_PRESETS[llmChoice].provider,
-      llm_model: LLM_PRESETS[llmChoice].model,
+      llm_model: isOpenAiCompat ? llmModel.trim() || LLM_PRESETS[llmChoice].model : LLM_PRESETS[llmChoice].model,
+      llm_data_policy: dataPolicy,
     };
+    if (isOpenAiCompat) {
+      payload.llm_base_url = llmBaseUrl.trim() || null;
+      // Blank keeps whatever key is stored; the key is never read back.
+      if (llmApiKey.trim()) payload.llm_api_key = llmApiKey.trim();
+    }
     if (mode === "create" && pendingConnectionId) {
       payload.git_connection_id = pendingConnectionId;
     }
-    if (isBedrockPrimaryPreset(llmChoice)) {
-      payload.fallback_llm_provider = LLM_PRESETS[fallbackChoice].provider;
-      payload.fallback_llm_model = LLM_PRESETS[fallbackChoice].model;
-    }
+    // No fallback is sent: the project's (default "none") applies, so a
+    // scan stops LLM work at the cost cutoff instead of silently moving to
+    // a local Ollama model nobody configured.
 
     setError(null);
     setSubmitting(true);
@@ -509,6 +523,67 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
                 {preset.label}
               </option>
             ))}
+          </select>
+        </Field>
+        {isOpenAiCompat && (
+          <>
+            <Field label="Model" htmlFor="llm-model" hint="The model id your server serves, e.g. Qwen/Qwen2.5-Coder-32B-Instruct.">
+              <input
+                id="llm-model"
+                value={llmModel}
+                onChange={(event) => setLlmModel(event.target.value)}
+                className={inputClass}
+                autoComplete="off"
+              />
+            </Field>
+            <Field
+              label="Base URL"
+              htmlFor="llm-base-url"
+              hint="Include the API version prefix. Leave blank to use the server default."
+            >
+              <input
+                id="llm-base-url"
+                type="url"
+                value={llmBaseUrl}
+                onChange={(event) => setLlmBaseUrl(event.target.value)}
+                placeholder="http://localhost:8000/v1"
+                className={inputClass}
+                autoComplete="off"
+              />
+            </Field>
+            <Field
+              label="API key"
+              htmlFor="llm-api-key"
+              hint={
+                initial?.llm_api_key_set
+                  ? "A key is saved. Leave blank to keep it."
+                  : "Optional for local servers. Stored server-side and never shown again."
+              }
+            >
+              <input
+                id="llm-api-key"
+                type="password"
+                value={llmApiKey}
+                onChange={(event) => setLlmApiKey(event.target.value)}
+                className={inputClass}
+                autoComplete="new-password"
+              />
+            </Field>
+          </>
+        )}
+        <Field
+          label="Code sharing"
+          htmlFor="llm-data-policy"
+          hint="Local only refuses to start a scan whose LLM is outside localhost or a private network."
+        >
+          <select
+            id="llm-data-policy"
+            value={dataPolicy}
+            onChange={(event) => setDataPolicy(event.target.value as LlmDataPolicy)}
+            className={selectClass}
+          >
+            <option value="allow_external">Allow external LLM providers</option>
+            <option value="local_only">Local only</option>
           </select>
         </Field>
         <label className="flex items-center gap-2 text-sm text-[var(--ink)]">

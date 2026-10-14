@@ -85,7 +85,8 @@ _PASS_B_SYSTEM = (
     "methods the catalog already covers.\n"
     "- Each pattern must be a valid Python regex, under 200 characters, with "
     "a word boundary on the identifier. No nested *+ or .*.* (ReDoS).\n"
-    "- Respond with a JSON array of objects only. No prose, no markdown fences."
+    "- Respond with one JSON object {\"rules\": [...]} only (an empty list "
+    "if nothing project-specific is worth adding). No prose, no markdown fences."
 )
 
 
@@ -266,6 +267,19 @@ def _ensure_runtime_llm_id(raw: Dict[str, Any], index: int) -> Dict[str, Any]:
     return entry
 
 
+# One derived rule costs about 170 output tokens (id, title, description, cwe,
+# severity, owasp, languages, frameworks, pattern). Asking for 50 against the
+# default 4096-token ceiling cut the response off after ~24 rules every scan —
+# and a truncated answer is never stored in the result cache, so derivation
+# reran each time and the deep-scan system prompt (which embeds derived
+# rules) changed with it. Ask for a number that fits and size the ceiling to
+# match instead.
+PASS_B_MAX_RULES_PER_CALL = 30
+PASS_B_TOKENS_PER_RULE = 220
+PASS_B_TOKEN_HEADROOM = 400
+PASS_B_MAX_TOKENS_CEILING = 8192
+
+
 def llm_derive_rules(
     *,
     stack_context: str,
@@ -283,6 +297,11 @@ def llm_derive_rules(
     """Pass B: one LLM call. Empty on parse failure after a single retry."""
     if remaining_slots <= 0:
         return []
+    remaining_slots = min(remaining_slots, PASS_B_MAX_RULES_PER_CALL)
+    max_tokens = min(
+        PASS_B_MAX_TOKENS_CEILING,
+        remaining_slots * PASS_B_TOKENS_PER_RULE + PASS_B_TOKEN_HEADROOM,
+    )
     user = (
         f"Tech stack: {stack_context or 'unknown'}\n"
         f"Frameworks: {', '.join(frameworks) or 'none'}\n"
@@ -297,13 +316,15 @@ def llm_derive_rules(
     raw_text = call_llm_fn(
         _PASS_B_SYSTEM, user, usage=usage, step=LLM_STEP,
         provider=llm_provider, model=llm_model, json_mode=True,
+        max_tokens=max_tokens,
     )
     items, parse_err = parse_llm_json_array(raw_text)
     if parse_err and not items:
         raw_text = call_llm_fn(
-            _PASS_B_SYSTEM, user + "\n\nReturn a JSON array only.",
+            _PASS_B_SYSTEM, user + '\n\nReturn the {"rules": [...]} JSON object only.',
             usage=usage, step=LLM_STEP,
             provider=llm_provider, model=llm_model, json_mode=True,
+            max_tokens=max_tokens,
         )
         items, parse_err = parse_llm_json_array(raw_text)
     if isinstance(items, dict):

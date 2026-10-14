@@ -14,6 +14,8 @@ a log line, and stripped from any provider error text by `redact_text` before it
 from __future__ import annotations
 
 import logging
+import json
+import urllib.request
 from typing import Any, Callable, Iterator, Mapping
 
 from app.dast.domain.interfaces import AdapterResponse
@@ -100,6 +102,28 @@ class OllamaAdapter:
         self.reasoning = reasoning
         self._chat_factory = chat_factory
         self._emit = emit if emit is not None else lambda text: print(text, end="", flush=True)
+
+    def check_availability(self) -> None:
+        """Fail fast when Ollama or the selected model is unavailable.
+
+        This intentionally uses Ollama's small HTTP API instead of constructing a LangChain
+        client, so a DAST scan can validate its model dependency before it probes the target.
+        """
+        url = self.base_url.rstrip("/") + "/api/show"
+        request = urllib.request.Request(
+            url,
+            data=json.dumps({"name": self.model}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
+                if response.status >= 400:
+                    raise ModelUnavailable(f"Ollama returned HTTP {response.status}")
+        except ModelError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - classified without leaking provider details
+            raise _classify(exc, ()) from exc
 
     def _chat(self, temperature: float | None, max_tokens: int | None):
         factory = self._chat_factory

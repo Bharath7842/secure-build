@@ -30,6 +30,7 @@ from typing import Any
 
 from app.config import settings  # noqa: F401  (kept importable for callers that patch it)
 from app.dast.domain.redaction import redact_text
+from app.services.dast_session_assessment import assess_session_loss
 
 # (step id, title, banner labels that open it)
 # Older labels stay in the tuples so scans persisted before a rename (`authenticating`,
@@ -124,6 +125,11 @@ def _thinking_from_log(evidence: list[str]) -> list[str]:
         if text and text not in out:
             out.append(text[:2000])
     return out[:40]
+
+
+def _display_evidence(evidence: list[str]) -> list[str]:
+    """Show the complete non-empty timeline evidence in its original order."""
+    return [line for line in evidence if line.strip()]
 
 
 _SCRATCHPAD_OPENER_RE = re.compile(
@@ -572,7 +578,7 @@ def get_narration(
             # Full log for this step — the UI renders it inline, not behind a
             # dropdown, so nothing is truncated here (the durable on-disk log
             # itself is the real ceiling: scan_log._MAX_LINES_PER_SCAN).
-            "evidence": [line for line in evidence if line.strip()],
+            "evidence": _display_evidence(evidence),
             "narration": "",
             # The model's own raw scratchpad, shown as its own "thinking"
             # block — never merged into `reasoning`, which is LLM-authored
@@ -643,6 +649,7 @@ def get_narration(
                 ).start()
         steps.append(step)
 
+    assessment = assess_session_loss(log_lines)
     return {
         "scan_id": scan_id,
         "status": scan_status,
@@ -652,6 +659,7 @@ def get_narration(
         "steps": steps,
         "pending": pending,
         "llm_enabled": use_llm,
+        "assessment": assessment,
     }
 
 
@@ -714,4 +722,6 @@ def persistable(payload: dict[str, Any]) -> dict[str, Any]:
             "reasoning": [],
             "source": payload.get("intro_source"),
         }
+    if payload.get("assessment"):
+        out["_session_assessment"] = payload["assessment"]
     return out

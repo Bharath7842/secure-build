@@ -144,12 +144,16 @@ export default function DastDiscoveryPanel({ discovery, onClose }: { discovery: 
           ) : (
             <ul className="mt-2 space-y-1 text-xs">
               {forms.map((f, i) => {
-                const form = f.form as { action?: string; method?: string; inputs?: { name?: string | null }[] };
+                const form = f.form as { action?: string; method?: string; inputs?: { name?: string | null; type?: string }[] };
+                const fields = (form.inputs ?? []).filter((x) => x.name);
                 return (
-                  <li key={i} className="flex items-start gap-2">
+                  <li key={i} className="space-y-1">
+                    <div className="flex items-start gap-2">
                     <MethodTag method={(form.method ?? "GET").toUpperCase()} />
                     <span className="min-w-0 break-all font-mono text-[var(--ink)]">{form.action || f.page}</span>
-                    <span className="shrink-0 text-[var(--muted)]">{(form.inputs ?? []).filter((x) => x.name).length} fields</span>
+                    <span className="shrink-0 text-[var(--muted)]">{fields.length} fields</span>
+                    </div>
+                    {fields.length > 0 && <p className="pl-12 text-[11px] text-[var(--muted)]">Fields inspected: {fields.map((x) => `${x.name}${x.type ? ` (${x.type})` : ""}`).join(", ")}</p>}
                   </li>
                 );
               })}

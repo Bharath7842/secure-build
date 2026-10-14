@@ -2,7 +2,7 @@
 
 import { useId, useState } from "react";
 
-import DastAuthzPreview, { RoleBadge } from "@/components/DastAuthzPreview";
+import { RoleBadge } from "@/components/DastAuthzPreview";
 import { inputClass, selectClass } from "@/lib/formStyles";
 import type { DastAuthMethod, DastIdentityInput, DastRoleName } from "@/lib/types";
 
@@ -311,7 +311,6 @@ export default function DastIdentitiesEditor({ identities, onChange, showErrors 
       </button>
       {identities.length === 0 && addedOnce && <p className="text-xs text-[var(--muted)]">All identities removed: the scan will run anonymously.</p>}
 
-      <DastAuthzPreview identities={identities.map((i) => ({ label: i.label, role: i.role, customName: i.customRole }))} />
     </fieldset>
   );
 }

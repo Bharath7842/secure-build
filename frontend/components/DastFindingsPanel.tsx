@@ -77,6 +77,7 @@ function FindingCard({ finding }: { finding: Finding }) {
           {severity}
         </span>
         <span className={`text-xs font-semibold ${VERDICT_TEXT[kind]}`}>{DAST_VERDICT_LABEL[kind]}</span>
+        {finding.evidence?.severity_source && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-xs text-violet-700">{finding.evidence.severity_source}</span>}
         {finding.confidence_label && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">{finding.confidence_label} confidence</span>}
         {!finding.confidence_label && confidence && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">{confidence} confidence</span>}
         {finding.rule_id && <span className="font-mono text-[11px] text-[var(--muted)]">{finding.rule_id}</span>}
@@ -120,6 +121,12 @@ function FindingCard({ finding }: { finding: Finding }) {
       </dl>
       {finding.verdict_reason && <p className="mt-1.5 text-sm text-[var(--muted)]">{hideInconclusive(finding.verdict_reason)}</p>}
       <EvidenceBlock finding={finding} />
+      {finding.evidence?.reproduction && (
+        <div className="mt-2 rounded border border-sky-100 bg-sky-50/60 px-2.5 py-2">
+          <p className="text-xs font-medium text-sky-900">How to reproduce it</p>
+          <p className="mt-0.5 whitespace-pre-wrap text-xs text-[var(--ink)]">{finding.evidence.reproduction}</p>
+        </div>
+      )}
       {affected.length > 1 && (
         <details className="mt-2 text-xs">
           <summary className="cursor-pointer text-[var(--muted)]">Also seen on {affected.length - 1} other endpoint{affected.length === 2 ? "" : "s"}</summary>
@@ -158,7 +165,7 @@ export default function DastFindingsPanel({ scanId, live, rolePair, onRolePairCh
   const [check, setCheck] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
   const [all, setAll] = useState<Finding[] | null>(null);
-  const [totals, setTotals] = useState<{ tp: number; dismissed: number; total: number } | null>(null);
+  const [totals, setTotals] = useState<{ tp: number; fp: number; unverified: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const effectiveRole = rolePair ?? roleFilter;
@@ -177,7 +184,8 @@ export default function DastFindingsPanel({ scanId, live, rolePair, onRolePairCh
         setAll(res.findings);
         setTotals({
           tp: res.tp_count,
-          dismissed: (res.fp_count ?? 0) + (res.unverified_count ?? 0),
+          fp: res.fp_count ?? 0,
+          unverified: res.unverified_count ?? 0,
           total: res.total_count ?? res.findings.length,
         });
         setError(null);
@@ -222,6 +230,7 @@ export default function DastFindingsPanel({ scanId, live, rolePair, onRolePairCh
     const list = all ?? [];
     return {
       confirmed: list.filter((f) => dastVerdictKind(f.verdict) === "confirmed"),
+      unverified: list.filter((f) => dastVerdictKind(f.verdict) === "unverified"),
       dismissed: list.filter((f) => dastVerdictKind(f.verdict) === "dismissed"),
     };
   }, [all]);
@@ -238,7 +247,7 @@ export default function DastFindingsPanel({ scanId, live, rolePair, onRolePairCh
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-[var(--ink)]">Findings</h2>
           <p className="truncate text-xs text-[var(--muted)]">
-            {totals ? `${totals.tp} confirmed · ${totals.dismissed} dismissed${filtered ? ` · showing ${all?.length ?? 0} of ${totals.total}` : ""}` : "Loading…"}
+            {totals ? `${totals.tp} confirmed · ${totals.unverified} unverified · ${totals.fp} false positives${filtered ? ` · showing ${all?.length ?? 0} of ${totals.total}` : ""}` : "Loading…"}
           </p>
         </div>
         <button type="button" onClick={onClose} aria-label="Close findings" className="agent-focus-ring rounded-md px-2 py-1 text-sm text-[var(--muted)] hover:bg-slate-100">
@@ -328,6 +337,12 @@ export default function DastFindingsPanel({ scanId, live, rolePair, onRolePairCh
           <section aria-labelledby="dast-g-confirmed">
             <h3 id="dast-g-confirmed" className="text-xs font-semibold uppercase tracking-wide text-red-700">Confirmed ({groups.confirmed.length})</h3>
             <ul className="mt-2 space-y-3">{groups.confirmed.map((f) => <FindingCard key={f.id} finding={f} />)}</ul>
+          </section>
+        )}
+        {groups.unverified.length > 0 && (
+          <section aria-labelledby="dast-g-unverified">
+            <h3 id="dast-g-unverified" className="text-xs font-semibold uppercase tracking-wide text-amber-700">Needs review ({groups.unverified.length})</h3>
+            <ul className="mt-2 space-y-3">{groups.unverified.map((f) => <FindingCard key={f.id} finding={f} />)}</ul>
           </section>
         )}
         {groups.dismissed.length > 0 && (

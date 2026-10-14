@@ -448,6 +448,25 @@ def test_is_excluded_from_finding_scan_matches_schema_cvs_log4j(llm_file_scan):
     )
     assert llm_file_scan.is_excluded_from_finding_scan("log4j.xml")
     assert llm_file_scan.is_excluded_from_finding_scan("src/CVS/Tag")
+
+
+def test_config_dirs_exclude_only_data_files(llm_file_scan):
+    """config/ used to be skipped wholesale, hiding Java packages such as
+    com/acme/config/SecurityConfig.java (where Spring Security rules live)."""
+    scanned = [
+        "src/main/java/com/acme/config/SecurityConfig.java",
+        "src/main/java/com/acme/configuration/WebConfig.kt",
+        "app/config/settings.py",
+        "config/application.yml",
+        "config/application-prod.properties",
+        "configuration/bootstrap.yaml",
+        "config/.env",
+    ]
+    for path in scanned:
+        assert not llm_file_scan.is_excluded_from_finding_scan(path), path
+    for path in ("config/NPG.xml", "configuration/app.xml", "config/ApplicationResources.properties",
+                 "config/data.json"):
+        assert llm_file_scan.is_excluded_from_finding_scan(path), path
     assert llm_file_scan.is_excluded_from_finding_scan("log4j.xml")
     assert llm_file_scan.is_excluded_from_finding_scan("src/main/resources/log4j2.xml")
     assert llm_file_scan.is_excluded_from_finding_scan("a.compose")

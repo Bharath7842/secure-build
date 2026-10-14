@@ -107,6 +107,31 @@ class ModelGatewayImpl:
                 problems.append(f"{task} ({provider}): {redact_text(str(exc), self._secrets())}")
         return problems
 
+    def check_availability(self) -> list[str]:
+        """Check routed providers that expose a cheap health probe.
+
+        The gateway deliberately does not turn this into a model completion: DAST startup must
+        not spend tokens just to decide whether it may contact the target. Providers without a
+        transport-level probe still get their configuration checked by ``check_configuration``.
+        """
+        problems: list[str] = []
+        checked: set[tuple[str, str]] = set()
+        for task, (provider, model) in self._routing.items():
+            key = (provider, model)
+            if key in checked:
+                continue
+            checked.add(key)
+            try:
+                adapter = self._adapter(provider, model)
+                probe = getattr(adapter, "check_availability", None)
+                if probe:
+                    probe()
+            except ModelError as exc:
+                problems.append(f"{task} ({provider}): {redact_text(str(exc), self._secrets())}")
+            except Exception as exc:  # noqa: BLE001 - health probes must report, not crash here
+                problems.append(f"{task} ({provider}): {redact_text(str(exc), self._secrets())}")
+        return problems
+
     # ---- the call -----------------------------------------------------------------------------
 
     def complete(
