@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from llm_client import call_llm, parse_llm_json_array
 
+from pipeline import reachability
 from pipeline.call_graph import Flow, FLOW_VERIFY_CAP, flow_to_dict
 from pipeline.llm_file_scan import (
     SINGLE_CALL_CHAR_BUDGET,
@@ -191,6 +192,21 @@ def build_taint_path_note(flow: Flow) -> str:
     return note + "\n"
 
 
+def build_other_sources_note(flow: Flow) -> str:
+    """Entry points of flows collapsed into this one (same sink)."""
+    if not flow.other_sources:
+        return ""
+    return (
+        "Other entry points that reach this same sink (verified once here — it is "
+        "exploitable if any entry point delivers unsanitized input to it):\n"
+        + "\n".join(
+            f"  {s.get('file')}:L{s.get('line')}  {s.get('method') or ''}  {s.get('label') or ''}".rstrip()
+            for s in flow.other_sources
+        )
+        + "\n\n"
+    )
+
+
 def build_flow_user_prompt(flow: Flow, slice_text: str) -> str:
     files = ", ".join(flow.files)
     hop_summary = " → ".join(h.method for h in flow.hops)
@@ -206,6 +222,7 @@ def build_flow_user_prompt(flow: Flow, slice_text: str) -> str:
         f"Files: {files}\n"
         f"{source_note}\n\n"
         f"{build_taint_path_note(flow)}"
+        f"{build_other_sources_note(flow)}"
         f"{slice_text}\n"
     )
 
@@ -237,7 +254,7 @@ def build_flow_group_user_prompt(
             f"F{n}: {chain}  ({' → '.join(h.method for h in flow.hops)}; "
             f"entry tier {flow.entry_tier}; source is {_source_note(flow)})"
         )
-        note = build_taint_path_note(flow)
+        note = build_taint_path_note(flow) + build_other_sources_note(flow)
         if note:
             flow_lines.append(f"  F{n} " + note.rstrip())
     return (
@@ -319,6 +336,9 @@ def _findings_for_flow(
     flow_path = _flow_path_payload(flow)
     affected = list(flow.files)
     data_flow = _data_flow_line(flow)
+    # Joern flows carry the expression-level path; keep it as evidence rather
+    # than only showing it to the model.
+    evidence = reachability.evidence_from_flow(flow) if flow.taint_path else None
 
     for raw_item in items:
         if isinstance(raw_item, dict):
@@ -345,6 +365,9 @@ def _findings_for_flow(
             finding["source"] = flow.hops[0].label
         if not finding.get("sink"):
             finding["sink"] = sink.label
+        if evidence is not None:
+            finding["reachability"] = evidence
+            reachability.apply_confidence(finding)
         if should_publish_finding(
             finding, sink.body,
             suppress_no_cwe=suppress_no_cwe,

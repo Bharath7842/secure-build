@@ -563,7 +563,8 @@ def test_build_graph_wires_joern_nodes(agent):
     assert ("map_modules_and_risk", "build_joern_cpg") in edges
     assert ("build_joern_cpg", "build_call_graph") in edges
     assert ("scan_triage_files", "joern_scan") in edges
-    assert ("joern_scan", "group_triage_findings") in edges
+    assert ("joern_scan", "corroborate_flows") in edges
+    assert ("corroborate_flows", "group_triage_findings") in edges
 
 
 # ---------------------------------------------------------------------------

@@ -383,7 +383,42 @@ def _taint_flow_text(finding: Finding) -> str:
         parts.append(f"Sink: {sink}")
     if flow:
         parts.append(f"Flow: {flow}")
+    evidence = _reachability_text(finding)
+    if evidence:
+        parts.append(evidence)
     return "\n".join(parts)
+
+
+# Mirrors sast_engine pipeline/reachability.py _STATUS_RANK (the app can't
+# import the engine).
+_REACHABILITY_RANK = {"path": 0, "sanitized_path": 1, "entry_reachable": 2}
+
+
+def _reachability_text(finding: Finding) -> str:
+    """The Joern source->sink path attached to this finding, one step per line."""
+    evidence = finding.reachability or {}
+    steps = evidence.get("taint_path") or []
+    if not steps:
+        return ""
+    status = evidence.get("status")
+    if status == "entry_reachable":
+        lines = ["Call path from an entry point (call graph, method level):"]
+        lines += [
+            f"  {i}. {s.get('method') or ''} -> {str(s.get('code') or '').strip()}  "
+            f"({to_module_path(s.get('file')) or s.get('file')}:{s.get('line')})"
+            for i, s in enumerate(steps, start=1)
+        ]
+    else:
+        sanitized = status == "sanitized_path"
+        lines = [f"Dataflow evidence (code property graph{', through a sanitizer' if sanitized else ''}):"]
+        lines += [
+            f"  {i}. {str(s.get('code') or '').strip()}  ({to_module_path(s.get('file')) or s.get('file')}:{s.get('line')})"
+            for i, s in enumerate(steps, start=1)
+        ]
+    elided = (evidence.get("steps_total") or len(steps)) - len(steps)
+    if elided > 0:
+        lines.append(f"  ... {elided} intermediate step(s) omitted")
+    return "\n".join(lines)
 
 
 def _location_paths(finding: Finding) -> list[str]:
@@ -628,9 +663,15 @@ def group_findings_by_issue(findings: list[Finding]) -> list[Finding]:
             members[0].occurrence_count = 1
             result.append(members[0])
             continue
+        # Among equals, prefer the member with the strongest reachability
+        # evidence so the row shows it.
         representative = min(
             members,
-            key=lambda f: (SEVERITY_ORDER.index(_severity_bucket(f.severity)), -(f.cvss or 0)),
+            key=lambda f: (
+                SEVERITY_ORDER.index(_severity_bucket(f.severity)),
+                -(f.cvss or 0),
+                _REACHABILITY_RANK.get((f.reachability or {}).get("status"), 9),
+            ),
         )
         paths: list[str] = []
         seen: set[str] = set()

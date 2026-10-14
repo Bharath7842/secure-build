@@ -47,6 +47,7 @@ def build_finding_row(scan_id: str, f: Mapping[str, Any], file_path: str) -> Fin
         matched_text=f.get("matched_text"),
         group_by_rule=f.get("group_by_rule"),
         flow_path=f.get("flow_path"),
+        reachability=f.get("reachability"),
         affected_files=f.get("affected_files"),
         # DAST fields: absent (None) on SAST/SCA/SBOM finding dicts.
         target=f.get("target"),

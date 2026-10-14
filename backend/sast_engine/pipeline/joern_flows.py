@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
-from pipeline.call_graph import _AUTH_ANNOTATIONS, Flow, FlowHop, _SINK_SEVERITY
+from pipeline.call_graph import _AUTH_ANNOTATIONS, Flow, FlowHop, _SINK_SEVERITY, collapse_flows_by_sink
 
 ENTRY_TIER = "joern"
 # Fallback window when Joern has no method end line (some frontends, or a
@@ -191,9 +191,10 @@ def flows_from_joern(
 
     Single-file flows are dropped when that file already went through the
     full-file LLM deep scan — the model saw the whole file there, so a second
-    pass over the same code is spend without new coverage.
+    pass over the same code is spend without new coverage. Flows reaching the
+    same sink collapse to the best-ranked one (collapse_flows_by_sink).
 
-    Returns (flows[:cap], total_before_cap).
+    Returns (flows[:cap], distinct sinks before the cap).
     """
     src = _SourceCache(repo_root)
     deep = {_norm(p) for p in (deep_scanned_paths or set())}
@@ -212,4 +213,5 @@ def flows_from_joern(
             seen.add(sig)
             flows.append(flow)
     flows.sort(key=_rank)
+    flows = collapse_flows_by_sink(flows)
     return flows[: max(0, cap)], len(flows)

@@ -65,6 +65,7 @@ def _run_light_migrations(engine) -> None:
         for col_name, col_sql in (
             ("kind", "ALTER TABLE findings ADD COLUMN kind VARCHAR(40)"),
             ("flow_path", "ALTER TABLE findings ADD COLUMN flow_path JSON"),
+            ("reachability", "ALTER TABLE findings ADD COLUMN reachability JSON"),
             ("verdict", "ALTER TABLE findings ADD COLUMN verdict VARCHAR(40)"),
             ("confidence", "ALTER TABLE findings ADD COLUMN confidence FLOAT"),
             ("source", "ALTER TABLE findings ADD COLUMN source VARCHAR(300)"),

@@ -83,7 +83,8 @@ def test_parallel_graph_shape(agent):
     edges = {(e.source, e.target) for e in graph.edges}
     for branch in ("flows", "scan_deep_files", "scan_triage_files"):
         assert ("fan_out", branch) in edges
-        assert (branch, "group_triage_findings") in edges
+        assert (branch, "corroborate_flows") in edges
+    assert ("corroborate_flows", "group_triage_findings") in edges
 
 
 def test_each_parallel_stage_runs_in_its_log_context_and_reports_finishing(agent, tmp_path, capsys):

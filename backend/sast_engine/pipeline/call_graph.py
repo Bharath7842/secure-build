@@ -384,6 +384,9 @@ class Flow:
     # flow is never dropped for having either.
     guards: List[Dict[str, Any]] = field(default_factory=list)
     sanitizers: List[Dict[str, Any]] = field(default_factory=list)
+    # Entry points of flows collapsed into this one because they reach the
+    # same sink ({file, line, method, label} each; collapse_flows_by_sink).
+    other_sources: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def entry_key(self) -> str:
@@ -1333,6 +1336,36 @@ def sample_type_names_from_graph(graph: CallGraph, *, limit: int) -> List[str]:
     return names
 
 
+MAX_OTHER_SOURCES = 10
+
+
+def collapse_flows_by_sink(flows: Sequence[Flow]) -> List[Flow]:
+    """One flow per (sink file, sink line, sink kind), in the given order.
+
+    Several entry points often reach one sink (every endpoint that calls the
+    same DAO method). Verifying each separately costs a call per entry point
+    and yields the same finding several times, so `flows` must already be
+    ranked best-first: the first flow per sink is kept and the rest are listed
+    on it as `other_sources`, which the verify prompt names."""
+    kept: Dict[Tuple[str, int, str], Flow] = {}
+    out: List[Flow] = []
+    for flow in flows:
+        sink = flow.hops[-1]
+        key = (_norm_file(sink.file), sink.line, flow.sink_kind)
+        first = kept.get(key)
+        if first is None:
+            kept[key] = flow
+            out.append(flow)
+            continue
+        src = flow.hops[0]
+        entry = {"file": src.file, "line": src.line, "method": src.method, "label": src.label}
+        seen = {(s["file"], s["line"]) for s in first.other_sources}
+        seen.add((first.hops[0].file, first.hops[0].line))
+        if (src.file, src.line) not in seen and len(first.other_sources) < MAX_OTHER_SOURCES:
+            first.other_sources.append(entry)
+    return out
+
+
 def flow_to_dict(flow: Flow) -> Dict[str, Any]:
     return {
         "entry_tier": flow.entry_tier,
@@ -1356,4 +1389,5 @@ def flow_to_dict(flow: Flow) -> Dict[str, Any]:
         "taint_path": list(flow.taint_path),
         "guards": list(flow.guards),
         "sanitizers": list(flow.sanitizers),
+        "other_sources": list(flow.other_sources),
     }

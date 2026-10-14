@@ -43,8 +43,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
-from llm_client import call_llm, parse_llm_json_array
+from llm_client import PROVIDER_BEDROCK, call_llm, parse_llm_json_array, should_cache_system_prompt
 
+from . import reachability
 from .owasp_map import OWASP_TOP_10_2021, owasp_for_rule
 from .regex_scan import (
     PROCESS_POOL_MIN_FILES,
@@ -92,6 +93,13 @@ LICENSE_HEADER_MIN_LINES = 3
 # Deep-tier nesting (file_workers * chunk_workers, worst case 8*3=24 in-flight
 # requests) is what MAX_INFLIGHT_LLM_CALLS actually throttles.
 MAX_INFLIGHT_LLM_CALLS = 10
+# Small deep-scan files whose system prompt the provider won't cache (below
+# the model's cache minimum, or a non-Bedrock provider) are reviewed several
+# per call: the prompt is paid once per batch instead of once per file. On a
+# repo of small Angular files the prompt was ~90% of every call's input.
+BATCH_FILE_MAX_CHARS = 6_000
+BATCH_CHAR_BUDGET = 16_000
+BATCH_MAX_FILES = 8
 DEFAULT_FILE_WORKERS = 8
 DEFAULT_CHUNK_WORKERS = 3
 
@@ -676,6 +684,65 @@ def looks_vendored_or_minified(rel_path: str, text: Optional[str]) -> bool:
     return avg_line_length > _MINIFIED_AVG_LINE_LENGTH_THRESHOLD
 
 
+# Files that only declare shapes — nothing executes, so there is no source,
+# sink or missing check for a reviewer to find. Detected by content, like
+# looks_generated, and deliberately narrow: anything that could hold logic,
+# a query string or a value disqualifies the file.
+#
+# Spring Data repository interface: derived query methods (findByEmail) are
+# built by the framework from the method name and bound as parameters. An
+# @Query/native query is a string someone wrote, and @RepositoryRestResource
+# exposes the repository over HTTP — either keeps the file in.
+_SPRING_DATA_REPO_RE = re.compile(
+    r"\binterface\s+\w+(?:<[^>{]*>)?\s+extends\s+[^{]*?\b\w*Repository\s*<"
+)
+_SPRING_DATA_DISQUALIFIERS = re.compile(
+    r"@(?:Query|NativeQuery|Procedure|RepositoryRestResource|RestResource)\b"
+    r"|\b(?:default|static)\s+[\w<>\[\],\s]+\s+\w+\s*\("
+    r"|\b(?:class|enum|record)\s+\w+"
+)
+_TS_DECLARATION_SUFFIXES = (".ts", ".mts", ".cts")
+_TS_COMMENT_RE = re.compile(r"/\*.*?\*/|//[^\n]*", re.DOTALL)
+# Statements allowed at brace depth 0 of a type-only TypeScript file.
+_TS_DECLARATION_LINE_RE = re.compile(
+    r"^(?:"
+    r"import\b"
+    r"|export\s+(?:\{|\*|type\s*\{)"
+    r"|(?:export\s+)?(?:declare\s+)?(?:interface|type|enum|const\s+enum)\s+\w"
+    r"|export\s+default\s+interface\b"
+    r"|[}|&]"
+    r")"
+)
+
+
+def looks_declaration_only(rel_path: str, text: Optional[str]) -> bool:
+    """True for a Spring Data repository interface with derived queries only,
+    or a TypeScript file holding only imports and interface/type/enum
+    declarations."""
+    if not text:
+        return False
+    lower = rel_path.lower()
+    if lower.endswith(".java"):
+        return bool(_SPRING_DATA_REPO_RE.search(text)) and not _SPRING_DATA_DISQUALIFIERS.search(text)
+    if not lower.endswith(_TS_DECLARATION_SUFFIXES):
+        return False
+    depth = 0
+    declarations = 0
+    for raw in _TS_COMMENT_RE.sub("", text).splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if depth == 0:
+            if not _TS_DECLARATION_LINE_RE.match(line):
+                return False
+            if not line.startswith(("import", "}", "|", "&")):
+                declarations += 1
+        depth += line.count("{") - line.count("}")
+        if depth < 0:
+            return False
+    return declarations > 0 and depth == 0
+
+
 def is_non_analyzable_file(repo_root: Path, rel_path: str, text: Optional[str] = None) -> Optional[str]:
     """Return a skip reason when the file cannot be source-reviewed, else None."""
     if is_excluded_from_finding_scan(rel_path):
@@ -693,6 +760,8 @@ def is_non_analyzable_file(repo_root: Path, rel_path: str, text: Optional[str] =
         return "machine-generated source"
     if looks_vendored_or_minified(rel_path, text):
         return "vendored/minified third-party code"
+    if looks_declaration_only(rel_path, text):
+        return "declarations only (nothing that executes)"
     return None
 
 
@@ -887,6 +956,21 @@ def build_user_prompt(
         f"{skeleton_block}"
         f"Code under review (lines {start_line}-{start_line + max(len(lines) - 1, 0)}):\n"
         "```\n" + "\n".join(numbered) + "\n```\n"
+    )
+
+
+def build_batch_user_prompt(files: Sequence[Tuple[str, str, Optional[Tuple[int, int]]]]) -> str:
+    """Several complete small files in one prompt: (path, text, license span)
+    each. Findings are routed back by the "file" field."""
+    blocks = [
+        build_user_prompt(file_path=path, chunk_text=text, start_line=1, omit_span=omit_span)
+        for path, text, omit_span in files
+    ]
+    return (
+        f"{len(files)} complete files are under review. Judge each file on its own. "
+        'Every finding must also carry "file": the path exactly as written after '
+        '"File:" for the file it is in.\n\n'
+        + "\n".join(blocks)
     )
 
 
@@ -1467,6 +1551,130 @@ def scan_file(
     }
 
 
+def system_prompt_is_cached(system: str, provider: Optional[str], model: Optional[str]) -> bool:
+    """Whether call_llm will serve `system` from the provider prompt cache."""
+    return (provider or PROVIDER_BEDROCK) == PROVIDER_BEDROCK and should_cache_system_prompt(system, model)
+
+
+def _route_batch_item(item: Any, paths: Sequence[str]) -> Optional[str]:
+    if not isinstance(item, dict):
+        return None
+    named = str(item.get("file") or item.get("file_path") or "").strip().replace("\\", "/")
+    if named in paths:
+        return named
+    if named:
+        tail = [p for p in paths if p.endswith("/" + named) or named.endswith("/" + p)]
+        if len(tail) == 1:
+            return tail[0]
+        base = named.rsplit("/", 1)[-1]
+        by_base = [p for p in paths if p.rsplit("/", 1)[-1] == base]
+        if len(by_base) == 1:
+            return by_base[0]
+    return paths[0] if len(paths) == 1 else None
+
+
+def scan_file_batch(
+    *,
+    files: Sequence[Tuple[str, str]],
+    catalog: List[Dict[str, Any]],
+    system_prompt: str,
+    usage: Optional[Dict[str, Any]] = None,
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    call_llm_fn: Callable[..., str] = call_llm,
+    llm_step: str = "scan_deep_files",
+    suppress_no_cwe: bool = True,
+    suppress_http_findings: bool = False,
+    suppress_low_confidence_false_positives: bool = False,
+) -> Optional[List[Dict[str, Any]]]:
+    """Deep-scan several small, single-chunk files ((path, text) each) in one
+    call. Returns one scan_file-shaped result per file, in order, or None when
+    the call failed or never parsed — the caller then scans each file alone,
+    so a bad batch costs a retry, never coverage."""
+    paths = [p for p, _t in files]
+    lines_by_path = {p: t.splitlines() for p, t in files}
+    user = build_batch_user_prompt([
+        (p, t, leading_license_header_span(lines_by_path[p])) for p, t in files
+    ])
+
+    def _call(prompt: str) -> str:
+        with _INFLIGHT:
+            return call_llm_fn(
+                system_prompt, prompt,
+                max_tokens=4096, temperature=0.0,
+                usage=usage, step=llm_step,
+                provider=llm_provider, model=llm_model, json_mode=True,
+            )
+
+    try:
+        items, err = parse_llm_json_array(_call(user))
+        if err and not items:
+            items, err = parse_llm_json_array(_call(
+                user + '\n\nYour previous response could not be parsed as JSON. Respond with the '
+                '{"findings": [...]} JSON object only — no prose, no markdown fences.'
+            ))
+    except Exception:  # noqa: BLE001 — fall back to per-file scans
+        return None
+    if err and not items:
+        return None
+
+    rule_meta = catalog_rule_index(catalog)
+    by_path: Dict[str, List[Dict[str, Any]]] = {p: [] for p in paths}
+    unrouted = 0
+    for item in items:
+        path = _route_batch_item(item, paths)
+        if path is None:
+            unrouted += 1
+            continue
+        lines = lines_by_path[path]
+        norm = normalize_finding(
+            item, file_path=path, chunk_start=1, chunk_end=max(1, len(lines)),
+            source_lines=lines, kind="llm", rule_meta=rule_meta,
+        )
+        if norm is not None:
+            by_path[path].append(norm)
+
+    results = []
+    for path, text in files:
+        merged = finalize_findings(
+            merge_dedupe(by_path[path]), text,
+            suppress_no_cwe=suppress_no_cwe, suppress_http_findings=suppress_http_findings,
+            suppress_low_confidence_false_positives=suppress_low_confidence_false_positives,
+        )
+        tp_count = sum(1 for f in merged if f["verdict"] == "true_positive")
+        results.append({
+            "file_path": path, "chunks": 1, "findings": merged,
+            "tp_count": tp_count, "fp_count": len(merged) - tp_count,
+            "read_error": False, "batched_with": len(files),
+            "chunk_errors": [f"{unrouted} finding(s) in a {len(files)}-file batch named no known file"]
+            if unrouted else [],
+        })
+    return results
+
+
+def plan_deep_scan_batches(
+    files: Sequence[Tuple[int, str, str]],
+    *,
+    char_budget: int = BATCH_CHAR_BUDGET,
+    max_files: int = BATCH_MAX_FILES,
+) -> List[List[Tuple[int, str, str]]]:
+    """Greedy, order-preserving packing of (position, path, text) small files
+    of one language into batches under `char_budget` / `max_files`."""
+    batches: List[List[Tuple[int, str, str]]] = []
+    current: List[Tuple[int, str, str]] = []
+    size = 0
+    for item in files:
+        length = len(item[2])
+        if current and (size + length > char_budget or len(current) >= max_files):
+            batches.append(current)
+            current, size = [], 0
+        current.append(item)
+        size += length
+    if current:
+        batches.append(current)
+    return batches
+
+
 def _log_chunk_start(chunk_index: int, chunk_total: int, file_path: str) -> None:
     if chunk_total > 1:
         print(f"  LLM chunk {chunk_index}/{chunk_total} for {file_path}…", flush=True)
@@ -1501,6 +1709,19 @@ def build_report_from_file_results(file_results: List[Dict[str, Any]]) -> Dict[s
     }
 
 
+def _batchable_text(repo_root: Path, rel_path: str) -> Optional[str]:
+    """The file's text when it can join a deep-scan batch: readable, small,
+    one chunk, and something scan_file would actually review."""
+    text = _read_text(repo_root, rel_path)
+    if text is None or not text.strip() or len(text) > BATCH_FILE_MAX_CHARS:
+        return None
+    if is_non_analyzable_file(repo_root, rel_path, text):
+        return None
+    if len(chunk_file(text, lang_for_path(rel_path))) != 1:
+        return None
+    return text
+
+
 def scan_deep_files(
     *,
     module_plan: Dict[str, Any],
@@ -1523,6 +1744,7 @@ def scan_deep_files(
     suppress_no_cwe: bool = True,
     suppress_http_findings: bool = False,
     suppress_low_confidence_false_positives: bool = False,
+    batch_small_files: bool = True,
 ) -> Dict[str, Any]:
     """LLM-primary scan of every CRITICAL / HIGH file — no regex gate. MEDIUM
     and LOW (and, past DEEP_SCAN_FILE_CAP, overflow CRITICAL/HIGH) are handled
@@ -1537,6 +1759,10 @@ def scan_deep_files(
     caller, e.g. via `files_for_paths`) and `module_plan`'s own files are
     ignored; when omitted, the working set is derived from `module_plan` via
     `files_for_risk_levels(module_plan, LLM_RISK_LEVELS)` as before.
+
+    `batch_small_files` reviews small files several per call when their
+    language's system prompt isn't served from the prompt cache (see
+    BATCH_FILE_MAX_CHARS); a failed batch falls back to one call per file.
     """
     critical_files = entries if entries is not None else files_for_risk_levels(module_plan, LLM_RISK_LEVELS)
     total = len(critical_files)
@@ -1585,13 +1811,60 @@ def scan_deep_files(
             if on_file is not None:
                 on_file(result)
 
+    def _run_batch(batch: List[Tuple[int, str, str]]) -> None:
+        catalog, system_prompt = _prompt_parts(batch[0][1])
+        if on_file_start is not None:
+            with _CALLBACK_LOCK:
+                for position, path, _text in batch:
+                    on_file_start(position + 1, total, path)
+        print(f"  LLM batch of {len(batch)} small file(s): "
+              + ", ".join(p.rsplit("/", 1)[-1] for _pos, p, _t in batch) + "…", flush=True)
+        batch_results = scan_file_batch(
+            files=[(path, text) for _pos, path, text in batch],
+            catalog=catalog, system_prompt=system_prompt,
+            usage=usage, llm_provider=llm_provider, llm_model=llm_model,
+            call_llm_fn=call_llm_fn, llm_step="scan_deep_files",
+            suppress_no_cwe=suppress_no_cwe, suppress_http_findings=suppress_http_findings,
+            suppress_low_confidence_false_positives=suppress_low_confidence_false_positives,
+        )
+        if batch_results is None:
+            for position, path, _text in batch:
+                _run((position, {"path": path}))
+            return
+        for (position, path, _text), result in zip(batch, batch_results):
+            results[position] = result
+            with _CALLBACK_LOCK:
+                if findings_writer is not None:
+                    findings_writer(path, result["findings"])
+                if on_file is not None:
+                    on_file(result)
+
     indexed_files = list(enumerate(critical_files))
-    if total > 1 and file_workers > 1:
-        with ThreadPoolExecutor(max_workers=min(file_workers, total)) as pool:
-            list(pool.map(_run, indexed_files))
+    units: List[Callable[[], None]] = []
+    small_by_lang: Dict[Optional[str], List[Tuple[int, str, str]]] = {}
+    for position, entry in indexed_files:
+        path = entry["path"]
+        text = _batchable_text(repo_root, path) if batch_small_files else None
+        if text is not None:
+            _catalog, system_prompt = _prompt_parts(path)
+            if not system_prompt_is_cached(system_prompt, llm_provider, llm_model):
+                small_by_lang.setdefault(lang_for_path(path), []).append((position, path, text))
+                continue
+        units.append(lambda item=(position, entry): _run(item))
+    for small in small_by_lang.values():
+        for batch in plan_deep_scan_batches(small):
+            if len(batch) == 1:
+                position, path, _text = batch[0]
+                units.append(lambda item=(position, critical_files[position]): _run(item))
+            else:
+                units.append(lambda b=batch: _run_batch(b))
+
+    if len(units) > 1 and file_workers > 1:
+        with ThreadPoolExecutor(max_workers=min(file_workers, len(units))) as pool:
+            list(pool.map(lambda unit: unit(), units))
     else:
-        for item in indexed_files:
-            _run(item)
+        for unit in units:
+            unit()
 
     final = [r for r in results if r is not None]
     return {
@@ -2343,6 +2616,8 @@ def build_group_confirm_prompt(
         f"Representative occurrence — {representative.get('file_path')}:\n"
         f"```\n{context}\n```\n"
     )
+    if representative.get("reachability"):
+        user += "\n" + reachability.render_evidence(representative["reachability"]) + "\n"
     return system, user
 
 
@@ -2478,9 +2753,10 @@ def build_group_confirm_batch_prompt(
         })
         line = int(representative.get("line") or 1)
         context = build_code_context(entry["source_text"], line, representative.get("matched_text") or "")
-        context_blocks.append(
-            f"Pattern {entry['group_index']} — {representative.get('file_path')}:\n```\n{context}\n```"
-        )
+        block = f"Pattern {entry['group_index']} — {representative.get('file_path')}:\n```\n{context}\n```"
+        if representative.get("reachability"):
+            block += "\n" + reachability.render_evidence(representative["reachability"])
+        context_blocks.append(block)
     system = (
         f"{_GROUP_CONFIRM_BATCH_SYSTEM}\n\n{_GROUP_BATCH_RESPONSE_SCHEMA}\n\n"
         f"Tech stack: {stack_context or 'unknown'}\n"
@@ -2604,6 +2880,11 @@ def group_unverified_findings(
                 finding.get("verdict") == VERDICT_UNVERIFIED
                 and str(finding.get("severity") or "").upper() in wanted_severities
             ):
+                # Regex and Joern-query findings are built per file and carry
+                # no path of their own; confirmation needs it for the excerpt,
+                # the occurrence list and the DB update key.
+                if not finding.get("file_path") and file_result.get("file_path"):
+                    finding["file_path"] = file_result["file_path"]
                 candidates.append(finding)
 
     groups: Dict[tuple, List[Dict[str, Any]]] = {}
@@ -2708,6 +2989,11 @@ def group_confirm_unverified_findings(
                 occurrence_paths.append(p)
         return occurrence_paths
 
+    def _representative(members: List[Dict[str, Any]]) -> Dict[str, Any]:
+        # The occurrence with the strongest reachability evidence is the most
+        # informative one to show; ties keep first-seen order.
+        return min(members, key=lambda m: reachability.evidence_rank(m.get("reachability")))
+
     def _apply_result(members: List[Dict[str, Any]], result: Dict[str, Any]) -> None:
         if result.get("error") is not None:
             return
@@ -2720,10 +3006,11 @@ def group_confirm_unverified_findings(
             )
             if result["verdict"] == "true_positive" and result.get("ai_fix"):
                 m["ai_fix"] = result["ai_fix"]
+            reachability.apply_confidence(m)
 
     def _run(key: tuple) -> Dict[str, Any]:
         members = groups[key]
-        representative = members[0]
+        representative = _representative(members)
         occurrence_paths = _occurrence_paths(members)
         source_text = _text_for(representative.get("file_path") or "")
         result = confirm_finding_group(
@@ -2739,7 +3026,7 @@ def group_confirm_unverified_findings(
         entries = []
         for i, key in enumerate(batch_keys):
             members = groups[key]
-            representative = members[0]
+            representative = _representative(members)
             entries.append({
                 "group_index": i,
                 "representative": representative,

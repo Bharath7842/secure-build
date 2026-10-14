@@ -310,6 +310,7 @@ def reconcile_unverified_findings(scan_id: str, *, capped: bool = False) -> None
                     "verdict": row.verdict,
                     "kind": row.kind,
                     "file_path": file_path,
+                    "reachability": row.reachability,
                 }
             )
 
@@ -459,6 +460,48 @@ def _make_findings_writer(scan_id: str):
             session.close()
 
     return write_findings
+
+
+def _make_reachability_updates_writer(scan_id: str):
+    """Like `_make_verdict_updates_writer`, for Joern paths that
+    node_corroborate_flows attaches to already-persisted findings: updates
+    `reachability` and `confidence` in place, keyed the same way."""
+
+    def write_reachability_updates(file_path: str, updates: list[dict]) -> None:
+        if not updates:
+            return
+        session = db_module.SessionLocal()
+        try:
+            changed = 0
+            with _DB_WRITE_LOCK:
+                for update in updates:
+                    rule_id = update.get("rule_id")
+                    line = update.get("line")
+                    if rule_id is None or line is None:
+                        continue
+                    changed += (
+                        session.query(Finding)
+                        .filter(
+                            Finding.scan_id == scan_id,
+                            Finding.file_path == file_path,
+                            Finding.rule_id == rule_id,
+                            Finding.line == line,
+                        )
+                        .update(
+                            {
+                                "reachability": update.get("reachability"),
+                                "confidence": update.get("confidence"),
+                            },
+                            synchronize_session=False,
+                        )
+                    )
+                session.commit()
+            if changed:
+                scan_log.log(scan_id, f"  Attached code property graph dataflow evidence to {changed} finding(s) in {file_path}.")
+        finally:
+            session.close()
+
+    return write_reachability_updates
 
 
 def _make_verdict_updates_writer(scan_id: str):
@@ -1124,6 +1167,7 @@ def execute_scan(scan_id: str) -> None:
                         findings_writer=_make_findings_writer(scan.id),
                         discovery_writer=_make_discovery_writer(scan.id),
                         verdict_updates_writer=_make_verdict_updates_writer(scan.id),
+                        reachability_updates_writer=_make_reachability_updates_writer(scan.id),
                     )
                     discovery = engine_result.get("discovery") or {}
                     usage_summary = engine_result.get("usage_summary") or {}

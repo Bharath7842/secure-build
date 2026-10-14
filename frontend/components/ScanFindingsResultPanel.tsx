@@ -12,9 +12,6 @@ interface ScanFindingsResultPanelProps {
   expanded?: boolean;
   onToggleExpand?: () => void;
   live?: boolean;
-  /** Forwarded to ScanFindingsPanel to build the "Fix with Claude Code"
-   *  deep link. See Scan.local_root_path. */
-  localRootPath?: string | null;
 }
 
 function CloseIcon() {
@@ -101,7 +98,6 @@ export default function ScanFindingsResultPanel({
   expanded = false,
   onToggleExpand,
   live = false,
-  localRootPath = null,
 }: ScanFindingsResultPanelProps) {
   return (
     <div
@@ -144,7 +140,6 @@ export default function ScanFindingsResultPanel({
           scanId={scanId}
           report={report}
           live={live}
-          localRootPath={localRootPath}
         />
       </div>
     </div>

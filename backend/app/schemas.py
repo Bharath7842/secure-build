@@ -491,6 +491,7 @@ class FindingOut(BaseModel):
     occurrence_count: int | None = None
     matched_text: str | None = None
     flow_path: list[dict] | None = None
+    reachability: dict | None = None
     triage_status: str | None = None
     assignee: str | None = None
     triage_note: str | None = None

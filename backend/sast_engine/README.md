@@ -74,6 +74,18 @@ flowchart TD
    `@PreAuthorize`, an unset `HttpOnly`, no CSRF token — since it sees the
    whole file, which is why the cap matters: only files that make it into
    this tier get absence-check coverage.
+
+   Small files (under 6,000 characters) whose language's system prompt isn't
+   prompt-cached share calls, up to 8 files / 16,000 characters each. "Not
+   cached" means a non-Bedrock provider, or a prompt under the model's cache
+   minimum (4,096 tokens on Haiku), which is typical for the TypeScript, HTML,
+   XML and YAML prompts. Each finding names its `"file"`, and a failed batch
+   falls back to one call per file (`scan_file_batch`,
+   `--no-batch-small-files`). Declaration-only files never reach this tier.
+   That covers Spring Data repository interfaces with derived queries only,
+   and `.ts` files of only interfaces/types/enums
+   (`llm_file_scan.looks_declaration_only`): they drop to LOW at risk mapping
+   and the deep scan skips them.
 6. **Regex triage (MEDIUM / LOW + overflow CRITICAL/HIGH)** — every file that
    didn't fit in step 5's cap joins MEDIUM/LOW here, keeping its true
    `risk_level` for reporting but losing the whole-file pass. `rules/` patterns
@@ -122,7 +134,8 @@ joining for grouping and confirmation:
 derive_runtime_rules -> fan_out -> flows (discover -> verify -> Joern queries)
                                 -> scan_deep_files
                                 -> scan_triage_files
-                     -> group_triage_findings -> confirm_triage_groups -> generate_report
+                     -> corroborate_flows -> group_triage_findings -> confirm_triage_groups
+                     -> generate_report
 ```
 
 This cuts wall-clock time, not tokens. The LLM cutoff is split into reserved
@@ -131,6 +144,37 @@ its share releases the rest. All provider calls share one concurrency limit
 (`LLM_MAX_CONCURRENCY`, default 8) that halves on throttling, and throttled
 calls back off with jitter. Each stage's log lines are prefixed
 `[[stage:<name>]] ` so progress and the UI can tell them apart.
+
+## Reachability evidence (`corroborate_flows`)
+
+`pipeline/reachability.py` turns flow discovery into evidence for findings
+from the *other* tiers. `discover_flows` indexes every path by its sink
+(file, line) as `state["reachability_index"]` — every `flows.sc` path and every
+call-graph flow, taken **before** the verify cap and before single-file Joern
+paths in deep-scanned files are dropped, so evidence the flow stage didn't
+spend LLM calls on isn't lost. `corroborate_flows` runs right after the
+stages join. It matches deep-scan, regex-triage and Joern-query findings to a
+sink in the same file within ±2 lines whose kind fits the finding's CWE
+(`SINK_KIND_CWES`; a finding with no CWE never matches), and stores the best
+match on `finding["reachability"]` (persisted as `Finding.reachability`).
+
+| status | from | meaning | effect |
+|---|---|---|---|
+| `path` | Joern | this request value reaches the sink's argument | a `true_positive` is raised to 0.9 confidence |
+| `sanitized_path` | Joern | as above, through a taint-spec sanitizer | attached only |
+| `entry_reachable` | call graph | an entry point calls down to the sink's method; doesn't show which value | attached only |
+
+Evidence only adds. A finding with no path is never dropped and its
+confidence is never lowered, because neither analysis models every
+framework's sources. Because corroboration runs before
+`confirm_triage_groups`, grouped confirmation picks the occurrence with the
+strongest evidence as the group's representative and adds the path to that
+prompt (`render_evidence`). The 0.9 floor is applied again after the verdict,
+per occurrence. Joern `kind=flow` findings carry their own path from
+`flow_verify`. Without Joern, the call graph alone still produces
+`entry_reachable` evidence on Java/Python repos. With neither, the node is a
+no-op. The UI shows the path on the finding card, and the PDF/Excel exports
+add it to the data-flow text.
 
 ## Joern (optional)
 
@@ -167,8 +211,12 @@ the scan behaves exactly as before.
   finished kinds (`complete: false`) instead of nothing. Header, response-body
   and log flows rank behind every other kind. Joern flows rank first, with up to a
   third of `FLOW_VERIFY_CAP` reserved for tree-sitter flows Joern didn't also
-  find (e.g. Spring Data repository sinks). Single-file Joern flows in files
-  the deep scan already reviewed are dropped. Because Joern isn't limited to
+  find (e.g. Spring Data repository sinks). Flows reaching the same sink
+  (file, line, kind) collapse to the best-ranked one, which lists the other
+  entry points in its prompt (`call_graph.collapse_flows_by_sink`), so one
+  sink costs one verification. Single-file Joern flows in files
+  the deep scan already reviewed are not re-verified, though they still feed
+  reachability evidence (above). Because Joern isn't limited to
   Java/Python, this also gives JS/TS, C/C++, Go, PHP, ... repos flow
   verification.
 - **`joern_scan`** (after regex triage) — `joern/queries.sc` runs structural

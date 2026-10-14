@@ -135,6 +135,7 @@ def run_real_scan(
     findings_writer: Callable[[str, list[dict]], None] | None = None,
     discovery_writer: Callable[[dict], None] | None = None,
     verdict_updates_writer: Callable[[str, list[dict]], None] | None = None,
+    reachability_updates_writer: Callable[[str, list[dict]], None] | None = None,
 ) -> dict:
     """Run the discovery agent against `workspace` and return its findings."""
     agent = _load_agent_module()
@@ -231,6 +232,7 @@ def run_real_scan(
         "findings_writer": findings_writer,
         "discovery_writer": discovery_writer,
         "verdict_updates_writer": verdict_updates_writer,
+        "reachability_updates_writer": reachability_updates_writer,
         "usage": agent.init_usage(
             llm_provider if use_llm else None,
             llm_model if use_llm else None,

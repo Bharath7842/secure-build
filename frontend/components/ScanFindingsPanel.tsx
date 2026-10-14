@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api } from "@/lib/api";
-import { buildClaudeCodeLink, buildFixPrompt } from "@/lib/ideLinks";
 import { toModulePath } from "@/lib/modulePath";
 import type { Finding, ScanReport } from "@/lib/types";
 import {
@@ -16,8 +15,9 @@ import {
   formatConfidence,
   normalizeSeverity,
 } from "@/lib/findingStyles";
-import { verdictKind } from "@/lib/verdict";
+import { verdictKind, type VerdictKind } from "@/lib/verdict";
 import FlowTracePanel, { hopsForFinding } from "@/components/FlowTracePanel";
+import ReachabilityEvidence from "@/components/ReachabilityEvidence";
 
 function ShieldIcon() {
   return (
@@ -38,21 +38,58 @@ function ShieldIcon() {
   );
 }
 
-/** Generic "AI sparkle" glyph — paired with Claude's clay/terracotta brand
- *  tone below so the button reads as "AI-powered" without reproducing the
- *  actual (trademarked) Claude logo. */
-function SparkleIcon() {
+function ChevronIcon() {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      width="11"
-      height="11"
+      width="14"
+      height="14"
       viewBox="0 0 24 24"
-      fill="currentColor"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
       aria-hidden
     >
-      <path d="M12 2.5c.3 0 .55.2.62.5l1.2 5.1c.3 1.3 1.3 2.3 2.6 2.6l5.1 1.2c.3.07.5.32.5.62s-.2.55-.5.62l-5.1 1.2c-1.3.3-2.3 1.3-2.6 2.6l-1.2 5.1c-.07.3-.32.5-.62.5s-.55-.2-.62-.5l-1.2-5.1c-.3-1.3-1.3-2.3-2.6-2.6l-5.1-1.2c-.3-.07-.5-.32-.5-.62s.2-.55.5-.62l5.1-1.2c1.3-.3 2.3-1.3 2.6-2.6l1.2-5.1c.07-.3.32-.5.62-.5z" />
+      <path d="m9 18 6-6-6-6" />
     </svg>
+  );
+}
+
+const VERDICT_SHORT: Record<VerdictKind, string> = {
+  confirmed: "Confirmed",
+  dismissed: "False positive",
+  unverified: "Unverified",
+};
+
+const AFFECTED_FILES_PREVIEW = 5;
+
+/** A group can span hundreds of files; show a few and let the user opt in to
+ * the rest, so the list never needs its own inner scrollbar. */
+function AffectedFiles({ paths }: { paths: string[] }) {
+  const [showAll, setShowAll] = useState(false);
+  const shown = showAll ? paths : paths.slice(0, AFFECTED_FILES_PREVIEW);
+  const hidden = paths.length - shown.length;
+  return (
+    <>
+      <ul className="mt-1 space-y-0.5">
+        {shown.map((path, idx) => (
+          <li key={idx} className="break-all font-mono text-xs text-[var(--ink)]" title={path}>
+            • {toModulePath(path)}
+          </li>
+        ))}
+      </ul>
+      {paths.length > AFFECTED_FILES_PREVIEW && (
+        <button
+          type="button"
+          onClick={() => setShowAll((v) => !v)}
+          className="mt-1 text-xs font-medium text-blue-700 hover:underline"
+        >
+          {showAll ? "Show fewer" : `Show ${hidden} more`}
+        </button>
+      )}
+    </>
   );
 }
 
@@ -61,37 +98,31 @@ interface ScanFindingsPanelProps {
   report: ScanReport;
   /** When true, re-fetch findings on an interval (during live CRITICAL scan). */
   live?: boolean;
-  /** Absolute local checkout path (Scan.local_root_path) used to build the
-   *  "Fix with Claude Code" deep link below. Hidden when this is unset —
-   *  only meaningful when the browser and
-   *  backend run on the same machine. */
-  localRootPath?: string | null;
 }
 
 export default function ScanFindingsPanel({
   scanId,
   live = false,
-  localRootPath = null,
 }: ScanFindingsPanelProps) {
   const [verdictFilter] = useState<
     "true_positive" | "false_positive" | "unverified" | null
   >(null);
   const [severityFilter, setSeverityFilter] = useState<string | null>(null);
+  // `null` means "not loaded yet". Polling must never flip back to a loading
+  // state: that unmounted the whole list every 2s and reset the scroll position.
   const [findings, setFindings] = useState<Finding[] | null>(null);
-  const [findingsLoading, setFindingsLoading] = useState(false);
+  const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
-      setFindingsLoading(true);
       try {
         const res = await api.scans.findings(scanId, verdictFilter ?? undefined);
         if (!cancelled) setFindings(res.findings);
       } catch {
-        if (!cancelled) setFindings([]);
-      } finally {
-        if (!cancelled) setFindingsLoading(false);
+        // Keep whatever is already on screen if a poll fails.
+        if (!cancelled) setFindings((current) => current ?? []);
       }
     }
     load();
@@ -113,7 +144,7 @@ export default function ScanFindingsPanel({
   // unverified) with their occurrences — the same basis as the PDF headline —
   // while `severityCounts` still includes dismissed groups so a severity
   // holding only dismissed ones stays selectable.
-  const { severityCounts, actionableCounts, dismissed } = useMemo(() => {
+  const { severityCounts, actionableCounts } = useMemo(() => {
     const all: Record<string, number> = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
     const actionable: Record<string, { groups: number; occurrences: number }> = {
       CRITICAL: { groups: 0, occurrences: 0 },
@@ -121,22 +152,17 @@ export default function ScanFindingsPanel({
       MEDIUM: { groups: 0, occurrences: 0 },
       LOW: { groups: 0, occurrences: 0 },
     };
-    const dismissedTotals = { groups: 0, occurrences: 0 };
     for (const finding of findings ?? []) {
       const sev = normalizeSeverity(finding.severity);
-      const occurrences = finding.occurrence_count ?? 1;
       all[sev] = (all[sev] ?? 0) + 1;
       // Same test as scan_export._is_dismissed, so chips match the PDF.
-      if ((finding.verdict ?? "").toLowerCase() === "false_positive") {
-        dismissedTotals.groups += 1;
-        dismissedTotals.occurrences += occurrences;
-      } else {
+      if ((finding.verdict ?? "").toLowerCase() !== "false_positive") {
         const bucket = (actionable[sev] ??= { groups: 0, occurrences: 0 });
         bucket.groups += 1;
-        bucket.occurrences += occurrences;
+        bucket.occurrences += finding.occurrence_count ?? 1;
       }
     }
-    return { severityCounts: all, actionableCounts: actionable, dismissed: dismissedTotals };
+    return { severityCounts: all, actionableCounts: actionable };
   }, [findings]);
 
   // Drop a severity chip that no longer matches (e.g. HIGH selected, then
@@ -153,16 +179,31 @@ export default function ScanFindingsPanel({
     return findings.filter((f) => normalizeSeverity(f.severity) === severityFilter);
   }, [findings, severityFilter]);
 
+  const toggleOpen = useCallback((id: string) => {
+    setOpenIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const allOpen =
+    visibleFindings.length > 0 && visibleFindings.every((f) => openIds.has(f.id));
+
   return (
     <div className="space-y-5">
-      <section className="overflow-hidden rounded-md border border-slate-200 border-t-2 border-t-blue-500 bg-gradient-to-br from-white via-white to-blue-50/40 p-5">
+      {/* overflow-clip (not -hidden) so the sticky toolbar below still sticks to
+          the panel's scroll container. */}
+      <section className="overflow-clip rounded-md border border-slate-200 border-t-2 border-t-blue-500 bg-gradient-to-br from-white via-white to-blue-50/40 p-5">
         <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">
           <span className="flex h-6 w-6 items-center justify-center rounded bg-blue-100 text-blue-600">
             <ShieldIcon />
           </span>
           Findings
         </h3>
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="sticky top-0 z-10 -mx-5 mt-3 border-b border-slate-200 bg-white/95 px-5 pb-3 pt-3 backdrop-blur">
+        <div className="flex flex-wrap items-center gap-2">
           {RISK_LEVELS.map((risk) => {
             const selected = severityFilter === risk;
             const count = severityCounts[risk] ?? 0;
@@ -193,22 +234,28 @@ export default function ScanFindingsPanel({
               </button>
             );
           })}
+          {visibleFindings.length > 0 ? (
+            <button
+              type="button"
+              onClick={() =>
+                setOpenIds(allOpen ? new Set() : new Set(visibleFindings.map((f) => f.id)))
+              }
+              className="ml-auto rounded-md px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-50"
+            >
+              {allOpen ? "Collapse all" : "Expand all"}
+            </button>
+          ) : null}
         </div>
-        {dismissed.groups > 0 ? (
-          <p className="mt-2 text-xs text-[var(--muted)]">
-            Counts are actionable issue groups (true positive + unverified). Dismissed:{" "}
-            {dismissed.groups} {dismissed.groups === 1 ? "group" : "groups"} ({dismissed.occurrences}{" "}
-            {dismissed.occurrences === 1 ? "occurrence" : "occurrences"}).
-          </p>
-        ) : null}
+        </div>
 
-        {findingsLoading ? (
+        {findings === null ? (
           <p className="mt-3 text-sm text-[var(--muted)]">Loading findings…</p>
         ) : visibleFindings.length === 0 ? (
           <p className="mt-3 text-sm text-[var(--muted)]">No findings match this filter.</p>
         ) : (
-          <ul className="mt-3 max-h-[70vh] space-y-3 overflow-y-auto agent-scroll">
+          <ul className="mt-3 space-y-2">
             {visibleFindings.map((finding) => {
+              const open = openIds.has(finding.id);
               const severity = normalizeSeverity(finding.severity);
               const riskStyle = RISK_STYLES[severity];
               const kind = verdictKind(finding.verdict);
@@ -220,33 +267,77 @@ export default function ScanFindingsPanel({
               return (
                 <li
                   key={finding.id}
-                  className={`rounded-md border px-3 py-2 ${VERDICT_ROW[kind]}`}
+                  className={`rounded-md border ${VERDICT_ROW[kind]}`}
                 >
-                  <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => toggleOpen(finding.id)}
+                    aria-expanded={open}
+                    className="agent-focus-ring flex w-full items-start gap-2 rounded-md px-3 py-2 text-left"
+                  >
                     <span
-                      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium uppercase tracking-wide ${
-                        riskStyle?.chip ?? "bg-slate-100 text-slate-600"
+                      className={`mt-1 flex-shrink-0 text-[var(--muted)] transition-transform ${
+                        open ? "rotate-90" : ""
                       }`}
                     >
-                      <span
-                        className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${
-                          RISK_DOT[severity] ?? "bg-slate-400"
-                        }`}
-                        aria-hidden
-                      />
-                      {severity}
+                      <ChevronIcon />
                     </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium uppercase tracking-wide ${
+                            riskStyle?.chip ?? "bg-slate-100 text-slate-600"
+                          }`}
+                        >
+                          <span
+                            className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${
+                              RISK_DOT[severity] ?? "bg-slate-400"
+                            }`}
+                            aria-hidden
+                          />
+                          {severity}
+                        </span>
+                        <span className={`text-xs font-medium ${VERDICT_TEXT[kind]}`}>
+                          {VERDICT_SHORT[kind]}
+                        </span>
+                        {(finding.occurrence_count ?? 1) > 1 && (
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium tabular-nums text-slate-700">
+                            {finding.occurrence_count}×
+                          </span>
+                        )}
+                        {finding.cwe && (
+                          <span className="text-xs text-[var(--muted)]">{finding.cwe}</span>
+                        )}
+                      </span>
+                      <span
+                        className={`mt-1 block text-sm font-medium text-[var(--ink)] ${
+                          open ? "" : "line-clamp-2"
+                        }`}
+                      >
+                        {finding.title}
+                      </span>
+                      <span
+                        className="mt-0.5 block truncate font-mono text-xs text-[var(--muted)]"
+                        title={finding.file_path ?? ""}
+                      >
+                        {toModulePath(finding.file_path ?? "")}
+                        {finding.line ? `:${finding.line}` : ""}
+                        {(finding.affected_files?.length ?? 0) > 1
+                          ? ` +${(finding.affected_files?.length ?? 1) - 1} more`
+                          : ""}
+                      </span>
+                    </span>
+                  </button>
+                  {open && (
+                  <div className="border-t border-slate-200/70 px-3 pb-3 pt-2">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
                     {confidence && (
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
                         {confidence} confidence
                       </span>
                     )}
-                    {finding.cwe && (
-                      <span className="text-xs text-[var(--muted)]">{finding.cwe}</span>
-                    )}
-                    <span className="text-xs text-[var(--muted)]">{finding.owasp_category}</span>
+                    {finding.owasp_category && <span>{finding.owasp_category}</span>}
                   </div>
-                  <p className="mt-1.5 text-sm font-medium text-[var(--ink)]">{finding.title}</p>
                   {finding.verdict_reason && (
                     <p className="mt-1 text-sm text-[var(--muted)]">{finding.verdict_reason}</p>
                   )}
@@ -280,6 +371,9 @@ export default function ScanFindingsPanel({
                       )}
                     </dl>
                   )}
+                  {finding.reachability && (finding.reachability.taint_path?.length ?? 0) > 0 && (
+                    <ReachabilityEvidence evidence={finding.reachability} />
+                  )}
                   {finding.affected_files && finding.affected_files.length > 1 ? (
                     <div className="mt-2 rounded border border-slate-200 bg-slate-50 p-2">
                       <p className="text-xs font-medium text-[var(--muted)]">
@@ -288,17 +382,7 @@ export default function ScanFindingsPanel({
                           ? ` (${finding.occurrence_count} occurrences)`
                           : ""}
                       </p>
-                      <ul className="mt-1 max-h-40 space-y-0.5 overflow-y-auto">
-                        {finding.affected_files.map((path, idx) => (
-                          <li
-                            key={idx}
-                            className="font-mono text-xs text-[var(--ink)]"
-                            title={path}
-                          >
-                            • {toModulePath(path)}
-                          </li>
-                        ))}
-                      </ul>
+                      <AffectedFiles paths={finding.affected_files} />
                     </div>
                   ) : (
                     <p
@@ -312,7 +396,7 @@ export default function ScanFindingsPanel({
                   {flowHops.length >= 2 ? (
                     <FlowTracePanel hops={flowHops} />
                   ) : finding.snippet ? (
-                    <pre className="mt-1.5 max-h-96 overflow-auto rounded border border-slate-200 bg-slate-950/5 p-3 font-mono text-xs leading-relaxed text-[var(--ink)]">
+                    <pre className="mt-1.5 overflow-x-auto rounded border border-slate-200 bg-slate-950/5 p-3 font-mono text-xs leading-relaxed text-[var(--ink)]">
                       {finding.snippet}
                     </pre>
                   ) : null}
@@ -320,19 +404,7 @@ export default function ScanFindingsPanel({
                     <span className="font-medium text-[var(--muted)]">Verdict: </span>
                     <span className={`font-medium ${VERDICT_TEXT[kind]}`}>{VERDICT_LABEL[kind]}</span>
                   </div>
-                  {localRootPath && finding.file_path && (
-                    <div className="mt-2">
-                      <a
-                        href={buildClaudeCodeLink(localRootPath, buildFixPrompt(finding))}
-                        title="Opens a Claude Code terminal in this repo with a pre-filled remediation prompt — requires Claude Code installed and this app opened on the same machine as the backend. Nothing is sent until you press Enter."
-                        className="group inline-flex items-center gap-2 rounded-md border border-[#CC785C]/30 bg-gradient-to-r from-[#CC785C]/10 via-[#CC785C]/5 to-transparent px-3 py-1.5 text-xs font-semibold text-[#a8583c] shadow-sm transition-all hover:border-[#CC785C]/60 hover:from-[#CC785C]/20 hover:via-[#CC785C]/10 hover:shadow-md hover:-translate-y-0.5"
-                      >
-                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#CC785C] text-white shadow-sm transition-transform group-hover:scale-110">
-                          <SparkleIcon />
-                        </span>
-                        Fix with Claude Code
-                      </a>
-                    </div>
+                  </div>
                   )}
                 </li>
               );

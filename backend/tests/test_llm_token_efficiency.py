@@ -681,3 +681,177 @@ def test_derive_rules_asks_for_a_number_that_fits_and_sizes_the_ceiling(agent):
     )
     assert "Return at most 5 objects" in seen["user"]
     assert seen["max_tokens"] == 5 * dr.PASS_B_TOKENS_PER_RULE + dr.PASS_B_TOKEN_HEADROOM
+
+
+# --- small-file batching in the deep scan -------------------------------------
+
+_TS_SMALL = {
+    "src/a.service.ts": "export class A {\n  run(x: string) { document.body.innerHTML = x; }\n}\n",
+    "src/b.service.ts": "export class B {\n  ok() { return 1; }\n}\n",
+    "src/c.component.ts": "export class C {\n  go(u: string) { window.location.href = u; }\n}\n",
+}
+
+
+def _ts_entries(tmp_path):
+    for rel, text in _TS_SMALL.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text, encoding="utf-8")
+    return [{"path": p, "risk_level": "MEDIUM", "lang": "typescript"} for p in _TS_SMALL]
+
+
+def test_small_files_with_an_uncached_prompt_share_one_call(tmp_path, lfs, rules, monkeypatch):
+    monkeypatch.setattr(lfs, "system_prompt_is_cached", lambda *a: False)
+    entries = _ts_entries(tmp_path)
+    users = []
+
+    def fake(system, user, **kwargs):
+        users.append(user)
+        return json.dumps({"findings": [
+            {"file": "src/a.service.ts", "verdict": "true_positive", "rule_id": "llm-extra", "line": 2,
+             "snippet": "  run(x: string) { document.body.innerHTML = x; }", "severity": "HIGH",
+             "confidence": 0.8, "verdict_reason": "x reaches innerHTML.", "title": "DOM XSS", "cwe": "CWE-79",
+             "owasp_category": "A03:2021-Injection"},
+            # Named by basename only: still routed.
+            {"file": "c.component.ts", "verdict": "true_positive", "rule_id": "llm-extra", "line": 2,
+             "snippet": "  go(u: string) { window.location.href = u; }", "severity": "MEDIUM",
+             "confidence": 0.7, "verdict_reason": "u is an open redirect.", "title": "Open redirect",
+             "cwe": "CWE-601", "owasp_category": "A01:2021-Broken Access Control"},
+        ]})
+
+    written = {}
+    result = lfs.scan_deep_files(
+        module_plan={"files": entries}, entries=entries, repo_root=tmp_path, rules=rules,
+        call_llm_fn=fake, file_workers=1,
+        findings_writer=lambda path, findings: written.setdefault(path, findings),
+    )
+    assert len(users) == 1
+    assert all(f"File: {p}" in users[0] for p in _TS_SMALL) and '"file"' in users[0]
+    assert set(written) == set(_TS_SMALL)
+    assert [f["cwe"] for f in written["src/a.service.ts"]] == ["CWE-79"]
+    assert [f["cwe"] for f in written["src/c.component.ts"]] == ["CWE-601"]
+    assert written["src/b.service.ts"] == []
+    assert result["files_scanned"] == 3 and result["tp_count"] == 2
+    assert [r["file_path"] for r in result["files"]] == list(_TS_SMALL)  # input order kept
+
+
+def test_failed_batch_falls_back_to_one_call_per_file(tmp_path, lfs, rules, monkeypatch):
+    monkeypatch.setattr(lfs, "system_prompt_is_cached", lambda *a: False)
+    entries = _ts_entries(tmp_path)
+    users = []
+
+    def fake(system, user, **kwargs):
+        users.append(user)
+        if "complete files are under review" in user:
+            raise RuntimeError("throttled")
+        return '{"findings": []}'
+
+    result = lfs.scan_deep_files(
+        module_plan={"files": entries}, entries=entries, repo_root=tmp_path, rules=rules,
+        call_llm_fn=fake, file_workers=1,
+    )
+    assert len(users) == 1 + len(_TS_SMALL)
+    assert result["files_scanned"] == 3 and result["chunk_errors"] == 0
+
+
+def test_batching_is_off_for_cached_prompts_and_on_request(tmp_path, lfs, rules, monkeypatch):
+    entries = _ts_entries(tmp_path)
+    calls = []
+
+    def fake(system, user, **kwargs):
+        calls.append(user)
+        return '{"findings": []}'
+
+    monkeypatch.setattr(lfs, "system_prompt_is_cached", lambda *a: True)
+    lfs.scan_deep_files(module_plan={"files": entries}, entries=entries, repo_root=tmp_path,
+                        rules=rules, call_llm_fn=fake, file_workers=1)
+    assert len(calls) == 3
+    calls.clear()
+    monkeypatch.setattr(lfs, "system_prompt_is_cached", lambda *a: False)
+    lfs.scan_deep_files(module_plan={"files": entries}, entries=entries, repo_root=tmp_path,
+                        rules=rules, call_llm_fn=fake, file_workers=1, batch_small_files=False)
+    assert len(calls) == 3
+
+
+def test_unroutable_batch_findings_are_reported_not_misfiled(lfs):
+    results = lfs.scan_file_batch(
+        files=[("a.ts", "let a = 1;\n"), ("b.ts", "let b = 2;\n")], catalog=[], system_prompt="s",
+        call_llm_fn=lambda *a, **k: json.dumps({"findings": [
+            {"verdict": "true_positive", "line": 1, "cwe": "CWE-79", "title": "x"},
+        ]}),
+    )
+    assert [r["findings"] for r in results] == [[], []]
+    assert "named no known file" in results[0]["chunk_errors"][0]
+
+
+def test_batch_packing_respects_budget_and_file_cap(lfs):
+    files = [(i, f"f{i}.ts", "x" * 5000) for i in range(5)]
+    assert [len(b) for b in lfs.plan_deep_scan_batches(files, char_budget=12_000)] == [2, 2, 1]
+    tiny = [(i, f"f{i}.ts", "x") for i in range(10)]
+    assert [len(b) for b in lfs.plan_deep_scan_batches(tiny, max_files=4)] == [4, 4, 2]
+
+
+def test_system_prompt_cache_check_needs_bedrock(lfs):
+    big = "x " * 40_000
+    assert lfs.system_prompt_is_cached(big, None, "us.anthropic.claude-haiku-4-5")
+    assert not lfs.system_prompt_is_cached(big, "openai_compat", "gpt")
+    assert not lfs.system_prompt_is_cached("short", "bedrock", "us.anthropic.claude-haiku-4-5")
+
+
+# --- nothing-to-review files ----------------------------------------------------
+
+_REPO = """package x;
+import org.springframework.data.jpa.repository.JpaRepository;
+public interface UserRepository extends JpaRepository<User, Long> {
+    Optional<User> findByEmail(String email);
+}
+"""
+
+
+@pytest.mark.parametrize("path,text,expected", [
+    ("UserRepository.java", _REPO, True),
+    ("UserRepository.java", _REPO.replace("    Optional", '    @Query("select u from User u where u.name = " + "?1")\n    Optional'), False),
+    ("UserRepository.java", "@RepositoryRestResource\n" + _REPO, False),
+    ("UserRepository.java", _REPO.replace("}\n", "    default void wipe() { deleteAll(); }\n}\n"), False),
+    ("UserService.java", "public class UserService { void f() {} }\n", False),
+    ("models/user.ts", "import { Role } from './role';\n// a user\nexport interface User {\n  id: number;\n  role: Role;\n}\nexport type Id = string | number;\nexport type Kind =\n  | 'a'\n  | 'b';\n", True),
+    ("models/level.ts", "export enum Level {\n  DEBUG,\n  INFO = 'info',\n}\n", True),
+    ("models/api.ts", "export interface A { x: number }\nexport const API_KEY = 'abc';\n", False),
+    ("models/svc.ts", "export class Svc {}\n", False),
+    ("models/fn.ts", "export interface A { x: number }\nfetch('/x');\n", False),
+    ("view.tsx", "export interface P { x: number }\n", False),
+    ("empty.ts", "// nothing\n", False),
+])
+def test_declaration_only_detection(lfs, path, text, expected):
+    assert lfs.looks_declaration_only(path, text) is expected
+
+
+def test_declaration_only_files_drop_to_low_risk_and_skip_the_llm(agent, lfs, tmp_path):
+    (tmp_path / "repo").mkdir()
+    (tmp_path / "repo/UserRepository.java").write_text(_REPO, encoding="utf-8")
+    (tmp_path / "repo/user.ts").write_text("export interface U { id: number }\n", encoding="utf-8")
+    risk, reason = agent._java_content_risk(tmp_path, "repo/UserRepository.java", "CRITICAL", "repository")
+    assert risk == "LOW" and "Spring Data" in reason
+    assert agent._ts_content_risk(tmp_path, "repo/user.ts", "MEDIUM", "x")[0] == "LOW"
+    assert lfs.is_non_analyzable_file(tmp_path, "repo/user.ts", "export interface U { id: number }\n")
+
+
+# --- one flow verification per sink ------------------------------------------------
+
+
+def test_flows_reaching_one_sink_collapse_and_name_the_other_entries(cg, fv):
+    def flow(src_file, src_line, sink_line=40, kind="sql"):
+        def hop(file, line, role):
+            return cg.FlowHop(file=file, method=f"{role}M", fqcn="x", name="m", line=line,
+                              start_line=1, end_line=50, body="", role=role, label=f"{role}@{line}")
+        return cg.Flow(hops=[hop(src_file, src_line, "source"), hop("Dao.java", sink_line, "sink")],
+                       entry_tier="spring", sink_kind=kind, authenticated=False, files=[src_file, "Dao.java"])
+
+    flows = [flow("A.java", 5), flow("B.java", 9), flow("A.java", 5), flow("C.java", 3, kind="log"),
+             flow("D.java", 7, sink_line=41)]
+    out = cg.collapse_flows_by_sink(flows)
+    assert [(f.hops[0].file, f.hops[-1].line, f.sink_kind) for f in out] == [
+        ("A.java", 40, "sql"), ("C.java", 40, "log"), ("D.java", 41, "sql")]
+    assert [(s["file"], s["line"]) for s in out[0].other_sources] == [("B.java", 9)]
+    assert "B.java:L9" in fv.build_other_sources_note(out[0])
+    assert fv.build_other_sources_note(out[1]) == ""
+    assert cg.flow_to_dict(out[0])["other_sources"][0]["file"] == "B.java"

@@ -15,7 +15,7 @@ PROGRESS_MARKERS: list[tuple[str, int]] = [
     ("### Detecting the tech stack", 50),
     ("### Categorizing files", 65),
     ("### Mapping module risk", 70),
-    ("### Building Joern code property graph", 72),
+    ("### Building code property graph", 72),
     ("### Deriving runtime regex", 75),
     ("### Tracing inter-file flows", 80),
     # The deep-scan and triage banners name the risk levels each tier holds
@@ -23,13 +23,16 @@ PROGRESS_MARKERS: list[tuple[str, int]] = [
     # HIGH/MEDIUM/LOW files (triage)"), so they match on their fixed suffix.
     ("files (deep scan)", 85),
     ("files (triage)", 97),
-    ("### Running Joern queries", 97),
+    ("### Running code property graph queries", 97),
     ("### Grouping ", 98),
     ("### Generating report", 99),
     # Fixed-tier labels from before the banners named the actual tiers.
     ("### Scanning CRITICAL/HIGH files", 85),
     ("### Scanning MEDIUM/LOW files", 97),
     ("### Grouping MEDIUM/LOW findings", 98),
+    # Banners from before the graph builder's name was hidden, kept for persisted logs.
+    ("### Building Joern code property graph", 72),
+    ("### Running Joern queries", 97),
     # Pre-rename labels, kept so scans started before the CRITICAL/HIGH vs
     # MEDIUM/LOW split (and any log tail persisted from them) still resolve.
     ("### Scanning CRITICAL/HIGH/MEDIUM files", 85),

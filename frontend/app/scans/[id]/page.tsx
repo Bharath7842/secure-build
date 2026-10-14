@@ -7,7 +7,6 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import ScanAgentLog, { type SectionCard } from "@/components/ScanAgentLog";
 import ProjectStructurePanel from "@/components/ProjectStructurePanel";
-import AstSummaryCard from "@/components/AstSummaryCard";
 import AstSummaryPanel from "@/components/AstSummaryPanel";
 import DerivedRulesCard from "@/components/DerivedRulesCard";
 import DerivedRulesPanel from "@/components/DerivedRulesPanel";
@@ -356,7 +355,6 @@ export default function ScanDetailPage() {
     hasUsageData(usageSummary);
 
   const astSummary = discovery?.llm_analysis?.ast_summary;
-  const hasAstSummary = Boolean(astSummary && Object.keys(astSummary.stacks ?? {}).length > 0);
   const derivedRules = discovery?.derived_rules ?? [];
   const derivedRulesSummary = discovery?.derived_rules_summary;
   const hasDerivedRules = derivedRules.length > 0 || (derivedRulesSummary?.failed ?? 0) > 0;
@@ -371,18 +369,6 @@ export default function ScanDetailPage() {
             discovery={discovery}
             active={sidePanel === "discovery"}
             onOpen={() => setSidePanel("discovery")}
-          />
-        ),
-      });
-    }
-    if (hasAstSummary && astSummary) {
-      cards.push({
-        afterLabel: "Mapping module risk",
-        node: (
-          <AstSummaryCard
-            summary={astSummary}
-            active={sidePanel === "ast"}
-            onOpen={() => setSidePanel("ast")}
           />
         ),
       });
@@ -434,8 +420,6 @@ export default function ScanDetailPage() {
     return cards;
   }, [
     discovery,
-    hasAstSummary,
-    astSummary,
     hasDerivedRules,
     derivedRules,
     derivedRulesSummary,
@@ -586,7 +570,6 @@ export default function ScanDetailPage() {
         scanId={id}
         report={effectiveReport}
         live={scanningFindings}
-        localRootPath={scanRecord?.local_root_path ?? null}
         onClose={closeSidePanel}
         expanded={panelExpanded}
         onToggleExpand={isDesktop ? () => setPanelExpanded((v) => !v) : undefined}

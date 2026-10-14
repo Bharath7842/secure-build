@@ -126,10 +126,6 @@ export interface Scan {
   triggered_by: "app" | "jenkins" | string | null;
   /** Optional subdirectory scoped for this scan. */
   repo_path?: string | null;
-  /** Absolute local path of this scan's checkout (backend's workspaces_dir/<project_id>,
-   *  plus repo_path scope) — only meaningful when the browser and backend share a
-   *  filesystem. Used to build vscode:// / claude-cli:// deep links per finding. */
-  local_root_path?: string | null;
   /** DAST scans in `GET /scans`: confirmed findings by severity plus the unverified count. */
   dast_counts?: DastCounts | null;
   created_at: string;
@@ -338,6 +334,9 @@ export interface Finding {
   matched_text: string | null;
   /** Ordered hops for kind=flow findings (file → file call-graph slice). */
   flow_path: FlowHop[] | null;
+  /** Source→sink path that reaches this finding's sink, attached by the
+   *  engine's corroborate step (sast_engine pipeline/reachability.py). */
+  reachability?: Reachability | null;
   /** DAST fields — present only on `kind=dast` findings. */
   target?: string | null;
   param?: string | null;
@@ -352,6 +351,30 @@ export interface Finding {
   remediation?: string;
   /** Role labels involved: [owner, acting] for an authorization finding. */
   roles?: string[];
+}
+
+export interface ReachabilityStep {
+  file: string;
+  line: number;
+  method?: string;
+  code: string;
+}
+
+/** `path` / `sanitized_path`: Code property graph expression-level taint path.
+ *  `entry_reachable`: call-graph method chain from an entry point (weaker —
+ *  doesn't show which value reaches the sink). */
+export interface Reachability {
+  status: "path" | "sanitized_path" | "entry_reachable" | string;
+  sink_kind: string;
+  sink_code?: string;
+  source: { file: string; line: number; code: string };
+  sink: { file: string; line: number; code: string };
+  taint_path: ReachabilityStep[];
+  steps_total?: number;
+  sanitizers?: { file: string; line: number; code: string }[];
+  guards?: { file: string; line: number; code: string }[];
+  entry_tier?: string;
+  authenticated?: boolean;
 }
 
 export interface FlowHop {
