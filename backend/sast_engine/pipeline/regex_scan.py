@@ -20,18 +20,25 @@ Detected -> Known Vulnerability Surface -> Targeted Regex" reasoning for any
 repo. Surfaces narrate and prioritise; they never gate.
 
 No LLM call anywhere in this module; every hit is a plain `re.search` against
-one source line (or the whole file, for the few multiline rules).
+one source line, or a capped `re.finditer` over the whole file for multiline
+rules.
 """
 
 from __future__ import annotations
 
 import json
+import multiprocessing
+import os
 import re
 import time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 
 _MAX_SNIPPET_LEN = 160
+# Multiline rules search the whole file with finditer; past this many hits
+# per (file, rule) the rest are the same construct repeated.
+MULTILINE_HITS_PER_FILE_CAP = 25
 
 # Files in a rules directory that hold something other than a rule array.
 SURFACES_FILENAME = "surfaces.json"
@@ -148,6 +155,7 @@ class RegexRule:
         "id", "title", "description", "cwe", "severity", "category", "owasp",
         "languages", "frameworks", "requires_dependency",
         "pattern", "regex", "multiline", "group_by_rule", "derived",
+        "scan_comments", "examples",
     )
 
     def __init__(self, raw: Dict[str, Any]):
@@ -166,6 +174,13 @@ class RegexRule:
         # collapse by rule_id alone, ignoring matched_text.
         self.group_by_rule = bool(raw.get("group_by_rule", False))
         self.derived = bool(raw.get("derived", False))
+        # Hits that start on a comment-only line are dropped, for line and
+        # multiline rules alike. A rule *about* comments opts out.
+        self.scan_comments = bool(raw.get("scan_comments", False))
+        # {"match": [...], "no_match": [...]}: documentation the catalog test
+        # runs through scan_text_by_rule; never read at scan time. An entry is
+        # a code string, or {"code": ..., "path": ...} to pick the language.
+        self.examples: Dict[str, List[Any]] = dict(raw.get("examples") or {})
         # Empty list = universal (matches every language / every framework).
         # Non-empty = restrict — same convention pipeline/ast_patterns.py
         # already uses for `rule.languages & langs`.
@@ -379,25 +394,29 @@ def scan_text_by_rule(
     *,
     comment_lines: Optional[FrozenSet[int]] = None,
 ) -> List[Dict[str, Any]]:
-    """Apply a single rule. Multiline rules search the whole file; others
-    search line by line. Used for slow per-pattern narration.
+    """Apply a single rule. Multiline rules search the whole file (every
+    match, up to MULTILINE_HITS_PER_FILE_CAP); others search line by line.
+    Used for slow per-pattern narration.
 
     `comment_lines` is an optional set of 1-based line numbers that are
-    entirely comments; line-oriented hits on those lines are skipped.
-    Multiline rules are left untouched — stripping comments out of a
-    whole-file DOTALL search is a bigger job, and those patterns are rare.
-    Default None means no masking (callers that don't pass `file_lang`
-    keep their previous behaviour).
+    entirely comments; a hit starting on one of those lines is skipped
+    unless the rule sets `scan_comments`. Default None means no masking
+    (callers that don't pass `file_lang` keep their previous behaviour).
     """
     hits: List[Dict[str, Any]] = []
+    mask = None if rule.scan_comments else comment_lines
     if rule.multiline:
-        match = rule.regex.search(text)
-        if match:
-            hits.append(_hit(rule, match, text))
+        for match in rule.regex.finditer(text):
+            hit = _hit(rule, match, text)
+            if mask and hit["line"] in mask:
+                continue
+            hits.append(hit)
+            if len(hits) >= MULTILINE_HITS_PER_FILE_CAP:
+                break
         return hits
 
     for lineno, line in enumerate(text.splitlines(), start=1):
-        if comment_lines and lineno in comment_lines:
+        if mask and lineno in mask:
             continue
         match = rule.regex.search(line)
         if not match:
@@ -464,6 +483,69 @@ def scan_one_file(
         "applicable_rule_count": len(applicable_rules),
         "read_error": read_error,
     }
+
+
+# --- the regex pass in worker processes ----------------------------------------
+#
+# The catalog pass is pure-Python regex, so threads serialize on the GIL. On
+# large triage sets it runs in worker processes instead. "spawn" is used
+# everywhere: forking a process that already runs scan threads can deadlock.
+# Workers receive the rules once (initializer), then (path, module, lang,
+# rule_ids) jobs; results are exactly what scan_one_file returns in-process.
+PROCESS_POOL_MIN_FILES = 500
+PROCESS_POOL_WORKERS = max(1, min(8, (os.cpu_count() or 2) - 1))
+
+_WORKER: Dict[str, Any] = {}
+
+ScanJob = Tuple[str, str, Optional[str], Optional[Tuple[str, ...]]]
+
+
+def _worker_init(rules: List[RegexRule], repo_root: str,
+                 active_frameworks: Optional[Set[str]],
+                 dependency_index: Optional[Dict[str, List[Optional[str]]]]) -> None:
+    _WORKER.update(
+        rules=list(rules), by_id={r.id: r for r in rules}, root=Path(repo_root),
+        frameworks=active_frameworks, deps=dependency_index,
+    )
+
+
+def _worker_scan(job: ScanJob) -> Dict[str, Any]:
+    path, module, lang, rule_ids = job
+    rules = _WORKER["rules"] if rule_ids is None else [_WORKER["by_id"][i] for i in rule_ids]
+    return scan_one_file(
+        _WORKER["root"], path, module, rules, file_lang=lang,
+        active_frameworks=_WORKER["frameworks"], dependency_index=_WORKER["deps"],
+    )
+
+
+def scan_files_in_processes(
+    jobs: Sequence[ScanJob],
+    *,
+    repo_root: Path,
+    rules: List[RegexRule],
+    active_frameworks: Optional[Set[str]] = None,
+    dependency_index: Optional[Dict[str, List[Optional[str]]]] = None,
+    workers: int = PROCESS_POOL_WORKERS,
+) -> Optional[Dict[str, Dict[str, Any]]]:
+    """{path: scan_one_file result} for every job, computed in worker
+    processes; None if a pool can't be used here (the caller then scans
+    in-process, with identical results)."""
+    if not jobs:
+        return {}
+    workers = max(1, min(workers, len(jobs)))
+    try:
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=_worker_init,
+            initargs=(list(rules), str(repo_root), active_frameworks, dependency_index),
+        ) as pool:
+            chunksize = max(1, len(jobs) // (workers * 8))
+            results = list(pool.map(_worker_scan, jobs, chunksize=chunksize))
+    except Exception as exc:  # noqa: BLE001 — fall back, never fail the tier
+        print(f"  [regex] worker processes unavailable ({type(exc).__name__}: {exc}); scanning in-process")
+        return None
+    return {job[0]: result for job, result in zip(jobs, results)}
 
 
 def scan_files_for_tier(
@@ -600,11 +682,13 @@ def surface_rule_ids(surfaces: List[Surface]) -> Set[str]:
 _SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
 
 # Generic SQL-concat catalog entries bias the LLM toward noisy findings — keep
-# them out of the prompt guidance (LLM scan still owns detection).
+# them out of the prompt guidance (the LLM scan still owns detection; the
+# regex triage tier still runs them). API-specific SQL rules (prepareStatement,
+# JPA, JdbcTemplate) stay in the prompt.
 _SQL_CONCAT_CATALOG_IDS = frozenset({
-    "sql-query-string-concat",
-    "sql-statement-execute-concat",
-    "sql-createstatement-concat",
+    "java-sql-string-concat",
+    "java-jdbc-statement-exec-variable",
+    "java-sql-orderby-param",
 })
 
 

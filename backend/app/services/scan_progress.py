@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 # Rough progress checkpoints (workspace prep -> agent steps -> persist). The
 # agent prints "### <label>" once per step (see sast_engine/sast_scan_agent.py
 # AgentTrace) — that's what most of this matches on; the rest are
@@ -51,11 +53,42 @@ PROGRESS_MARKERS: list[tuple[str, int]] = [
 ]
 
 
-def infer_progress_from_lines(lines: list[str], *, floor: int = 10) -> int:
-    """Return the highest progress % implied by log lines (at least `floor`)."""
-    best = floor
-    for line in lines:
+# Parallel engine stages (sast_scan_agent build_graph(parallel=True)) print
+# with a "[[stage:<name>]] " prefix and run concurrently, so their banners all
+# appear within seconds of each other and "highest marker seen" would jump to
+# the triage banner's 97% while the deep scan has hours left. Tagged lines
+# therefore never match PROGRESS_MARKERS; progress during the fan-out is
+# PARALLEL_BASE plus the weights of the stages that printed STAGE_FINISHED.
+STAGE_TAG_RE = re.compile(r"^\[\[stage:([\w-]+)\]\] ")
+STAGE_FINISHED = "Stage finished: "
+PARALLEL_BASE = 80
+STAGE_WEIGHTS = {"deep": 10, "triage": 4, "flows": 3}
+
+
+class ProgressTracker:
+    """Feed log lines in order; `pct` is the progress they imply."""
+
+    def __init__(self, floor: int = 10):
+        self.pct = floor
+        self._finished: set[str] = set()
+
+    def feed(self, line: str) -> int:
+        tag = STAGE_TAG_RE.match(line)
+        if tag:
+            if STAGE_FINISHED in line:
+                self._finished.add(tag.group(1))
+            parallel = PARALLEL_BASE + sum(STAGE_WEIGHTS.get(s, 0) for s in self._finished)
+            self.pct = max(self.pct, parallel)
+            return self.pct
         for needle, pct in PROGRESS_MARKERS:
-            if needle in line and pct > best:
-                best = pct
-    return best
+            if needle in line and pct > self.pct:
+                self.pct = pct
+        return self.pct
+
+
+def infer_progress_from_lines(lines: list[str], *, floor: int = 10) -> int:
+    """Return the progress % implied by log lines (at least `floor`)."""
+    tracker = ProgressTracker(floor)
+    for line in lines:
+        tracker.feed(line)
+    return tracker.pct

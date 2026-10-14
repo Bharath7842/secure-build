@@ -332,6 +332,8 @@ export interface Finding {
   data_flow: string | null;
   verdict_reason: string | null;
   affected_files: string[] | null;
+  /** Raw rows this grouped finding stands for (1 when ungrouped). */
+  occurrence_count?: number | null;
   /** The literal text the regex matched — findings group by rule + this. */
   matched_text: string | null;
   /** Ordered hops for kind=flow findings (file → file call-graph slice). */
@@ -371,6 +373,12 @@ export interface ScanFindings {
   /** DAST: all findings in the scan, ignoring the request's filters. */
   total_count?: number;
   files_scanned: number;
+  /** SAST: actionable (true positive + unverified) groups and occurrences per
+   *  severity, and dismissed groups — the same basis as the PDF headline. */
+  severity_group_counts?: {
+    actionable: Record<string, { groups: number; occurrences: number }>;
+    dismissed: { groups: number; occurrences: number };
+  } | null;
   findings: Finding[];
 }
 

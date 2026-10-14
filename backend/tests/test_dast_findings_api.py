@@ -157,6 +157,8 @@ def test_a_scan_with_no_findings_returns_an_empty_list(client):
 def test_sast_responses_are_unchanged(client):
     scan_id = new_scan(client, "sast", scan_type="sast")
     body = get(client, scan_id)
-    assert set(body) == {"scan_id", "tp_count", "fp_count", "unverified_count", "files_scanned", "findings"}
+    assert set(body) == {
+        "scan_id", "tp_count", "fp_count", "unverified_count", "files_scanned", "severity_group_counts", "findings",
+    }
     for finding in body["findings"]:
         assert "evidence" not in finding and "remediation" not in finding

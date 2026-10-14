@@ -11,7 +11,7 @@ catalog already uses). Bare ``execute(`` is not a sink.
 from __future__ import annotations
 
 import re
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
@@ -277,8 +277,7 @@ def _norm_file(rel_path: str) -> str:
 
 
 def _is_test_path(rel_path: str) -> bool:
-    posix = "/" + rel_path.replace("\\", "/").lstrip("/") + "/"
-    return "/src/test/" in posix or posix.startswith("/test/")
+    return llm_file_scan.is_test_path(rel_path)
 
 
 # ---------------------------------------------------------------------------
@@ -1061,6 +1060,14 @@ def _is_framework_entry(method: JavaMethod) -> bool:
     if method.name in _STRUTS_METHODS and "Action" in method.fqcn:
         return True
     return False
+
+
+def attack_surface_counts(graph: "CallGraph") -> Tuple[Counter, Counter]:
+    """(framework entry points per file, typed sinks per file) — how exposed
+    a file is, used to rank which CRITICAL/HIGH files get the deep scan."""
+    entries = Counter(m.file for m in graph.methods.values() if _is_framework_entry(m))
+    sinks = Counter(s.file for s in graph.sinks)
+    return entries, sinks
 
 
 def _is_authenticated(method: JavaMethod) -> bool:

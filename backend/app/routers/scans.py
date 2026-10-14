@@ -35,7 +35,13 @@ from app.services.dast_summary import build_summary
 from app.services.dast_findings_query import build_dast_findings
 from app.services.dast_scan_setup import DastSetupError, prepare_dast_scan
 from app.services.llm_policy import DATA_POLICY_ALLOW_EXTERNAL, data_policy_violation
-from app.services.scan_export import build_excel_report, build_pdf_report, export_filenames, group_findings_by_issue
+from app.services.scan_export import (
+    build_excel_report,
+    build_pdf_report,
+    count_groups_by_severity,
+    export_filenames,
+    group_findings_by_issue,
+)
 from app.services.scan_progress import infer_progress_from_lines
 
 router = APIRouter(prefix="/scans", tags=["scans"])
@@ -531,12 +537,21 @@ def get_scan_findings(
     unverified_count = sum(1 for f in all_findings if f.verdict == UNVERIFIED_VERDICT)
     files_scanned = len({f.file_path for f in all_findings if f.file_path})
     grouped_findings = group_findings_by_issue(findings)
+    # Counted over every finding, not the verdict-filtered page. Both queries
+    # return the same identity-mapped instances, and re-grouping them re-stamps
+    # the same values: a verdict filter selects whole groups (the group key
+    # leads with the verdict).
+    severity_group_counts = (
+        count_groups_by_severity(grouped_findings) if not verdict
+        else count_groups_by_severity(group_findings_by_issue(list(all_findings)))
+    )
     return ScanFindingsOut(
         scan_id=scan.id,
         tp_count=tp_count,
         fp_count=fp_count,
         unverified_count=unverified_count,
         files_scanned=files_scanned,
+        severity_group_counts=severity_group_counts,
         findings=[FindingOut.model_validate(f) for f in grouped_findings],
     )
 

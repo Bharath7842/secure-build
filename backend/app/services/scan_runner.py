@@ -23,7 +23,7 @@ from app.services import agent_bridge, engine_adapter, git_token, git_workspace,
 from app.services.credential_holder import InMemoryCredentialHolder
 from app.services.dast_findings import DastFindingsWriter
 from app.services.finding_rows import build_evidence_row, build_finding_row
-from app.services.scan_progress import PROGRESS_MARKERS, infer_progress_from_lines
+from app.services.scan_progress import ProgressTracker, infer_progress_from_lines
 
 _cancel_lock = threading.Lock()
 _cancel_requested: set[str] = set()
@@ -415,6 +415,12 @@ def _mark_cancelled(db, scan_id: str) -> None:
     clear_cancel(scan_id)
 
 
+# The engine's parallel stages call the writers from several threads at once.
+# Each call has its own session, but SQLite takes one writer at a time — so
+# commits are serialized here instead of failing with "database is locked".
+_DB_WRITE_LOCK = threading.Lock()
+
+
 def _make_findings_writer(scan_id: str):
     """One short-lived DB session per file — the writer is called once per
     scanned file with both true- and false-positive findings together, so
@@ -428,13 +434,14 @@ def _make_findings_writer(scan_id: str):
                 scan_log.log(scan_id, f"  No findings for {file_path}.")
                 return
             rows = [build_finding_row(scan_id, f, file_path) for f in findings]
-            session.add_all(rows)
-            session.flush()  # assign finding ids so evidence rows can reference them
-            for finding_row, f in zip(rows, findings):
-                evidence = f.get("evidence")
-                if evidence:
-                    session.add(build_evidence_row(finding_row.id, evidence))
-            session.commit()
+            with _DB_WRITE_LOCK:
+                session.add_all(rows)
+                session.flush()  # assign finding ids so evidence rows can reference them
+                for finding_row, f in zip(rows, findings):
+                    evidence = f.get("evidence")
+                    if evidence:
+                        session.add(build_evidence_row(finding_row.id, evidence))
+                session.commit()
             tp = sum(1 for f in findings if f.get("verdict") == "true_positive")
             fp = sum(1 for f in findings if f.get("verdict") == "false_positive")
             # Counted explicitly rather than as "everything that isn't a TP" —
@@ -465,30 +472,31 @@ def _make_verdict_updates_writer(scan_id: str):
         session = db_module.SessionLocal()
         try:
             changed = 0
-            for update in updates:
-                rule_id = update.get("rule_id")
-                line = update.get("line")
-                if rule_id is None or line is None:
-                    continue
-                changed += (
-                    session.query(Finding)
-                    .filter(
-                        Finding.scan_id == scan_id,
-                        Finding.file_path == file_path,
-                        Finding.rule_id == rule_id,
-                        Finding.line == line,
+            with _DB_WRITE_LOCK:
+                for update in updates:
+                    rule_id = update.get("rule_id")
+                    line = update.get("line")
+                    if rule_id is None or line is None:
+                        continue
+                    changed += (
+                        session.query(Finding)
+                        .filter(
+                            Finding.scan_id == scan_id,
+                            Finding.file_path == file_path,
+                            Finding.rule_id == rule_id,
+                            Finding.line == line,
+                        )
+                        .update(
+                            {
+                                "verdict": update.get("verdict"),
+                                "confidence": update.get("confidence"),
+                                "verdict_reason": update.get("verdict_reason"),
+                                "ai_fix": update.get("ai_fix"),
+                            },
+                            synchronize_session=False,
+                        )
                     )
-                    .update(
-                        {
-                            "verdict": update.get("verdict"),
-                            "confidence": update.get("confidence"),
-                            "verdict_reason": update.get("verdict_reason"),
-                            "ai_fix": update.get("ai_fix"),
-                        },
-                        synchronize_session=False,
-                    )
-                )
-            session.commit()
+                session.commit()
             if changed:
                 scan_log.log(scan_id, f"  Confirmed {changed} finding(s) for {file_path} via grouped review.")
         finally:
@@ -515,7 +523,8 @@ def _make_discovery_writer(scan_id: str, secrets=None):
             metadata = dict(scan.metadata_json or {})
             metadata["discovery"] = discovery
             scan.metadata_json = metadata
-            session.commit()
+            with _DB_WRITE_LOCK:
+                session.commit()
         finally:
             session.close()
 
@@ -526,39 +535,37 @@ _CRITICAL_FILE_RE = re.compile(r"CRITICAL file (\d+)/(\d+)")
 
 
 def _progress_hook_factory(db, scan_id: str, last_progress: list[int]):
-    """Return a scan_log line hook that bumps Scan.progress from engine output."""
+    """Return a scan_log line hook that bumps Scan.progress from engine output.
+
+    Parallel engine stages log from several threads, and `db` is one session:
+    the lock keeps both the tracker and the session single-threaded."""
+    tracker = ProgressTracker(floor=last_progress[0])
+    lock = threading.Lock()
+
+    def _store(pct: int) -> None:
+        last_progress[0] = pct
+        try:
+            scan = db.get(Scan, scan_id)
+            if scan is None or scan.status != "running":
+                return
+            scan.progress = pct
+            db.commit()
+        except Exception:  # noqa: BLE001 — never break logging on progress write
+            db.rollback()
 
     def on_line(line: str) -> None:
-        m = _CRITICAL_FILE_RE.search(line)
-        if m:
-            idx, total = int(m.group(1)), int(m.group(2))
-            if total > 0:
-                pct = 97 + int((idx / total) * 2)
-                pct = min(pct, 99)
-                if pct > last_progress[0]:
-                    last_progress[0] = pct
-                    try:
-                        scan = db.get(Scan, scan_id)
-                        if scan is None or scan.status != "running":
-                            return
-                        scan.progress = pct
-                        db.commit()
-                    except Exception:  # noqa: BLE001
-                        db.rollback()
+        with lock:
+            m = _CRITICAL_FILE_RE.search(line)
+            if m:
+                idx, total = int(m.group(1)), int(m.group(2))
+                if total > 0:
+                    pct = min(97 + int((idx / total) * 2), 99)
+                    if pct > last_progress[0]:
+                        _store(pct)
                     return
-        for needle, pct in PROGRESS_MARKERS:
-            if needle not in line or pct <= last_progress[0]:
-                continue
-            last_progress[0] = pct
-            try:
-                scan = db.get(Scan, scan_id)
-                if scan is None or scan.status != "running":
-                    return
-                scan.progress = pct
-                db.commit()
-            except Exception:  # noqa: BLE001 — never break logging on progress write
-                db.rollback()
-            break
+            pct = tracker.feed(line)
+            if pct > last_progress[0]:
+                _store(pct)
 
     return on_line
 

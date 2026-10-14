@@ -192,6 +192,7 @@ def run_real_scan(
         else agent.llm_file_scan.TRIAGE_MODE_REGEX_ONLY
     )
     catalog_prefilter = enabled("ripgrep-catalog-prefilter")
+    parallel_stages = enabled("parallel-scan-stages")
     max_derived = getattr(project, "max_derived_regex_rules", None)
     if max_derived is None:
         max_derived = 50
@@ -225,6 +226,7 @@ def run_real_scan(
         "deep_scan_critical_only": deep_scan_critical_only,
         "triage_mode": triage_mode,
         "catalog_prefilter": catalog_prefilter,
+        "parallel_stages": parallel_stages,
         "max_derived_regex_rules": max_derived,
         "findings_writer": findings_writer,
         "discovery_writer": discovery_writer,
@@ -255,7 +257,15 @@ def run_real_scan(
     # removed even when the graph raises partway through.
     joern_work_dir = Path(tempfile.mkdtemp(prefix="sast-joern-"))
     initial_state["joern_work_dir"] = str(joern_work_dir)
-    graph = agent.build_graph()
+    if parallel_stages and scan_id:
+        from app.services import scan_log
+
+        # Each parallel stage's printed lines get "[[stage:<name>]] " so the
+        # UI and progress can tell the interleaved stages apart.
+        initial_state["_stage_log_context"] = (
+            lambda stage: scan_log.capture(scan_id, prefix=f"[[stage:{stage}]] ")
+        )
+    graph = agent.build_graph(parallel=parallel_stages)
     try:
         final_state = agent.invoke_graph(graph, initial_state)
     finally:

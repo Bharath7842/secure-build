@@ -46,7 +46,14 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 from llm_client import call_llm, parse_llm_json_array
 
 from .owasp_map import OWASP_TOP_10_2021, owasp_for_rule
-from .regex_scan import RegexRule, rules_for_prompt, scan_one_file, _SQL_CONCAT_CATALOG_IDS
+from .regex_scan import (
+    PROCESS_POOL_MIN_FILES,
+    RegexRule,
+    _SQL_CONCAT_CATALOG_IDS,
+    rules_for_prompt,
+    scan_files_in_processes,
+    scan_one_file,
+)
 
 # --- tunables ---------------------------------------------------------------
 
@@ -320,6 +327,9 @@ _EXT_TO_LANG: Dict[str, str] = {
     ".jsp": "java",
     ".ts": "typescript", ".tsx": "typescript",
     ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+    # Single-file components: script and template share the JS rule set, and
+    # the template rules (rules/frontend-templates.json) list javascript too.
+    ".vue": "javascript", ".svelte": "javascript",
     ".py": "python",
     ".go": "go",
     ".cs": "csharp",
@@ -522,6 +532,35 @@ def _read_text(repo_root: Path, rel_path: str) -> Optional[str]:
         return (repo_root / rel_path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
+
+
+# Test code by directory *and* by file name: legacy Java repos keep
+# *Test.java / *TestClient.java beside production code under src/main, and
+# frontend tests sit next to the component they test. Matched against the
+# POSIX relative path.
+_TEST_DIR_RE = re.compile(
+    r"(?:^|/)(?:src/test|src/it|test|tests|__tests__|__mocks__|e2e|cypress|spec|specs)/",
+    re.IGNORECASE,
+)
+_TEST_FILE_RE = re.compile(
+    r"(?:"
+    r"\w*(?:Test|Tests|TestCase)\d*\.(?:java|kt|scala)"
+    r"|\w*[a-z0-9](?:IT|ITCase)\.(?:java|kt)"
+    r"|\w*TestClient\w*\.(?:java|kt)"
+    r"|[\w.-]+\.(?:spec|test|e2e-spec|cy)\.[cm]?[jt]sx?"
+    r"|test_\w+\.py|\w+_test\.(?:py|go)|conftest\.py"
+    r")$"
+)
+
+
+def is_test_path(rel_path: str) -> bool:
+    """True for test code: a test directory anywhere in the path, or a test
+    file-name convention (FooTest.java, FooIT.java, FooTestClient.java,
+    foo.spec.ts, foo.test.js, test_foo.py, foo_test.go)."""
+    posix = str(rel_path or "").replace("\\", "/").lstrip("/")
+    if _TEST_DIR_RE.search(posix):
+        return True
+    return bool(_TEST_FILE_RE.search(posix.rsplit("/", 1)[-1]))
 
 
 def is_non_source_path(rel_path: str) -> bool:
@@ -1201,15 +1240,19 @@ def finalize_findings(
 def files_for_risk_levels(
     module_plan: Dict[str, Any],
     levels: Set[str],
+    *,
+    skip_tests: bool = True,
 ) -> List[Dict[str, Any]]:
-    """Files at the given path-heuristic risk levels, excluding non-source and
-    schema/CVS/log4j paths that stay in Discovery but are not finding-scanned."""
+    """Files at the given path-heuristic risk levels, excluding non-source,
+    schema/CVS/log4j paths and (by default) test code — all of which stay in
+    Discovery but are not finding-scanned."""
     wanted = {str(level).upper() for level in levels}
     return [
         entry for entry in module_plan.get("files", [])
         if str(entry.get("risk_level") or "").upper() in wanted
         and not is_non_source_path(entry.get("path") or "")
         and not is_excluded_from_finding_scan(entry.get("path") or "")
+        and not (skip_tests and is_test_path(entry.get("path") or ""))
     ]
 
 
@@ -1596,6 +1639,35 @@ def triage_candidates(hits: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+# A construct repeated many times in one file (102 identical hits in a legacy
+# helper) is triaged once: one candidate carrying the occurrence count and the
+# excerpts of its first few occurrences, with the verdict applied to all.
+TRIAGE_GROUP_WINDOWS = 3
+
+
+def group_triage_candidates(
+    candidates: Sequence[Dict[str, Any]], rules_by_id: Dict[str, RegexRule],
+) -> List[Dict[str, Any]]:
+    """Collapse candidates that share a group key (group_key_for_finding — the
+    same key the report groups on) into one representative each, renumbered
+    c1..cn, with every member kept under "members"."""
+    groups: Dict[tuple, List[Dict[str, Any]]] = {}
+    for cand in candidates:
+        rule = rules_by_id.get(cand.get("rule_id") or "")
+        key = group_key_for_finding({
+            "rule_id": cand.get("rule_id"), "matched_text": cand.get("matched_text"),
+            "group_by_rule": bool(rule and rule.group_by_rule),
+        })
+        groups.setdefault(key, []).append(cand)
+    out: List[Dict[str, Any]] = []
+    for members in groups.values():
+        rep = dict(members[0])
+        rep["id"] = f"c{len(out) + 1}"
+        rep["members"] = list(members)
+        out.append(rep)
+    return out
+
+
 def merged_context_windows(
     line_numbers: Sequence[int],
     total_lines: int,
@@ -1641,16 +1713,26 @@ def _triage_prompts_for_candidates(
             f"{(rule.severity if rule else cand.get('severity')) or 'LOW'} | "
             f"{title}{': ' + desc if desc and desc != title else ''}"
         )
-    cand_lines = [
-        f"{c['id']} | {c['rule_id']} | line {c['line']} | matched: "
-        + json.dumps(c["matched_text"][:200], ensure_ascii=False)
-        for c in candidates
-    ]
+    def _cand_line(c: Dict[str, Any]) -> str:
+        members = c.get("members") or [c]
+        where = f"line {c['line']}"
+        if len(members) > 1:
+            shown = ", ".join(str(m["line"]) for m in members[:TRIAGE_GROUP_WINDOWS])
+            more = "" if len(members) <= TRIAGE_GROUP_WINDOWS else ", …"
+            where = (f"{len(members)} occurrences of the same match in this file "
+                     f"(lines {shown}{more}; one verdict covers all)")
+        return (f"{c['id']} | {c['rule_id']} | {where} | matched: "
+                + json.dumps(c["matched_text"][:200], ensure_ascii=False))
+
+    cand_lines = [_cand_line(c) for c in candidates]
     markers: Dict[int, List[str]] = {}
+    shown_lines: List[int] = []
     for c in candidates:
-        markers.setdefault(int(c["line"]), []).append(c["id"])
+        for m in (c.get("members") or [c])[:TRIAGE_GROUP_WINDOWS]:
+            markers.setdefault(int(m["line"]), []).append(c["id"])
+            shown_lines.append(int(m["line"]))
     excerpts: List[str] = []
-    for lo, hi in merged_context_windows([c["line"] for c in candidates], len(lines)):
+    for lo, hi in merged_context_windows(shown_lines, len(lines)):
         block = [f"--- lines {lo}-{hi} ---"]
         for n in range(lo, hi + 1):
             text = lines[n - 1] if n - 1 < len(lines) else ""
@@ -1816,10 +1898,12 @@ def triage_regex_hits(
 ) -> Dict[str, Any]:
     """One LLM call to TP/FP-triage the regex hits in a MEDIUM/LOW-risk file.
 
-    Every candidate ends up with exactly one outcome: a model decision, or —
-    when the response omitted it, was unparseable, or the call failed —
-    `unverified`. Candidates the model left out get one follow-up call
-    carrying only their own excerpts before falling back to unverified."""
+    Hits that repeat one construct (group_triage_candidates) are asked about
+    once and the verdict is applied to every occurrence. Every candidate ends
+    up with exactly one outcome: a model decision, or — when the response
+    omitted it, was unparseable, or the call failed — `unverified`.
+    Candidates the model left out get one follow-up call carrying only their
+    own excerpts before falling back to unverified."""
     if not hits:
         return {
             "file_path": file_path, "chunks": 0, "findings": [],
@@ -1827,7 +1911,7 @@ def triage_regex_hits(
         }
 
     rules_by_id = {rule.id: rule for rule in rules}
-    candidates = triage_candidates(hits)
+    candidates = group_triage_candidates(triage_candidates(hits), rules_by_id)
     errors: List[str] = []
 
     def _ask(subset: Sequence[Dict[str, Any]]) -> Tuple[Dict[str, Dict[str, Any]], bool]:
@@ -1865,18 +1949,20 @@ def triage_regex_hits(
         errors.append(f"{len(missing)} candidate(s) left unverified (no decision)")
 
     reviewed = [
-        _triage_finding(c, decided[c["id"]], file_path=file_path,
+        _triage_finding(m, decided[c["id"]], file_path=file_path,
                         source_text=source_text, rules_by_id=rules_by_id)
         for c in candidates if c["id"] in decided
+        for m in c["members"]
     ]
     reviewed = [f for f in reviewed if f["verdict"] != VERDICT_UNVERIFIED]
     merged = finalize_findings(merge_dedupe(reviewed), source_text)
     # Undecided candidates bypass suppression, exactly like regex-only
     # findings: no one has judged them, so nothing may be dropped on a guess.
     unverified = [
-        _triage_finding(c, None, file_path=file_path,
+        _triage_finding(m, None, file_path=file_path,
                         source_text=source_text, rules_by_id=rules_by_id)
         for c in missing
+        for m in c["members"]
     ]
     findings = merged + unverified
     for finding in findings:
@@ -1964,6 +2050,8 @@ def scan_triage_files(
     entries: Optional[List[Dict[str, Any]]] = None,
     triage_mode: str = DEFAULT_TRIAGE_MODE,
     rules_for_path: Optional[Callable[[str], List[RegexRule]]] = None,
+    on_file_done: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+    regex_processes: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Regex-scan every MEDIUM/LOW-risk file (plus any CRITICAL/HIGH overflow
     the caller routes here past DEEP_SCAN_FILE_CAP).
@@ -1989,13 +2077,42 @@ def scan_triage_files(
     `rules_for_path` (pipeline/rg_prefilter.py) narrows the rules run on each
     file to those ripgrep found a required literal for; a file left with no
     rules is never read. Python stays the authority on every hit.
+
+    `on_file_done(position, result)` fires once per entry, whatever happened
+    to it (callers track per-batch completion with it). `regex_processes`
+    runs the regex pass in worker processes — None means "when there are at
+    least regex_scan.PROCESS_POOL_MIN_FILES files"; the findings are the same
+    either way.
     """
     triage_files = entries if entries is not None else files_for_risk_levels(module_plan, TRIAGE_RISK_LEVELS)
     total = len(triage_files)
     results: List[Optional[Dict[str, Any]]] = [None] * total
     rules_by_id = {rule.id: rule for rule in rules}
 
+    prescanned: Dict[str, Dict[str, Any]] = {}
+    if regex_processes or (regex_processes is None and total >= PROCESS_POOL_MIN_FILES):
+        jobs = []
+        for entry in triage_files:
+            path = entry["path"]
+            file_rules = rules_for_path(path) if rules_for_path is not None else rules
+            if not file_rules:
+                continue  # prefiltered out; _run_one records it without reading
+            rule_ids = None if file_rules is rules else tuple(r.id for r in file_rules)
+            jobs.append((path, entry.get("module", "(root)"), entry.get("lang") or lang_for_path(path), rule_ids))
+        prescanned = scan_files_in_processes(
+            jobs, repo_root=repo_root, rules=rules,
+            active_frameworks=active_frameworks, dependency_index=dependency_index,
+        ) or {}
+
     def _run(indexed: Tuple[int, Dict[str, Any]]) -> None:
+        try:
+            _run_one(indexed)
+        finally:
+            if on_file_done is not None:
+                with _CALLBACK_LOCK:
+                    on_file_done(indexed[0], results[indexed[0]] or {})
+
+    def _run_one(indexed: Tuple[int, Dict[str, Any]]) -> None:
         position, entry = indexed
         path = entry["path"]
         if on_file_start is not None:
@@ -2010,7 +2127,7 @@ def scan_triage_files(
                 "skipped_no_hits": True, "prefiltered": True, "chunk_errors": [],
             }
             return
-        scanned = scan_one_file(
+        scanned = prescanned.get(path) or scan_one_file(
             repo_root, path, entry.get("module", "(root)"), file_rules,
             file_lang=lang, active_frameworks=active_frameworks,
             dependency_index=dependency_index,

@@ -109,18 +109,34 @@ export default function ScanFindingsPanel({
     };
   }, [scanId, verdictFilter, live]);
 
-  const severityCounts = useMemo(() => {
-    const counts: Record<string, number> = {
-      CRITICAL: 0,
-      HIGH: 0,
-      MEDIUM: 0,
-      LOW: 0,
+  // Findings arrive grouped. Chips count actionable groups (true positive +
+  // unverified) with their occurrences — the same basis as the PDF headline —
+  // while `severityCounts` still includes dismissed groups so a severity
+  // holding only dismissed ones stays selectable.
+  const { severityCounts, actionableCounts, dismissed } = useMemo(() => {
+    const all: Record<string, number> = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
+    const actionable: Record<string, { groups: number; occurrences: number }> = {
+      CRITICAL: { groups: 0, occurrences: 0 },
+      HIGH: { groups: 0, occurrences: 0 },
+      MEDIUM: { groups: 0, occurrences: 0 },
+      LOW: { groups: 0, occurrences: 0 },
     };
+    const dismissedTotals = { groups: 0, occurrences: 0 };
     for (const finding of findings ?? []) {
       const sev = normalizeSeverity(finding.severity);
-      counts[sev] = (counts[sev] ?? 0) + 1;
+      const occurrences = finding.occurrence_count ?? 1;
+      all[sev] = (all[sev] ?? 0) + 1;
+      // Same test as scan_export._is_dismissed, so chips match the PDF.
+      if ((finding.verdict ?? "").toLowerCase() === "false_positive") {
+        dismissedTotals.groups += 1;
+        dismissedTotals.occurrences += occurrences;
+      } else {
+        const bucket = (actionable[sev] ??= { groups: 0, occurrences: 0 });
+        bucket.groups += 1;
+        bucket.occurrences += occurrences;
+      }
     }
-    return counts;
+    return { severityCounts: all, actionableCounts: actionable, dismissed: dismissedTotals };
   }, [findings]);
 
   // Drop a severity chip that no longer matches (e.g. HIGH selected, then
@@ -150,12 +166,14 @@ export default function ScanFindingsPanel({
           {RISK_LEVELS.map((risk) => {
             const selected = severityFilter === risk;
             const count = severityCounts[risk] ?? 0;
+            const actionable = actionableCounts[risk] ?? { groups: 0, occurrences: 0 };
             const style = RISK_STYLES[risk];
             return (
               <button
                 type="button"
                 key={risk}
                 disabled={count === 0 && !selected}
+                title={`${actionable.groups} actionable ${actionable.groups === 1 ? "group" : "groups"} · ${actionable.occurrences} ${actionable.occurrences === 1 ? "occurrence" : "occurrences"}`}
                 onClick={() => setSeverityFilter((current) => (current === risk ? null : risk))}
                 className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium uppercase tracking-wide transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                   selected ? style.active : `${style.chip} hover:opacity-90`
@@ -166,11 +184,23 @@ export default function ScanFindingsPanel({
                   aria-hidden
                 />
                 {risk}
-                <span className="font-semibold tabular-nums">{count}</span>
+                <span className="font-semibold tabular-nums">{actionable.groups}</span>
+                {actionable.occurrences > actionable.groups ? (
+                  <span className="font-normal normal-case tabular-nums opacity-75">
+                    · {actionable.occurrences}×
+                  </span>
+                ) : null}
               </button>
             );
           })}
         </div>
+        {dismissed.groups > 0 ? (
+          <p className="mt-2 text-xs text-[var(--muted)]">
+            Counts are actionable issue groups (true positive + unverified). Dismissed:{" "}
+            {dismissed.groups} {dismissed.groups === 1 ? "group" : "groups"} ({dismissed.occurrences}{" "}
+            {dismissed.occurrences === 1 ? "occurrence" : "occurrences"}).
+          </p>
+        ) : null}
 
         {findingsLoading ? (
           <p className="mt-3 text-sm text-[var(--muted)]">Loading findings…</p>
@@ -254,6 +284,9 @@ export default function ScanFindingsPanel({
                     <div className="mt-2 rounded border border-slate-200 bg-slate-50 p-2">
                       <p className="text-xs font-medium text-[var(--muted)]">
                         Found in {finding.affected_files.length} files
+                        {(finding.occurrence_count ?? 0) > finding.affected_files.length
+                          ? ` (${finding.occurrence_count} occurrences)`
+                          : ""}
                       </p>
                       <ul className="mt-1 max-h-40 space-y-0.5 overflow-y-auto">
                         {finding.affected_files.map((path, idx) => (

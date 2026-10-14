@@ -47,11 +47,13 @@ import os
 import re
 import sqlite3
 import sys
+import threading
 import uuid
+from contextlib import nullcontext
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict
+from typing import Annotated, Any, Callable, Dict, List, Optional, Tuple, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -81,6 +83,7 @@ EXT_LANG_MAP: Dict[str, str] = {
     ".py": "Python", ".pyi": "Python (stub)",
     ".js": "JavaScript", ".jsx": "JavaScript (React)",
     ".ts": "TypeScript", ".tsx": "TypeScript (React)",
+    ".vue": "Vue", ".svelte": "Svelte",
     ".php": "PHP", ".cs": "C#", ".vb": "VB.NET",
     ".go": "Go", ".rb": "Ruby", ".rs": "Rust", ".c": "C", ".cpp": "C++", ".h": "C/C++ Header",
     ".html": "HTML",
@@ -184,6 +187,7 @@ STACK_PROFILES: Dict[str, Dict[str, Any]] = {
         "markers": ["pom.xml"],
         "rules": [
             (r"(^|/)pom\.xml$",                                   "MEDIUM",   "dependency & plugin manifest",        "dependency"),
+            (r"(^|/)web\.xml$",                                    "CRITICAL", "servlet deployment descriptor (URL security constraints, filters, session config)", "config"),
             (r"(^|/)src/main/java/.*/(controller|controllers|web|rest)/", "HIGH",     "user input entry point (controller layer)", "source"),
             (r"(^|/)src/main/java/.*(ExceptionHandler|ControllerAdvice)\w*\.java$", "HIGH", "exception handler / controller advice (builds HTTP responses from exception data, regardless of package)", "source"),
             (r"(^|/)src/main/java/.*(SecurityConfig|WebSecurityConfig|SecurityFilterChain)\w*\.java$", "CRITICAL", "Spring Security configuration (CSRF/CORS/authorization rules, regardless of package)", "source"),
@@ -202,7 +206,7 @@ STACK_PROFILES: Dict[str, Dict[str, Any]] = {
         "markers": ["angular.json"],
         "rules": [
             (r"(^|/)package\.json$",                    "MEDIUM",   "dependency manifest",                   "dependency"),
-            (r"environment(\.\w+)?\.ts$",                "CRITICAL", "env config — possible API keys/secrets", "config"),
+            (r"environment(\.\w+)?\.ts$",                "MEDIUM",   "env config — the secret/endpoint rules cover it", "config"),
             (r"\.guard\.ts$",                            "CRITICAL", "route auth guard",                      "source"),
             (r"\.interceptor\.ts$",                      "HIGH",     "HTTP interceptor (auth headers, tokens)", "source"),
             (r"\.service\.ts$",                          "HIGH",     "business logic / API calls",            "source"),
@@ -328,7 +332,9 @@ class AgentTrace:
     def __init__(self, verbose: bool = True):
         self.verbose = verbose
         self.events: List[Dict[str, Any]] = []
-        self._last_step: Optional[int] = None
+        # Per thread: parallel stages each print their own banner when their
+        # step changes; a sequential scan (one thread) behaves as before.
+        self._local = threading.local()
         # Per-scan banner overrides (see set_label); STEP_LABELS otherwise.
         self._labels: Dict[int, str] = {}
 
@@ -347,8 +353,8 @@ class AgentTrace:
             "detail": detail,
         }
         self.events.append(entry)
-        if self.verbose and step != self._last_step:
-            self._last_step = step
+        if self.verbose and step != getattr(self._local, "last_step", None):
+            self._local.last_step = step
             print(f"### {self._labels.get(step) or STEP_LABELS.get(step, node.replace('_', ' '))}")
         if self.verbose and narrative:
             print(narrative)
@@ -362,6 +368,12 @@ class AgentTrace:
 # ===========================================================================
 # 2. STATE — what flows between LangGraph nodes
 # ===========================================================================
+
+def _same_usage(left: Optional[Dict[str, Any]], right: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Parallel stages all return the one shared usage dict (mutated in place
+    under llm_client's lock); LangGraph needs a reducer to accept that."""
+    return right if right is not None else left
+
 
 class SastState(TypedDict, total=False):
     local_path: str
@@ -389,6 +401,9 @@ class SastState(TypedDict, total=False):
     deep_scan_critical_only: bool
     triage_batch_size: int            # override for node_scan_triage_files' _DEFAULT_TRIAGE_BATCH_SIZE
     triage_mode: str                  # "regex_only" (default) | "llm_triage" — see llm_file_scan
+    # Regex pass in worker processes: None = automatic past
+    # regex_scan.PROCESS_POOL_MIN_FILES files (same findings either way).
+    triage_regex_processes: Optional[bool]
     # Group unverified MEDIUM/LOW findings by construct and report the
     # collapse (node_group_triage_findings) — no LLM call, verdicts untouched.
     # Default True; only has an effect when triage_mode is regex_only.
@@ -469,7 +484,16 @@ class SastState(TypedDict, total=False):
     triage_scan_results: Dict[str, Any]  # node_scan_triage_files output
     triage_group_summary: Dict[str, Any]  # node_group_triage_findings output
     report: Dict[str, Any]            # node_generate_report output
-    usage: Dict[str, Any]
+    usage: Annotated[Dict[str, Any], _same_usage]
+    # Run flows, the deep scan and triage concurrently after derive
+    # (build_graph(parallel=True)); API scans default on, CLI --sequential.
+    parallel_stages: bool
+    # Caller-supplied stage -> context manager that tags the stage's log lines
+    # ("[[stage:<name>]] "); unset on the CLI.
+    _stage_log_context: Any
+    # Files each tier has finished so far, shared by the parallel stages so
+    # interim Discovery reports include both tiers.
+    _partial_files: Dict[str, List[Dict[str, Any]]]
     persisted: Dict[str, Any]         # CLI-only disk persist after graph (optional)
 
     trace: List[Dict[str, Any]]
@@ -1261,6 +1285,40 @@ def _discover_modules(scan: Dict[str, Any], stack: str) -> List[str]:
     return sorted(module_dirs) if module_dirs else ["(root)"]
 
 
+_RISK_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+
+# Path rules can't see what a Java class *is*. A short peek at its head can:
+# an EJB home/remote/local interface is declarations only (no logic for the
+# deep scan to review), while a JAX-RS resource, Spring REST controller, SOAP
+# endpoint, servlet or servlet filter is an HTTP entry point that belongs in
+# the deep scan whatever package it sits in.
+_CONTENT_PEEK_CHARS = 16_000
+_EJB_INTERFACE_RE = re.compile(
+    r"\binterface\s+\w+\s+extends\s+[\w.,\s]*?\b(?:EJBHome|EJBLocalHome|EJBObject|EJBLocalObject)\b"
+    r"|@(?:Remote|Local)\b(?:\s*\([^)]*\))?\s*(?:public\s+)?interface\b"
+)
+_ENTRY_CLASS_RE = re.compile(r"@(?:Path|RestController|WebService|WebServlet)\b|\bextends\s+HttpServlet\b")
+_SERVLET_FILTER_RE = re.compile(r"\bimplements\s+(?:[\w.<>]+\s*,\s*)*(?:javax\.servlet\.|jakarta\.servlet\.)?Filter\b")
+
+
+def _java_content_risk(root: Path, rel_path: str, risk: str, reason: str) -> Tuple[str, str]:
+    """(risk, reason) after looking at a .java file's head; unchanged when
+    unreadable or unremarkable."""
+    try:
+        with open(root / rel_path, encoding="utf-8", errors="replace") as fh:
+            head = fh.read(_CONTENT_PEEK_CHARS)
+    except OSError:
+        return risk, reason
+    if _EJB_INTERFACE_RE.search(head):
+        return "LOW", "EJB home/remote/local interface (declarations only)"
+    if risk != "CRITICAL" and (
+        _ENTRY_CLASS_RE.search(head)
+        or (rel_path.endswith("Filter.java") and _SERVLET_FILTER_RE.search(head))
+    ):
+        return "CRITICAL", "HTTP/SOAP entry point (JAX-RS/Spring REST resource, web service, servlet or filter)"
+    return risk, reason
+
+
 def node_map_modules_and_risk(state: SastState) -> dict:
     tracer: AgentTrace = state["_tracer"]
     scan = state["scan"]
@@ -1274,6 +1332,8 @@ def node_map_modules_and_risk(state: SastState) -> dict:
     file_risk: List[Dict[str, Any]] = []
     risk_counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
     modules_by_stack: Dict[str, List[str]] = {}
+    root = _resolve_scan_root(state)
+    content_overrides = {"promoted": 0, "demoted": 0}
 
     for stack in active_profiles:
         mods = _discover_modules(scan, stack)
@@ -1295,6 +1355,11 @@ def node_map_modules_and_risk(state: SastState) -> dict:
             matched_stack = "generic-fallback"
 
         risk, reason, category = matched
+        if f["path"].endswith(".java") and not llm_file_scan.is_test_path(f["path"]):
+            new_risk, reason = _java_content_risk(root, f["path"], risk, reason)
+            if new_risk != risk:
+                content_overrides["promoted" if new_risk == "CRITICAL" else "demoted"] += 1
+                risk = new_risk
         if risk in risk_counts:
             risk_counts[risk] += 1
 
@@ -1326,7 +1391,6 @@ def node_map_modules_and_risk(state: SastState) -> dict:
     triage_risk_levels = (
         llm_file_scan.TRIAGE_RISK_LEVELS | {"HIGH"} if critical_only else llm_file_scan.TRIAGE_RISK_LEVELS
     )
-    _RISK_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
     critical_high = llm_file_scan.files_for_risk_levels(
         {"files": file_risk}, deep_risk_levels
@@ -1353,6 +1417,13 @@ def node_map_modules_and_risk(state: SastState) -> dict:
         room = deep_cap - len(deep_entries)
         backfill_entries, medium_low = medium_low[:room], medium_low[room:]
 
+    files_skipped_test = sum(
+        1 for e in file_risk
+        if llm_file_scan.is_test_path(e["path"])
+        and not llm_file_scan.is_non_source_path(e["path"])
+        and not llm_file_scan.is_excluded_from_finding_scan(e["path"])
+    )
+
     deep_scan_paths = [e["path"] for e in deep_entries] + [e["path"] for e in backfill_entries]
     # Overflow CRITICAL/HIGH goes first so it isn't stuck behind every
     # MEDIUM/LOW file once the triage tier batches (node_scan_triage_files).
@@ -1366,6 +1437,8 @@ def node_map_modules_and_risk(state: SastState) -> dict:
                           [e for e in file_risk if e["risk_level"] == "HIGH"],
         "deep_scan_paths": deep_scan_paths,
         "triage_scan_paths": triage_scan_paths,
+        "files_skipped_test": files_skipped_test,
+        "content_risk_overrides": content_overrides,
     }
 
     llm_analysis = state.get("llm_analysis") or {}
@@ -1391,7 +1464,10 @@ def node_map_modules_and_risk(state: SastState) -> dict:
     tracer.log(4, "map_modules_and_risk", "Risk mapping complete",
                 detail=f"{risk_counts} — {len(module_plan['scan_priority'])} files flagged CRITICAL/HIGH; "
                        f"deep_cap={deep_cap}, critical_only={critical_only}, "
-                       f"overflow={len(overflow_entries)}, backfill={len(backfill_entries)}; "
+                       f"overflow={len(overflow_entries)}, backfill={len(backfill_entries)}, "
+                       f"test_files_skipped={files_skipped_test}, "
+                       f"entry_points_promoted={content_overrides['promoted']}, "
+                       f"ejb_interfaces_demoted={content_overrides['demoted']}; "
                        f"tech_stack={llm_analysis.get('tech_stack')}",
                 narrative=f"{risk_counts['CRITICAL']} critical-risk file(s), {risk_counts['HIGH']} high, "
                           f"{risk_counts['MEDIUM']} medium, {risk_counts['LOW']} low "
@@ -1400,11 +1476,12 @@ def node_map_modules_and_risk(state: SastState) -> dict:
                           f"{backfill_note}) queued for the full LLM scan; "
                           f"{len(triage_scan_paths)} file(s) queued for regex-gated triage{overflow_note}, "
                           f"where {triage_llm_note}. "
-                          f"{wrap}")
+                          + (f"{files_skipped_test} test file(s) are left out of both tiers. " if files_skipped_test else "")
+                          + f"{wrap}")
     # Persist discovery now so the UI can show Discovery results before the
     # LLM file scan (which can take a long time).
     _emit_discovery(state, module_plan=module_plan, report=None)
-    return {"module_plan": module_plan}
+    return {"module_plan": module_plan, "_partial_files": {}}
 
 
 # ===========================================================================
@@ -1556,6 +1633,48 @@ def node_build_joern_cpg(state: SastState) -> dict:
     return {"joern": {"status": status, **summary, "_session": session if session.cpgs else None}}
 
 
+def _emit_partial_report(state: SastState, tier: str, files: List[Dict[str, Any]]) -> None:
+    """Interim Discovery report over every tier's finished files so far."""
+    acc = state.get("_partial_files")
+    if acc is None:
+        acc = {}
+    acc[tier] = list(files)
+    merged = [f for tier_files in list(acc.values()) for f in tier_files]
+    _emit_discovery(state, report=llm_file_scan.build_report_from_file_results(merged))
+
+
+def _rank_deep_scan_by_attack_surface(
+    state: SastState, entries: Counter, sinks: Counter,
+) -> Tuple[Dict[str, Any], int]:
+    """Re-pick the deep-scan set once the call graph exists.
+
+    node_map_modules_and_risk filled the cap with CRITICAL then HIGH files in
+    walk order, before anything knew which files are reachable. Now rank every
+    deep-tier candidate (including overflow sitting in triage) by
+    (risk, -framework entry points, -typed sinks, original order) and take the
+    top `cap`; files that lose their slot move to the front of triage. Sizes
+    and risk levels don't change — only which CRITICAL/HIGH files the LLM reads
+    in full. Returns (module_plan, files swapped in)."""
+    module_plan = dict(state.get("module_plan") or {})
+    deep = list(module_plan.get("deep_scan_paths") or [])
+    triage = list(module_plan.get("triage_scan_paths") or [])
+    deep_levels = {"CRITICAL"} if state.get("deep_scan_critical_only") else set(llm_file_scan.LLM_RISK_LEVELS)
+    risk_of = {e["path"]: e.get("risk_level") for e in module_plan.get("files") or []}
+    pool = [p for p in deep + triage if risk_of.get(p) in deep_levels]
+    if not pool:
+        return module_plan, 0
+    cap = state.get("deep_scan_file_cap", llm_file_scan.DEEP_SCAN_FILE_CAP)
+    order = {p: i for i, p in enumerate(pool)}
+    ranked = sorted(pool, key=lambda p: (_RISK_RANK.get(risk_of.get(p), 9), -entries.get(p, 0), -sinks.get(p, 0), order[p]))
+    chosen, overflow = ranked[:cap], ranked[cap:]
+    backfill = [p for p in deep if risk_of.get(p) not in deep_levels][: max(0, cap - len(chosen))]
+    placed = set(chosen) | set(backfill) | set(overflow)
+    swapped_in = len(set(chosen) - set(deep))
+    module_plan["deep_scan_paths"] = chosen + backfill
+    module_plan["triage_scan_paths"] = overflow + [p for p in deep + triage if p not in placed]
+    return module_plan, swapped_in
+
+
 def node_build_call_graph(state: SastState) -> dict:
     tracer: AgentTrace = state["_tracer"]
     if not _tree_sitter_graph_enabled(state):
@@ -1617,7 +1736,19 @@ def node_build_call_graph(state: SastState) -> dict:
                        f"({unresolved_note}), framework_or_stdlib_skipped={framework_skipped}",
                 narrative=f"Call graph: {summary['methods']} method(s)/function(s), {len(graph.edges)} resolved "
                           f"edges, {len(graph.sinks)} typed sink(s).")
-    return {"call_graph": summary}
+
+    entries, sinks = lang_module.attack_surface_counts(graph)
+    module_plan, swapped_in = _rank_deep_scan_by_attack_surface(state, entries, sinks)
+    deep_paths = module_plan.get("deep_scan_paths") or []
+    exposed = sum(1 for p in deep_paths if entries.get(p) or sinks.get(p))
+    tracer.log(5, "build_call_graph",
+                f"Deep-scan set ranked by attack surface: {exposed} of {len(deep_paths)} file(s) hold an entry point "
+                f"or typed sink; {swapped_in} file(s) swapped in",
+                detail=f"entry_point_files={len(entries)}, sink_files={len(sinks)}",
+                narrative=f"Re-ranked the deep-scan files by how exposed they are (HTTP/SOAP entry points, then "
+                          f"typed sinks): {exposed} of {len(deep_paths)} hold one"
+                          + (f", and {swapped_in} more exposed file(s) took slots from less exposed ones." if swapped_in else "."))
+    return {"call_graph": summary, "module_plan": module_plan}
 
 
 def _merge_flows(joern: List[Any], tree_sitter: List[Any], cap: int) -> List[Any]:
@@ -1902,10 +2033,7 @@ def node_scan_deep_files(state: SastState) -> dict:
             narrative=f"  {result['file_path']} — {tp} confirmed, {fp} dismissed "
                       f"({total_findings} saved to database).",
         )
-        partial = llm_file_scan.build_report_from_file_results(
-            completed + list((state.get("triage_scan_results") or {}).get("files") or [])
-        )
-        _emit_discovery(state, report=partial)
+        _emit_partial_report(state, "deep", completed)
 
     scan_results = llm_file_scan.scan_deep_files(
         module_plan=module_plan,
@@ -2079,62 +2207,75 @@ def node_scan_triage_files(state: SastState) -> dict:
             narrative=f"  {result['file_path']} — {tp} confirmed, {fp} dismissed "
                       f"({tp + fp} saved to database).",
         )
-        deep_files = list((state.get("scan_results") or {}).get("files") or [])
-        partial = llm_file_scan.build_report_from_file_results(deep_files + completed)
-        _emit_discovery(state, report=partial)
+        _emit_partial_report(state, "triage", completed)
 
     accum = {"files_scanned": 0, "files_regex_scanned": 0, "files_skipped_generated": 0,
              "files_skipped_vendored": 0,
              "tp_count": 0, "fp_count": 0, "unverified_count": 0,
              "chunk_errors": 0, "files": []}
 
-    for batch_index, (label, batch_entries) in enumerate(batches, start=1):
-        tracer.log(8, "scan_triage_files",
-                    f"Batch {batch_index}/{len(batches)} — {label} ({len(batch_entries)} file(s))",
-                    narrative=f"Batch {batch_index}/{len(batches)} — {label}: "
-                              f"regex-scanning {len(batch_entries)} file(s)...")
+    # One worker pool over every file (not one pool per batch, which drained
+    # to idle at each batch boundary); batches survive only as progress
+    # reporting — each logs its "done" line when its last file finishes.
+    flat_entries = [e for _, batch_entries in batches for e in batch_entries]
+    batch_of = [i for i, (_, batch_entries) in enumerate(batches) for _ in batch_entries]
+    batch_left = [len(batch_entries) for _, batch_entries in batches]
+    batch_tally = [{"hit_files": 0, "files": 0, "tp": 0, "fp": 0, "unverified": 0} for _ in batches]
+    tracer.log(8, "scan_triage_files",
+                f"Queued {len(batches)} batch(es): " + ", ".join(f"{label} ({len(ents)})" for label, ents in batches),
+                narrative=f"Queued {len(batches)} batch(es) into one worker pool: "
+                          + ", ".join(f"{label} ({len(ents)} file(s))" for label, ents in batches) + ".")
 
-        batch_result = llm_file_scan.scan_triage_files(
-            module_plan=module_plan,
-            entries=batch_entries,
-            repo_root=root,
-            rules=rules,
-            active_frameworks=active_frameworks,
-            dependency_index=dependency_index,
-            priority_rule_ids=priority_rule_ids,
-            stack_context=stack_context,
-            usage=usage,
-            llm_provider=state.get("llm_provider"),
-            llm_model=state.get("llm_model"),
-            findings_writer=findings_writer,
-            on_file_start=_on_file_start,
-            on_file=_on_file,
-            triage_mode=triage_mode,
-            rules_for_path=rules_for_path,
-        )
-
-        for key in ("files_scanned", "files_regex_scanned", "files_skipped_generated",
-                    "files_skipped_vendored",
-                    "tp_count", "fp_count", "unverified_count", "chunk_errors"):
-            accum[key] += batch_result.get(key) or 0
-        accum["files"].extend(batch_result.get("files") or [])
-
+    def _on_file_done(position: int, result: Dict[str, Any]) -> None:
+        index = batch_of[position]
+        tally = batch_tally[index]
+        tally["files"] += 1
+        if result.get("findings"):
+            tally["hit_files"] += 1
+        tally["tp"] += result.get("tp_count") or 0
+        tally["fp"] += result.get("fp_count") or 0
+        tally["unverified"] += result.get("unverified_count") or 0
+        batch_left[index] -= 1
+        if batch_left[index]:
+            return
+        label = batches[index][0]
         batch_found = (
-            f"{batch_result.get('unverified_count') or 0} unverified finding(s)"
-            if regex_only else
-            f"{batch_result.get('tp_count') or 0} confirmed, {batch_result.get('fp_count') or 0} dismissed"
+            f"{tally['unverified']} unverified finding(s)" if regex_only
+            else f"{tally['tp']} confirmed, {tally['fp']} dismissed"
         )
         tracer.log(8, "scan_triage_files",
-                    f"Batch {batch_index}/{len(batches)} complete — {batch_result.get('files_scanned') or 0} of "
-                    f"{batch_result.get('files_regex_scanned') or 0} file(s) had hits, {batch_found}",
-                    narrative=f"Batch {batch_index}/{len(batches)} done — {batch_found}.")
-
-        # One discovery re-emit per batch rather than per file (see _on_file).
+                    f"Batch {index + 1}/{len(batches)} complete — {label}: {tally['hit_files']} of "
+                    f"{tally['files']} file(s) had hits, {batch_found}",
+                    narrative=f"Batch {index + 1}/{len(batches)} done — {label}: {batch_found}.")
         if regex_only:
-            deep_files = list((state.get("scan_results") or {}).get("files") or [])
-            _emit_discovery(state, report=llm_file_scan.build_report_from_file_results(
-                deep_files + completed
-            ))
+            # One discovery re-emit per batch rather than per file (see _on_file).
+            _emit_partial_report(state, "triage", completed)
+
+    result = llm_file_scan.scan_triage_files(
+        module_plan=module_plan,
+        entries=flat_entries,
+        repo_root=root,
+        rules=rules,
+        active_frameworks=active_frameworks,
+        dependency_index=dependency_index,
+        priority_rule_ids=priority_rule_ids,
+        stack_context=stack_context,
+        usage=usage,
+        llm_provider=state.get("llm_provider"),
+        llm_model=state.get("llm_model"),
+        findings_writer=findings_writer,
+        on_file_start=_on_file_start,
+        on_file=_on_file,
+        on_file_done=_on_file_done,
+        triage_mode=triage_mode,
+        rules_for_path=rules_for_path,
+        regex_processes=state.get("triage_regex_processes"),
+    )
+    for key in ("files_scanned", "files_regex_scanned", "files_skipped_generated",
+                "files_skipped_vendored",
+                "tp_count", "fp_count", "unverified_count", "chunk_errors"):
+        accum[key] += result.get(key) or 0
+    accum["files"].extend(result.get("files") or [])
 
     triage_scan_results = accum
 
@@ -2509,7 +2650,58 @@ def persist_to_disk(state: SastState) -> Dict[str, Any]:
 # GRAPH
 # ===========================================================================
 
-def build_graph():
+# ===========================================================================
+# Parallel stages (build_graph(parallel=True))
+#   After derive_runtime_rules nothing downstream needs another stage's output
+#   until group_triage_findings: the deep scan, regex triage and the flow work
+#   (discover -> verify -> Joern queries) run side by side. The flow work is
+#   one node because LangGraph runs in supersteps — a chain of nodes would
+#   wait at every step for the slowest stage — and because discover_flows and
+#   joern_scan share one Joern session, which must not see concurrent queries.
+# ===========================================================================
+
+STAGE_FINISHED = "Stage finished: "  # app/services/scan_progress.py keys on this
+
+
+def node_fan_out(state: SastState) -> dict:
+    tracer: AgentTrace = state["_tracer"]
+    llm_client.reserve_stage_budgets(state.get("usage"))
+    shares = ", ".join(f"{stage} {share:.0%}" for stage, share in llm_client.DEFAULT_STAGE_SHARES.items())
+    tracer.log(6, "derive_runtime_rules", "Fan-out: flows, deep scan and triage run in parallel",
+                detail=f"stage budget shares: {shares}",
+                narrative="Running the flow analysis, the deep scan and regex triage in parallel "
+                          f"(LLM budget reserved per stage: {shares}; unused shares are released as stages finish).")
+    return {}
+
+
+def node_flows_branch(state: SastState) -> dict:
+    """discover_flows -> verify_flow_slices -> joern_scan, in order, as one node."""
+    local = dict(state)
+    out: Dict[str, Any] = {}
+    for node in (node_discover_flows, node_verify_flow_slices, node_joern_scan):
+        update = node(local) or {}
+        local.update(update)
+        out.update(update)
+    return out
+
+
+def _staged(stage: str, node: Callable[[SastState], dict]) -> Callable[[SastState], dict]:
+    """Run `node` as parallel stage `stage`: its log lines are tagged via the
+    caller's `_stage_log_context`, its unused LLM budget share is released when
+    it ends, and it prints STAGE_FINISHED (progress keys on that)."""
+    def run(state: SastState) -> dict:
+        factory = state.get("_stage_log_context")
+        with factory(stage) if factory else nullcontext():
+            try:
+                return node(state)
+            finally:
+                llm_client.finish_stage(state.get("usage"), stage)
+                print(f"{STAGE_FINISHED}{stage}", flush=True)
+    run.__name__ = getattr(node, "__name__", stage)
+    return run
+
+
+def build_graph(parallel: bool = False):
     graph = StateGraph(SastState)
     graph.add_node("scan_directory", node_scan_directory)
     graph.add_node("analyze_tech_stack", node_analyze_tech_stack)
@@ -2517,15 +2709,10 @@ def build_graph():
     graph.add_node("map_modules_and_risk", node_map_modules_and_risk)
     graph.add_node("build_call_graph", node_build_call_graph)
     graph.add_node("derive_runtime_rules", node_derive_runtime_rules)
-    graph.add_node("discover_flows", node_discover_flows)
-    graph.add_node("verify_flow_slices", node_verify_flow_slices)
-    graph.add_node("scan_deep_files", node_scan_deep_files)
-    graph.add_node("scan_triage_files", node_scan_triage_files)
     graph.add_node("group_triage_findings", node_group_triage_findings)
     graph.add_node("confirm_triage_groups", node_confirm_triage_groups)
     graph.add_node("generate_report", node_generate_report)
     graph.add_node("build_joern_cpg", node_build_joern_cpg)
-    graph.add_node("joern_scan", node_joern_scan)
 
     graph.add_edge(START, "scan_directory")
     graph.add_edge("scan_directory", "analyze_tech_stack")
@@ -2534,12 +2721,27 @@ def build_graph():
     graph.add_edge("map_modules_and_risk", "build_joern_cpg")
     graph.add_edge("build_joern_cpg", "build_call_graph")
     graph.add_edge("build_call_graph", "derive_runtime_rules")
-    graph.add_edge("derive_runtime_rules", "discover_flows")
-    graph.add_edge("discover_flows", "verify_flow_slices")
-    graph.add_edge("verify_flow_slices", "scan_deep_files")
-    graph.add_edge("scan_deep_files", "scan_triage_files")
-    graph.add_edge("scan_triage_files", "joern_scan")
-    graph.add_edge("joern_scan", "group_triage_findings")
+    if parallel:
+        graph.add_node("fan_out", node_fan_out)
+        graph.add_node("flows", _staged("flows", node_flows_branch))
+        graph.add_node("scan_deep_files", _staged("deep", node_scan_deep_files))
+        graph.add_node("scan_triage_files", _staged("triage", node_scan_triage_files))
+        graph.add_edge("derive_runtime_rules", "fan_out")
+        for branch in ("flows", "scan_deep_files", "scan_triage_files"):
+            graph.add_edge("fan_out", branch)
+        graph.add_edge(["flows", "scan_deep_files", "scan_triage_files"], "group_triage_findings")
+    else:
+        graph.add_node("discover_flows", node_discover_flows)
+        graph.add_node("verify_flow_slices", node_verify_flow_slices)
+        graph.add_node("scan_deep_files", node_scan_deep_files)
+        graph.add_node("scan_triage_files", node_scan_triage_files)
+        graph.add_node("joern_scan", node_joern_scan)
+        graph.add_edge("derive_runtime_rules", "discover_flows")
+        graph.add_edge("discover_flows", "verify_flow_slices")
+        graph.add_edge("verify_flow_slices", "scan_deep_files")
+        graph.add_edge("scan_deep_files", "scan_triage_files")
+        graph.add_edge("scan_triage_files", "joern_scan")
+        graph.add_edge("joern_scan", "group_triage_findings")
     graph.add_edge("group_triage_findings", "confirm_triage_groups")
     graph.add_edge("confirm_triage_groups", "generate_report")
     graph.add_edge("generate_report", END)
@@ -2649,6 +2851,9 @@ def main() -> None:
     parser.add_argument("--max-derived-regex-rules", type=int, default=None,
                          help="Cap on runtime-derived regex rules merged onto the catalog "
                               f"(default: {derive_rules.DEFAULT_MAX_DERIVED})")
+    parser.add_argument("--sequential", action="store_true",
+                         help="Run flows, deep scan and triage one after another instead of in parallel "
+                              "(easier-to-read log for debugging)")
     parser.add_argument("--catalog-prefilter", action="store_true",
                          help="Narrow the triage catalog pass with a ripgrep literal prefilter (same findings; "
                               "pays off only when most rules have a literal and the repo is large)")
@@ -2691,6 +2896,7 @@ def main() -> None:
         "joern_dataflow": not (args.no_joern or args.no_joern_dataflow),
         "joern_scan_queries": not (args.no_joern or args.no_joern_queries),
         "catalog_prefilter": args.catalog_prefilter,
+        "parallel_stages": not args.sequential,
         "_tracer": tracer,
     }
     if args.joern_timeout is not None:
@@ -2712,7 +2918,7 @@ def main() -> None:
     if args.triage_confirm_groups_per_call is not None:
         initial_state["triage_confirm_groups_per_call"] = args.triage_confirm_groups_per_call
 
-    app = build_graph()
+    app = build_graph(parallel=initial_state.get("parallel_stages", False))
     final_state = invoke_graph(app, initial_state)
     final_state["trace"] = tracer.events
 

@@ -106,13 +106,14 @@ class _TeeStdout:
             *complete, rest = pending.split("\n")
             _thread_local.pending = rest
             buffer = getattr(_thread_local, "buffer", None)
+            prefix = getattr(_thread_local, "prefix", "")
             for line in complete:
                 stripped = line.rstrip()
                 if stripped:
                     if buffer is not None:
                         buffer.append(stripped)  # a parallel task: kept together, flushed as one block
                     else:
-                        _append(scan_id, stripped)
+                        _append(scan_id, f"{prefix}{stripped}")
         return len(data)
 
     def flush(self) -> None:
@@ -212,8 +213,12 @@ def _append(scan_id: str, line: str) -> None:
 
 def log(scan_id: str, line: str) -> None:
     """Manually record a log line for `scan_id` — used for lifecycle events
-    the engine itself doesn't print (workspace checkout, persistence, ...)."""
+    the engine itself doesn't print (workspace checkout, persistence, ...).
+    Inside a prefixed `capture` for the same scan, the line gets that prefix
+    too, so it lands in the same stage as the thread's printed output."""
     install()
+    if getattr(_thread_local, "scan_id", None) == scan_id:
+        line = f"{getattr(_thread_local, 'prefix', '')}{line}"
     _append(scan_id, line)
 
 
@@ -234,16 +239,20 @@ def delete(scan_id: str) -> None:
 
 class capture:
     """Context manager: route this thread's `print()` output into
-    `scan_id`'s buffer for the duration of the `with` block."""
+    `scan_id`'s buffer for the duration of the `with` block. `prefix` is
+    prepended to every line — the engine's parallel stages use
+    "[[stage:<name>]] " so the UI can route interleaved lines."""
 
-    def __init__(self, scan_id: str):
+    def __init__(self, scan_id: str, prefix: str = ""):
         self.scan_id = scan_id
-        self._previous: str | None = None
+        self.prefix = prefix
+        self._previous: tuple | None = None
 
     def __enter__(self) -> "capture":
         install()
-        self._previous = getattr(_thread_local, "scan_id", None)
+        self._previous = (getattr(_thread_local, "scan_id", None), getattr(_thread_local, "prefix", ""))
         _thread_local.scan_id = self.scan_id
+        _thread_local.prefix = self.prefix
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -251,8 +260,8 @@ class capture:
         pending = getattr(_thread_local, "pending", "").rstrip()
         _thread_local.pending = ""
         if pending:
-            _append(self.scan_id, pending)
-        _thread_local.scan_id = self._previous
+            _append(self.scan_id, f"{self.prefix}{pending}")
+        _thread_local.scan_id, _thread_local.prefix = self._previous  # type: ignore[misc]
 
 
 _block_lock = threading.Lock()
@@ -270,10 +279,11 @@ class buffered_capture:
 
     def __enter__(self) -> "buffered_capture":
         install()
-        self._previous = (getattr(_thread_local, "scan_id", None), getattr(_thread_local, "buffer", None), getattr(_thread_local, "pending", ""))
+        self._previous = (getattr(_thread_local, "scan_id", None), getattr(_thread_local, "buffer", None), getattr(_thread_local, "pending", ""), getattr(_thread_local, "prefix", ""))
         _thread_local.scan_id = self.scan_id
         _thread_local.buffer = []
         _thread_local.pending = ""
+        _thread_local.prefix = ""
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -281,7 +291,7 @@ class buffered_capture:
         lines: list[str] = list(getattr(_thread_local, "buffer", []))
         if pending:
             lines.append(pending)
-        _thread_local.scan_id, _thread_local.buffer, _thread_local.pending = self._previous  # type: ignore[misc]
+        _thread_local.scan_id, _thread_local.buffer, _thread_local.pending, _thread_local.prefix = self._previous  # type: ignore[misc]
         with _block_lock:  # the block goes in whole
             for line in lines:
                 _append(self.scan_id, f"{self.prefix}{line}" if self.prefix else line)

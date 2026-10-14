@@ -12,14 +12,22 @@
       "javascript"
     ],
     "frameworks": [],
-    "pattern": "bypassSecurityTrust(?:Html|Script|Style|Url|ResourceUrl)\\s*\\("
+    "pattern": "bypassSecurityTrust(?:Html|Script|Style|Url|ResourceUrl)\\s*\\((?!\\s*['\\\"`])",
+    "examples": {
+      "match": [
+        "return this.sanitizer.bypassSecurityTrustHtml(this.content);"
+      ],
+      "no_match": [
+        "return this.sanitizer.bypassSecurityTrustResourceUrl('https://www.youtube.com/embed/x');"
+      ]
+    }
   },
   {
     "id": "dangerously-set-html",
-    "title": "React dangerouslySetInnerHTML",
+    "title": "dangerouslySetInnerHTML with a non-literal, unsanitized value",
     "description": "React XSS sink",
     "cwe": "CWE-79",
-    "severity": "MEDIUM",
+    "severity": "HIGH",
     "category": "code",
     "owasp": "A03:2021-Injection",
     "languages": [
@@ -29,11 +37,20 @@
     "frameworks": [
       "React"
     ],
-    "pattern": "dangerouslySetInnerHTML"
+    "pattern": "dangerouslySetInnerHTML\\s*=\\s*\\{\\s*\\{\\s*__html\\s*:(?!\\s*(?:['\\\"`]|DOMPurify\\.sanitize|sanitize\\w*\\())",
+    "examples": {
+      "match": [
+        "<div dangerouslySetInnerHTML={{ __html: post.body }} />"
+      ],
+      "no_match": [
+        "<div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(post.body) }} />",
+        "<div dangerouslySetInnerHTML={{ __html: '<br/>' }} />"
+      ]
+    }
   },
   {
     "id": "innerhtml-assign",
-    "title": "DOM XSS via innerHTML",
+    "title": "innerHTML assigned a non-literal value",
     "description": "Assignment to innerHTML",
     "cwe": "CWE-79",
     "severity": "MEDIUM",
@@ -44,7 +61,20 @@
       "javascript"
     ],
     "frameworks": [],
-    "pattern": "\\.innerHTML\\s*="
+    "pattern": "\\.innerHTML\\s*\\+?=(?!=)\\s*(?!(?:'[^']*'|\\\"[^\\\"]*\\\"|`[^`$]*`)\\s*;?\\s*$)\\S",
+    "examples": {
+      "match": [
+        "el.innerHTML = data.message;",
+        "el.innerHTML = `<b>${name}</b>`;",
+        "list.innerHTML += row;"
+      ],
+      "no_match": [
+        "el.innerHTML = '';",
+        "el.innerHTML = \"<hr>\";",
+        "const x = el.innerHTML;",
+        "if (el.innerHTML == x) {}"
+      ]
+    }
   },
   {
     "id": "js-document-write",
@@ -78,10 +108,10 @@
   },
   {
     "id": "js-non-literal-regexp",
-    "title": "Non-literal RegExp constructor",
+    "title": "RegExp built from user input",
     "description": "new RegExp(variable) \u2014 ReDoS risk (CWE-185), matches eslint.detect-non-literal-regexp.",
     "cwe": "CWE-185",
-    "severity": "MEDIUM",
+    "severity": "LOW",
     "category": "code",
     "owasp": "A04:2021-Insecure-Design",
     "languages": [
@@ -89,11 +119,21 @@
       "javascript"
     ],
     "frameworks": [],
-    "pattern": "new\\s+RegExp\\s*\\(\\s*[a-zA-Z_$][\\w$]*"
+    "pattern": "new\\s+RegExp\\s*\\(\\s*(?:req\\.|request\\.|params\\.|query\\.|this\\.\\w*[iI]nput|[\\w$]*[sS]earch\\w*|[\\w$]*[qQ]uery\\w*|[\\w$]*[fF]ilter\\w*|[\\w$]*[tT]erm\\b|event\\.target|e\\.target)",
+    "examples": {
+      "match": [
+        "const re = new RegExp(searchTerm, \"i\");",
+        "new RegExp(req.query.q)"
+      ],
+      "no_match": [
+        "const re = new RegExp(PATTERN);",
+        "new RegExp(\"^[a-z]+$\")"
+      ]
+    }
   },
   {
     "id": "token-in-localstorage",
-    "title": "Auth token stored in browser storage",
+    "title": "Token or secret kept in web storage",
     "description": "JWT/auth token persisted to localStorage or sessionStorage, which is readable by any JavaScript on the page \u2014 vulnerable to theft via XSS. Prefer httpOnly cookies. Framework-agnostic (React/Angular/Vue/vanilla JS/TS).",
     "cwe": "CWE-522",
     "severity": "MEDIUM",
@@ -104,6 +144,467 @@
       "javascript"
     ],
     "frameworks": [],
-    "pattern": "(?i)(localStorage|sessionStorage)\\.setItem\\s*\\(\\s*['\"][^'\"]*(token|jwt|auth)[^'\"]*['\"]"
+    "pattern": "(?:local|session)Storage\\.setItem\\(\\s*['\\\"`][^'\\\"`]*(?i:token|jwt|auth|session|refresh|bearer|access|secret|password|credential)[^'\\\"`]*['\\\"`]|(?:local|session)Storage\\.setItem\\(\\s*[^,]+,\\s*[\\w$.]*(?i:token|jwt)|(?:local|session)Storage\\s*\\[\\s*['\\\"`][^'\\\"`]*(?i:token|jwt|auth|refresh|bearer|secret|password)",
+    "examples": {
+      "match": [
+        "localStorage.setItem('access_token', t);",
+        "sessionStorage.setItem(KEY, this.jwtToken);",
+        "localStorage['refreshToken'] = r;"
+      ],
+      "no_match": [
+        "localStorage.setItem('theme', 'dark');"
+      ]
+    }
+  },
+  {
+    "id": "angular-elementref-nativeelement-html",
+    "title": "HTML written through ElementRef.nativeElement",
+    "description": "Writing innerHTML/outerHTML/insertAdjacentHTML on nativeElement bypasses Angular's sanitizer \u2014 DOM XSS if the value is user-controlled.",
+    "cwe": "CWE-79",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [
+      "Angular"
+    ],
+    "pattern": "nativeElement\\.(?:innerHTML|outerHTML)\\s*=(?!=)|nativeElement\\.insertAdjacentHTML\\s*\\(",
+    "examples": {
+      "match": [
+        "this.el.nativeElement.innerHTML = this.content;"
+      ],
+      "no_match": [
+        "this.el.nativeElement.textContent = this.content;"
+      ]
+    }
+  },
+  {
+    "id": "angular-renderer-setproperty-innerhtml",
+    "title": "Renderer2 sets innerHTML",
+    "description": "Renderer2.setProperty(el, 'innerHTML', value) writes raw HTML without sanitization.",
+    "cwe": "CWE-79",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [
+      "Angular"
+    ],
+    "pattern": "setProperty\\(\\s*[^,]+,\\s*['\\\"](?:innerHTML|outerHTML)['\\\"]",
+    "examples": {
+      "match": [
+        "this.renderer.setProperty(el, 'innerHTML', html);"
+      ],
+      "no_match": [
+        "this.renderer.setProperty(el, 'textContent', text);"
+      ]
+    }
+  },
+  {
+    "id": "angular-http-interceptor-token-to-any-url",
+    "title": "HTTP interceptor attaches the token to every URL",
+    "description": "An HttpInterceptor adds the Authorization header without checking the request URL, so the token is also sent to third-party hosts the app calls.",
+    "cwe": "CWE-201",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [
+      "Angular"
+    ],
+    "pattern": "implements\\s+HttpInterceptor(?=[\\s\\S]{0,800}?setHeaders[\\s\\S]{0,200}?Authorization)(?![\\s\\S]{0,1200}?(?:startsWith|includes|apiUrl|baseUrl|environment\\.\\w*[Uu]rl|\\.url\\.match|indexOf))",
+    "examples": {
+      "match": [
+        "export class AuthInterceptor implements HttpInterceptor {\n  intercept(req, next) {\n    return next.handle(req.clone({ setHeaders: { Authorization: `Bearer ${this.token}` } }));\n  }\n}"
+      ],
+      "no_match": [
+        "export class AuthInterceptor implements HttpInterceptor {\n  intercept(req, next) {\n    if (!req.url.startsWith(environment.apiUrl)) { return next.handle(req); }\n    return next.handle(req.clone({ setHeaders: { Authorization: `Bearer ${this.token}` } }));\n  }\n}"
+      ]
+    }
+  },
+  {
+    "id": "react-href-javascript-or-variable",
+    "title": "Link href from a URL/query value or a javascript: URL",
+    "description": "A javascript: href, or an href built from query/location values, lets an attacker run script when the link is clicked. Validate the scheme (http/https only).",
+    "cwe": "CWE-79",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [
+      "React",
+      "Next.js"
+    ],
+    "pattern": "href\\s*=\\s*[\\\"']javascript:|href\\s*=\\s*\\{\\s*(?:[\\w$]+\\.)*(?:query|params|searchParams|location|returnUrl|redirect\\w*)\\b",
+    "examples": {
+      "match": [
+        "<a href={router.query.next}>Continue</a>",
+        "<a href=\"javascript:void(0)\" onClick={go}>"
+      ],
+      "no_match": [
+        "<a href={`/users/${id}`}>",
+        "<a href=\"/home\">"
+      ]
+    }
+  },
+  {
+    "id": "react-ref-innerhtml",
+    "title": "innerHTML written through a React ref",
+    "description": "ref.current.innerHTML bypasses React's escaping \u2014 DOM XSS if the value is user-controlled.",
+    "cwe": "CWE-79",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [
+      "React",
+      "Next.js"
+    ],
+    "pattern": "\\.current\\.(?:innerHTML|outerHTML)\\s*=(?!=)",
+    "examples": {
+      "match": [
+        "divRef.current.innerHTML = props.html;"
+      ],
+      "no_match": [
+        "divRef.current.textContent = props.text;"
+      ]
+    }
+  },
+  {
+    "id": "vue-dynamic-component-template",
+    "title": "Vue template compiled from a variable",
+    "description": "A component template (or Vue.compile input) comes from a variable. User-controlled template text is template injection (script execution).",
+    "cwe": "CWE-94",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [
+      "Vue.js"
+    ],
+    "pattern": "\\bVue\\.compile\\((?!\\s*['\\\"`])|\\btemplate\\s*:\\s*(?!['\\\"`])[a-z_$][\\w$.]*\\s*[,}\\n]",
+    "examples": {
+      "match": [
+        "const C = { template: userTemplate, data() { return {}; } };",
+        "const r = Vue.compile(tpl);"
+      ],
+      "no_match": [
+        "const C = { template: '<div>{{ msg }}</div>' };",
+        "const V = { template: PaginationTemplate, el: x };"
+      ]
+    }
+  },
+  {
+    "id": "jquery-html-sink",
+    "title": "jQuery writes HTML from a variable",
+    "description": "A jQuery HTML sink (.html/.append/.prepend/.after/.before/.replaceWith) receives a variable. Strings passed there are parsed as HTML \u2014 DOM XSS if user-controlled; use .text() or build nodes.",
+    "cwe": "CWE-79",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "(?:\\$|jQuery)\\((?:[^()]|\\([^()]*\\))*\\)\\s*\\.(?:html|append|prepend|after|before|replaceWith)\\(\\s*(?!['\\\"`)]|\\s*\\))[a-zA-Z_$][\\w$.]*|\\$[\\w$]+\\.(?:html|append|prepend|after|before|replaceWith)\\(\\s*(?!['\\\"`)])[a-zA-Z_$][\\w$.]*",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "$('#result').html(data.message);",
+        "$list.append(rowHtml);"
+      ],
+      "no_match": [
+        "$('#result').text(data.message);",
+        "$('#result').html('<b>Saved</b>');",
+        "$('#x').html();"
+      ]
+    }
+  },
+  {
+    "id": "js-insertadjacenthtml",
+    "title": "insertAdjacentHTML with a non-literal value",
+    "description": "insertAdjacentHTML parses its argument as HTML \u2014 DOM XSS if the value is user-controlled.",
+    "cwe": "CWE-79",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "\\.insertAdjacentHTML\\(\\s*[^,]+,(?!\\s*(?:'[^']*'|\\\"[^\\\"]*\\\"|`[^`$]*`)\\s*\\))",
+    "examples": {
+      "match": [
+        "el.insertAdjacentHTML('beforeend', row);",
+        "el.insertAdjacentHTML(\"afterbegin\", `<li>${name}</li>`);"
+      ],
+      "no_match": [
+        "el.insertAdjacentHTML('beforeend', '<hr>');"
+      ]
+    }
+  },
+  {
+    "id": "js-function-constructor-or-string-timer",
+    "title": "Code evaluated from a string",
+    "description": "new Function(...) and setTimeout/setInterval with a string argument evaluate text as code, like eval().",
+    "cwe": "CWE-95",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "\\bnew\\s+Function\\s*\\(|\\bset(?:Timeout|Interval)\\(\\s*['\\\"`]",
+    "examples": {
+      "match": [
+        "const fn = new Function(\"a\", body);",
+        "setTimeout(\"refresh(\" + id + \")\", 100);"
+      ],
+      "no_match": [
+        "setTimeout(() => refresh(id), 100);"
+      ]
+    }
+  },
+  {
+    "id": "js-location-assign-variable",
+    "title": "Navigation to a URL held in a variable",
+    "description": "window.location / location.assign / window.open receive a variable. If it comes from the URL or an API response, it is an open redirect or javascript: XSS; validate the target.",
+    "cwe": "CWE-601",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "(?:\\b(?:window|document)\\.location(?:\\.href)?|\\blocation\\.href)\\s*=(?!=)\\s*(?!['\\\"`]|environment\\b|env\\b|config\\b|this\\.config\\b)[a-zA-Z_$][\\w$.]*|\\blocation\\.(?:assign|replace)\\(\\s*(?!['\\\"`]|environment\\b)[a-zA-Z_$]|\\bwindow\\.open\\(\\s*(?!['\\\"`]|environment\\b)[a-zA-Z_$]",
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "window.location.href = params.returnUrl;",
+        "location.href = next;",
+        "location.assign(target);",
+        "window.open(link);"
+      ],
+      "no_match": [
+        "window.location.href = '/login';",
+        "window.location.href = environment.loginUrl;",
+        "if (location.href == x) {}",
+        "location = finding.file_path;"
+      ]
+    }
+  },
+  {
+    "id": "js-postmessage-wildcard",
+    "title": "postMessage to any origin",
+    "description": "postMessage(data, '*') delivers the message to whatever origin the target window has navigated to. Name the expected origin.",
+    "cwe": "CWE-345",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A04:2021-Insecure-Design",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "\\.postMessage\\([^)]*,\\s*['\\\"]\\*['\\\"]",
+    "examples": {
+      "match": [
+        "parent.postMessage({ token }, '*');"
+      ],
+      "no_match": [
+        "parent.postMessage({ token }, 'https://app.example.com');"
+      ]
+    }
+  },
+  {
+    "id": "js-message-listener-no-origin",
+    "title": "message event handler does not check the origin",
+    "description": "A 'message' listener never reads event.origin nearby, so any window can send it commands or data.",
+    "cwe": "CWE-346",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A04:2021-Insecure-Design",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "addEventListener\\(\\s*['\\\"]message['\\\"](?![\\s\\S]{0,400}?\\.origin\\b)",
+    "examples": {
+      "match": [
+        "window.addEventListener('message', (e) => {\n  handle(e.data);\n});"
+      ],
+      "no_match": [
+        "window.addEventListener('message', (e) => {\n  if (e.origin !== ALLOWED) return;\n  handle(e.data);\n});"
+      ]
+    }
+  },
+  {
+    "id": "js-document-cookie-write",
+    "title": "Cookie written from JavaScript",
+    "description": "Cookies set via document.cookie can't be HttpOnly, so script (and any XSS) can read them. Session or auth cookies should be set by the server.",
+    "cwe": "CWE-1004",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "\\bdocument\\.cookie\\s*=(?!=)",
+    "examples": {
+      "match": [
+        "document.cookie = 'session=' + sid;"
+      ],
+      "no_match": [
+        "const c = document.cookie;"
+      ]
+    }
+  },
+  {
+    "id": "js-hardcoded-http-endpoint",
+    "title": "Hardcoded http:// endpoint",
+    "description": "A non-local http:// URL sends requests (and any tokens attached) unencrypted. Use https.",
+    "cwe": "CWE-319",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "['\\\"`]http://(?!localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0|www\\.w3\\.org|schemas\\.|xmlns\\.)[\\w.-]+",
+    "examples": {
+      "match": [
+        "apiUrl: 'http://api.example.com/v1',"
+      ],
+      "no_match": [
+        "apiUrl: 'https://api.example.com/v1',",
+        "apiUrl: 'http://localhost:8080',"
+      ]
+    }
+  },
+  {
+    "id": "js-hardcoded-api-key",
+    "title": "API key or client secret hardcoded in frontend code",
+    "description": "A long key/secret literal (or a known vendor key prefix) sits in code shipped to every browser. Frontend bundles are public; keep secrets server-side.",
+    "cwe": "CWE-798",
+    "severity": "HIGH",
+    "category": "secrets",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "(?i:api[_-]?key|client[_-]?secret|secret[_-]?key|access[_-]?token)['\\\"]?\\s*:\\s*['\\\"`][A-Za-z0-9_\\-]{16,}['\\\"`]|\\bAIza[0-9A-Za-z_\\-]{35}\\b|\\bsk_live_[0-9A-Za-z]{16,}|\\bghp_[0-9A-Za-z]{36}\\b|\\bxox[baprs]-[0-9A-Za-z-]{10,}",
+    "examples": {
+      "match": [
+        "  apiKey: 'AbC123dEf456GhI789jKl0',",
+        "const k = 'AIzaSyA1234567890abcdefghijklmnopqrstuv';"
+      ],
+      "no_match": [
+        "  apiKey: environment.apiKey,",
+        "  apiKey: 'short',"
+      ]
+    }
+  },
+  {
+    "id": "angular-debug-logger",
+    "title": "ngx-logger set to debug/trace level",
+    "description": "A DEBUG/TRACE/LOG ngx-logger level in shipped config logs internal data to the browser console.",
+    "cwe": "CWE-532",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A09:2021-Security-Logging-and-Monitoring-Failures",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [
+      "Angular"
+    ],
+    "pattern": "NgxLoggerLevel\\.(?:DEBUG|TRACE|LOG)\\b",
+    "examples": {
+      "match": [
+        "level: NgxLoggerLevel.DEBUG,"
+      ],
+      "no_match": [
+        "level: NgxLoggerLevel.ERROR,"
+      ]
+    }
+  },
+  {
+    "id": "js-prototype-pollution-merge",
+    "title": "Deep merge of parsed/request data",
+    "description": "Merging parsed JSON or request data into an object with Object.assign/_.merge/$.extend(true, ...) lets a __proto__ key pollute Object.prototype.",
+    "cwe": "CWE-1321",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "(?:Object\\.assign|_\\.merge|_\\.defaultsDeep|lodash\\.merge|\\$\\.extend\\(\\s*true)\\s*\\(?[^)]*(?:JSON\\.parse|req\\.body|req\\.query|request\\.body|params)",
+    "examples": {
+      "match": [
+        "_.merge(config, JSON.parse(input));",
+        "Object.assign(settings, req.body);"
+      ],
+      "no_match": [
+        "Object.assign({}, defaults);"
+      ]
+    }
+  },
+  {
+    "id": "js-jwt-decode-trust",
+    "title": "Authorization decided from a client-decoded JWT",
+    "description": "jwt-decode only base64-decodes the token; it doesn't verify it. Using its role/permission claims to gate features is client-side trust \u2014 the server must enforce authorization.",
+    "cwe": "CWE-345",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "frameworks": [],
+    "pattern": "\\b(?:jwt_decode|jwtDecode)\\((?=[\\s\\S]{0,200}?\\.(?:role|roles|isAdmin|admin|permissions|authorities)\\b)",
+    "examples": {
+      "match": [
+        "const claims = jwtDecode(token);\nif (claims.role === \"admin\") { showAdmin(); }"
+      ],
+      "no_match": [
+        "const claims = jwtDecode(token);\nconst exp = claims.exp;"
+      ]
+    }
   }
 ]

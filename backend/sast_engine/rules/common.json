@@ -56,7 +56,8 @@
       "javascript"
     ],
     "frameworks": [],
-    "pattern": "^\\s*/\\*[\\s\\S]*\\*/\\s*$"
+    "pattern": "^\\s*/\\*[\\s\\S]*\\*/\\s*$",
+    "scan_comments": true
   },
   {
     "id": "clickjacking-frameoptions-disabled",
@@ -162,7 +163,22 @@
     "owasp": "A07:2021-Identification-and-Authentication-Failures",
     "languages": [],
     "frameworks": [],
-    "pattern": "(?i)(?<!url_)(?<!path_)(?<!route_)(password|pwd|passwd)\\s*=\\s*[\"'][^\"']{3,}[\"']"
+    "pattern": "(?<!(?i:url_))(?<!(?i:path_))(?<!(?i:route_))(?i:password|pwd|passwd)\\s*=\\s*[\\\"'](?!\\$\\{|(?:[\\w-]+\\.)+[\\w-]*[\\\"']|[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+[\\\"']|[A-Z0-9]+_[A-Z0-9_]+[\\\"']|[^\\\"']*\\s[^\\\"']*\\s)[^\\\"']{3,}[\\\"']",
+    "examples": {
+      "match": [
+        "String password = \"hunter2\";",
+        "private static final String DB_PASSWORD = \"Pr0d!pass\";",
+        "pwd = \"changeme\""
+      ],
+      "no_match": [
+        "private static final String TRUST_STORE_PWD = \"TrustStorePassword\";",
+        "String PASSWORD = \"db.password\";",
+        "password = \"${DB_PASSWORD}\"",
+        "password = \"DB_PASSWORD\"",
+        "export const URL_PASSWORD = 'changepassword';",
+        "password = \"Enter the password.\""
+      ]
+    }
   },
   {
     "id": "secret-private-key-pem",
@@ -178,8 +194,8 @@
   },
   {
     "id": "java-sensitive-data-in-logs",
-    "title": "Sensitive data in logs",
-    "description": "logger info/debug/error/warn call includes password/ssn/credit/secret/token",
+    "title": "Secret value (not just the word) written to a log",
+    "description": "A logger call is given a variable or getter whose name is a password/token/secret/credential, so the value itself ends up in logs. Mentions inside a string literal (\"password changed\") are not flagged.",
     "cwe": "CWE-532",
     "severity": "MEDIUM",
     "category": "code",
@@ -191,6 +207,20 @@
       "python"
     ],
     "frameworks": [],
-    "pattern": "(?i)log(ger)?\\.(info|debug|error|warn)\\s*\\([^)]*\\b(password|ssn|credit|secret|token|cvv)\\b"
+    "pattern": "(?:\\b(?:log|LOG|Log|logger|LOGGER|Logger|_logger|_log|logging)\\.\\w+|System\\.(?:out|err)\\.print\\w*|console\\.(?:log|debug|info|warn|error))\\s*\\((?:[^\\\"'()]|\\\"[^\\\"]*\\\"|'[^']*'|\\([^()]*\\))*?(?:\\+|,)\\s*[\\w$.]*?(?i:pass(?:word|wd)?|pwd|secret|token|apikey|api_key|credential|ssn|cvv)s?(?!\\w*(?:Dir|Directory|Path|File|Name|Id|Count|Length|Size|Type|Expir\\w*|Policy)\\b)\\w*(?:\\(\\))?\\s*[,)+]",
+    "examples": {
+      "match": [
+        "log.info(\"Login for {} with {}\", user, password);",
+        "logger.debug(\"token=\" + authToken);",
+        "console.log(\"jwt\", this.token);",
+        "log.warn(\"creds \" + user.getPassword());"
+      ],
+      "no_match": [
+        "log.info(\"Password changed for \" + user);",
+        "log.debug(\"tokens=\" + tokens.size());",
+        "logger.info(\"Reset password email sent\");",
+        "log.error(\"Unable to write in: {}\", secretDirectory, e);"
+      ]
+    }
   }
 ]
