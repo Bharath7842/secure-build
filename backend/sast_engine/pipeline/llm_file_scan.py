@@ -790,25 +790,48 @@ def catalog_owasp_index(catalog: Sequence[Dict[str, Any]]) -> Dict[str, str]:
     }
 
 
+def catalog_rule_index(catalog: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, str]]:
+    """Catalog id -> the title/cwe/owasp a deep-scan finding citing that id may
+    leave out of its response (see `_RESPONSE_SCHEMA` field rules); filled back
+    in by `normalize_finding`."""
+    owasp = catalog_owasp_index(catalog)
+    index: Dict[str, Dict[str, str]] = {}
+    for rule in catalog:
+        rule_id = str(rule.get("id") or "")
+        if not rule_id:
+            continue
+        index[rule_id] = {
+            "title": str(rule.get("title") or "").strip(),
+            "cwe": str(rule.get("cwe") or "").strip(),
+            "owasp": owasp.get(rule_id, ""),
+        }
+    return index
+
+
 _RESPONSE_SCHEMA = """Output format — one JSON object:
 {"findings": [
   {
     "verdict": "true_positive" | "false_positive",
     "rule_id": "<catalog id if one matches, else \"llm-extra\">",
-    "title": "short title",
     "line": <line number from the numbered code>,
     "snippet": "<the flagged line, copied verbatim — that one line only>",
     "severity": "CRITICAL" | "HIGH" | "MEDIUM" | "LOW",
     "confidence": <0.0-1.0, how sure you are this is exploitable>,
-    "cwe": "CWE-XXX or empty string",
-    "owasp_category": "<OWASP Top 10:2021 label; may be omitted for a catalog rule_id>",
+    "verdict_reason": "<required, even for false_positive; at most 2 sentences>",
+    "title": "short title",
+    "cwe": "CWE-XXX",
+    "owasp_category": "<OWASP Top 10:2021 label>",
     "source": "<the untrusted input expression, or \"\" if none identified>",
     "sink": "<the dangerous call this reaches>",
     "data_flow": "<one line: how source reaches sink, naming intermediate variables>",
-    "verdict_reason": "<required, even for false_positive; at most 2 sentences>",
-    "ai_fix": "<at most 2 sentences; only when verdict is true_positive>"
+    "ai_fix": "<at most 2 sentences>"
   }
 ]}
+Field rules — leave a field out rather than repeating what is already known:
+- title, cwe, owasp_category: required when rule_id is "llm-extra". Omit them when
+  rule_id is a catalog id (they are filled from the catalog), unless the catalog
+  CWE does not fit this issue — then give the right cwe.
+- source, sink, data_flow, ai_fix: true_positive only. Omit them for false_positive.
 If there are no issues, return {"findings": []}."""
 
 
@@ -990,9 +1013,12 @@ def normalize_finding(
     source_lines: Optional[Sequence[str]] = None,
     kind: str = "llm",
     rule_owasp: Optional[Dict[str, str]] = None,
+    rule_meta: Optional[Dict[str, Dict[str, str]]] = None,
 ) -> Optional[Dict[str, Any]]:
     """`rule_owasp` (catalog id -> OWASP label) fills the category for a
-    finding that cites a catalog rule without restating its label."""
+    finding that cites a catalog rule without restating its label;
+    `rule_meta` (`catalog_rule_index`) does the same for title and CWE, which
+    the deep-scan schema also lets the model omit for a catalog rule_id."""
     if not isinstance(raw, dict):
         return None
     try:
@@ -1010,11 +1036,15 @@ def normalize_finding(
     severity = str(raw.get("severity") or "MEDIUM").strip().upper()
     if severity not in _VALID_SEVERITIES:
         severity = "MEDIUM"
-    cwe = str(raw.get("cwe") or "").strip() or None
-    owasp_category = str(raw.get("owasp_category") or "").strip()
     rule_id = str(raw.get("rule_id") or "llm-extra").strip() or "llm-extra"
+    meta = (rule_meta or {}).get(rule_id) or {}
+    cwe = str(raw.get("cwe") or "").strip() or meta.get("cwe") or None
+    owasp_category = str(raw.get("owasp_category") or "").strip()
     if owasp_category not in OWASP_TOP_10_2021:
-        owasp_category = (rule_owasp or {}).get(rule_id) or owasp_for_rule(cwe, None)
+        owasp_category = (
+            (rule_owasp or {}).get(rule_id) or meta.get("owasp") or owasp_for_rule(cwe, None)
+        )
+    title = str(raw.get("title") or "").strip() or meta.get("title") or "Untitled finding"
     reason = str(raw.get("verdict_reason") or "").strip() or "No reason provided by the model."
     ai_fix = raw.get("ai_fix")
     ai_fix = str(ai_fix).strip() if verdict == "true_positive" and ai_fix else None
@@ -1027,7 +1057,7 @@ def normalize_finding(
         "severity": severity,
         "cwe": cwe,
         "rule_id": rule_id,
-        "title": str(raw.get("title") or "Untitled finding").strip()[:500],
+        "title": title[:500],
         "file_path": file_path,
         "line": line,
         "source": str(raw.get("source") or "").strip()[:300],
@@ -1298,7 +1328,7 @@ def scan_chunk(
         file_path=file_path, chunk_text=chunk["text"],
         start_line=chunk["start_line"], skeleton=skeleton, omit_span=omit_span,
     )
-    rule_owasp = catalog_owasp_index(catalog)
+    rule_meta = catalog_rule_index(catalog)
 
     def _call(prompt: str) -> str:
         with _INFLIGHT:
@@ -1329,7 +1359,7 @@ def scan_chunk(
         norm = normalize_finding(
             item, file_path=file_path,
             chunk_start=chunk["start_line"], chunk_end=chunk["end_line"],
-            source_lines=source_lines, kind=kind, rule_owasp=rule_owasp,
+            source_lines=source_lines, kind=kind, rule_meta=rule_meta,
         )
         if norm is not None:
             findings.append(norm)

@@ -102,6 +102,70 @@ def test_catalog_owasp_filled_locally_for_catalog_rule(lfs):
     assert finding["owasp_category"] == "A03:2021-Injection"
 
 
+# --- slim deep-scan response schema ------------------------------------------
+
+
+def test_schema_lets_catalog_and_false_positive_findings_omit_fields(lfs):
+    system = lfs.build_system_prompt(_CATALOG, "Java")
+    assert 'required when rule_id is "llm-extra"' in system
+    assert "Omit them for false_positive" in system
+
+
+def _scan_one(lfs, item):
+    result = lfs.scan_chunk(
+        file_path="A.java",
+        chunk={"text": 'String q = "select * from t where id=" + id;', "start_line": 1, "end_line": 1},
+        catalog=_CATALOG, stack_context="Java",
+        call_llm_fn=lambda system, user, **kw: json.dumps({"findings": [item]}),
+    )
+    assert result["error"] is None
+    return result["findings"][0]
+
+
+def test_catalog_finding_without_title_or_cwe_is_filled_from_catalog(lfs):
+    finding = _scan_one(lfs, {
+        "verdict": "true_positive", "rule_id": "java-sqli", "line": 1,
+        "snippet": 'String q = "select * from t where id=" + id;', "severity": "HIGH",
+        "confidence": 0.9, "verdict_reason": "id is concatenated into SQL.",
+        "source": "id", "sink": "executeQuery", "data_flow": "id -> q -> executeQuery",
+    })
+    assert finding["title"] == "SQL injection"
+    assert finding["cwe"] == "CWE-89"
+    assert finding["owasp_category"] == "A03:2021-Injection"
+    # The filled CWE keeps it past the no-CWE suppression it would otherwise hit.
+    assert lfs.should_publish_finding(finding, suppress_no_cwe=True)
+
+
+def test_model_cwe_overrides_catalog_cwe(lfs):
+    finding = _scan_one(lfs, {
+        "verdict": "true_positive", "rule_id": "java-sqli", "line": 1,
+        "cwe": "CWE-564", "verdict_reason": "Hibernate query built from input.",
+    })
+    assert finding["cwe"] == "CWE-564"
+    assert finding["title"] == "SQL injection"
+
+
+def test_minimal_false_positive_normalizes_cleanly(lfs):
+    finding = _scan_one(lfs, {
+        "verdict": "false_positive", "rule_id": "java-sqli", "line": 1,
+        "snippet": 'String q = "select * from t where id=" + id;', "severity": "HIGH",
+        "confidence": 0.4, "verdict_reason": "id is a server-generated long.",
+    })
+    assert finding["verdict"] == "false_positive"
+    assert finding["cwe"] == "CWE-89" and finding["title"] == "SQL injection"
+    assert finding["source"] == "" and finding["sink"] == "" and finding["data_flow"] == ""
+    assert finding["ai_fix"] is None
+
+
+def test_llm_extra_finding_gets_no_catalog_fill(lfs):
+    finding = _scan_one(lfs, {
+        "verdict": "true_positive", "rule_id": "llm-extra", "line": 1,
+        "verdict_reason": "Something novel.",
+    })
+    assert finding["title"] == "Untitled finding"
+    assert finding["cwe"] is None
+
+
 def test_license_header_collapsed_but_line_numbers_kept(lfs):
     lines = ["/*", " * Copyright 2020 Example", " * Licensed under Apache 2.0", " */",
              "package x;", "class A {}"]
