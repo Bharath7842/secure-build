@@ -12,10 +12,16 @@ import {
   VERDICT_LABEL,
   VERDICT_ROW,
   VERDICT_TEXT,
-  formatConfidence,
   normalizeSeverity,
 } from "@/lib/findingStyles";
 import { verdictKind, type VerdictKind } from "@/lib/verdict";
+import {
+  ISSUE_STATUS_CHIP,
+  ISSUE_STATUS_LABEL,
+  OVERRIDE_CHIP,
+  llmVerdictLabel,
+} from "@/lib/review";
+import FindingReviewForm from "@/components/FindingReviewForm";
 import FlowTracePanel, { hopsForFinding } from "@/components/FlowTracePanel";
 import ReachabilityEvidence from "@/components/ReachabilityEvidence";
 
@@ -93,6 +99,8 @@ export default function ScanFindingsPanel({
   // state: that unmounted the whole list every 2s and reset the scroll position.
   const [findings, setFindings] = useState<Finding[] | null>(null);
   const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
+  // Bumped after a review is saved so the list (verdicts, counts, badges) is re-fetched.
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -119,7 +127,7 @@ export default function ScanFindingsPanel({
       cancelled = true;
       clearInterval(timer);
     };
-  }, [scanId, verdictFilter, live]);
+  }, [scanId, verdictFilter, live, reloadKey]);
 
   // Findings arrive grouped. Chips count actionable groups (true positive +
   // unverified) with their occurrences — the same basis as the PDF headline —
@@ -234,7 +242,6 @@ export default function ScanFindingsPanel({
               const severity = normalizeSeverity(finding.severity);
               const riskStyle = RISK_STYLES[severity];
               const kind = verdictKind(finding.verdict);
-              const confidence = formatConfidence(finding.confidence);
               const hasTaintFlow = Boolean(
                 finding.source?.trim() || finding.sink?.trim() || finding.data_flow?.trim(),
               );
@@ -275,6 +282,16 @@ export default function ScanFindingsPanel({
                         <span className={`text-xs font-medium ${VERDICT_TEXT[kind]}`}>
                           {VERDICT_SHORT[kind]}
                         </span>
+                        {finding.review?.reviewer_verdict ? (
+                          <span className={ISSUE_STATUS_CHIP[finding.review.issue_status]}>
+                            {ISSUE_STATUS_LABEL[finding.review.issue_status]}
+                          </span>
+                        ) : null}
+                        {finding.review?.is_override ? (
+                          <span className={OVERRIDE_CHIP} title="The reviewer changed the LLM verdict">
+                            Overridden
+                          </span>
+                        ) : null}
                         {(finding.occurrence_count ?? 1) > 1 && (
                           <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium tabular-nums text-slate-700">
                             {finding.occurrence_count}×
@@ -306,11 +323,6 @@ export default function ScanFindingsPanel({
                   {open && (
                   <div className="border-t border-slate-200/70 px-3 pb-3 pt-2">
                   <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
-                    {confidence && (
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
-                        {confidence} confidence
-                      </span>
-                    )}
                     {finding.owasp_category && <span>{finding.owasp_category}</span>}
                   </div>
                   {finding.verdict_reason && (
@@ -378,7 +390,19 @@ export default function ScanFindingsPanel({
                   <div className="mt-1.5 text-xs">
                     <span className="font-medium text-[var(--muted)]">Verdict: </span>
                     <span className={`font-medium ${VERDICT_TEXT[kind]}`}>{VERDICT_LABEL[kind]}</span>
+                    {finding.review?.reviewer_verdict ? (
+                      <span className="ml-2 text-[var(--muted)]">
+                        (LLM said {llmVerdictLabel(finding.llm_verdict)}; reviewed by {finding.review.reviewer})
+                      </span>
+                    ) : null}
                   </div>
+                  <FindingReviewForm
+                    scanId={scanId}
+                    findingId={finding.id}
+                    llmVerdict={finding.llm_verdict ?? finding.verdict}
+                    hasReview={Boolean(finding.review)}
+                    onSaved={() => setReloadKey((n) => n + 1)}
+                  />
                   </div>
                   )}
                 </li>

@@ -34,6 +34,7 @@ from app.services.dast_report import build_dast_report
 from app.services.dast_summary import build_summary
 from app.services.dast_findings_query import build_dast_findings
 from app.services.dast_scan_setup import DastSetupError, prepare_dast_scan
+from app.services.feedback import apply_effective_verdicts, effective_scan_findings
 from app.services.llm_policy import DATA_POLICY_ALLOW_EXTERNAL, data_policy_violation
 from app.services.scan_export import (
     build_excel_report,
@@ -525,11 +526,12 @@ def get_scan_findings(
     if (scan.scan_type or "sast") == "dast":
         # Unverified findings are returned unless the caller filters them out explicitly.
         return build_dast_findings(db, scan, severity=severity, verdict=verdict, role=role, check=check)
-    query = db.query(Finding).filter(Finding.scan_id == scan.id)
-    if verdict:
-        query = query.filter(Finding.verdict == verdict)
-    findings = query.order_by(Finding.file_path, Finding.line).all()
-    all_findings = db.query(Finding).filter(Finding.scan_id == scan.id).all()
+    # Reviewer verdicts count as the verdict, so the filter and totals run on the overlaid
+    # rows rather than in SQL. The LLM's original stays on `llm_verdict`.
+    all_findings = apply_effective_verdicts(
+        db, scan, db.query(Finding).filter(Finding.scan_id == scan.id).order_by(Finding.file_path, Finding.line).all()
+    )
+    findings = [f for f in all_findings if f.verdict == verdict] if verdict else all_findings
     tp_count = sum(1 for f in all_findings if f.verdict == "true_positive")
     fp_count = sum(1 for f in all_findings if f.verdict == "false_positive")
     # Regex-only findings — counted separately so the confirmed total stays
@@ -649,7 +651,7 @@ def export_scan_pdf(
     _: None = Depends(verify_bearer),
 ):
     scan, project = _require_finished_scan(db, scan_id)
-    payload = build_pdf_report(project, scan, group_findings_by_issue(list(scan.findings or [])))
+    payload = build_pdf_report(project, scan, group_findings_by_issue(effective_scan_findings(db, scan)))
     filename = export_filenames(project, scan)["pdf"]
     return Response(
         content=payload,
@@ -665,7 +667,7 @@ def export_scan_excel(
     _: None = Depends(verify_bearer),
 ):
     scan, project = _require_finished_scan(db, scan_id)
-    payload = build_excel_report(project, scan, group_findings_by_issue(list(scan.findings or [])))
+    payload = build_excel_report(project, scan, group_findings_by_issue(effective_scan_findings(db, scan)))
     filename = export_filenames(project, scan)["xlsx"]
     return Response(
         content=payload,
@@ -683,7 +685,7 @@ def export_scan_sarif(
     from app.services.sarif_export import sarif_document
 
     scan, _project = _require_finished_scan(db, scan_id)
-    payload = json.dumps(sarif_document(list(scan.findings or [])), indent=2).encode()
+    payload = json.dumps(sarif_document(effective_scan_findings(db, scan)), indent=2).encode()
     return Response(
         content=payload,
         media_type="application/sarif+json",
@@ -700,7 +702,7 @@ def export_scan_junit(
     from app.services.sarif_export import junit_xml
 
     scan, project = _require_finished_scan(db, scan_id)
-    payload = junit_xml(list(scan.findings or []), name=project.name or scan_id).encode()
+    payload = junit_xml(effective_scan_findings(db, scan), name=project.name or scan_id).encode()
     return Response(
         content=payload,
         media_type="application/xml",

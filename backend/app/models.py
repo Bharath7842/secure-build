@@ -319,6 +319,92 @@ class FindingTriageEvent(Base):
     detail: Mapped[str] = mapped_column(String(500), default="")
 
 
+class FindingReview(Base):
+    """A reviewer's decision on one issue group of a scan.
+
+    Reviewer state lives here, never on `Finding`: the engine's verdict writers and
+    the reconcile sweep UPDATE `findings.verdict` in place, and the original LLM
+    result must stay intact. The `llm_*` columns and the identifying fields are a
+    snapshot written once at the first review. `scan_id` is deliberately not a
+    foreign key, so labelled data survives deleting the scan.
+    """
+
+    __tablename__ = "finding_reviews"
+    __table_args__ = (Index("uq_finding_reviews_scan_fp", "scan_id", "fingerprint", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    scan_id: Mapped[str] = mapped_column(String(36), index=True)
+    project_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    finding_id: Mapped[str] = mapped_column(String(36), index=True)  # the group's representative
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    member_finding_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    occurrence_count: Mapped[int] = mapped_column(Integer, default=1)
+
+    # Snapshot of the LLM result, never updated after creation.
+    rule_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    cwe: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    severity: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    line: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    kind: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
+    matched_text: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    llm_verdict: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    llm_explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    llm_remediation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    snapshot_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    # Reviewer decision.
+    reviewer_verdict: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    is_override: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    reviewer_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewer: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Resolution of a confirmed issue.
+    resolution_status: Mapped[str] = mapped_column(String(20), default="open", index=True)
+    resolution_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    issue_status: Mapped[str] = mapped_column(String(32), default="open", index=True)
+    is_closed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+    # Labelled-data lifecycle for the learning phase.
+    learning_status: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    learning_approved_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    learning_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    learning_processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    events: Mapped[list["FindingReviewEvent"]] = relationship(
+        back_populates="review", cascade="all, delete-orphan", order_by="FindingReviewEvent.at"
+    )
+
+
+class FindingReviewEvent(Base):
+    """Append-only history of a review: every verdict change, resolution and learning-state move."""
+
+    __tablename__ = "finding_review_events"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    review_id: Mapped[str] = mapped_column(ForeignKey("finding_reviews.id", ondelete="CASCADE"), index=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    actor: Mapped[str] = mapped_column(String(120), default="")
+    action: Mapped[str] = mapped_column(String(40))
+    from_verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    to_verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    from_resolution: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    to_resolution: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    review: Mapped[FindingReview] = relationship(back_populates="events")
+
+
 class DastSchedule(Base):
     """A repeating DAST scan. `request_json` is a secret-free ScanCreate body (no passwords)."""
 

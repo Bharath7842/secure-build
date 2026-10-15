@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
@@ -464,6 +464,19 @@ class ScanResultsOut(BaseModel):
     dast_skipped_degraded: list[dict] | None = None
 
 
+class ReviewSummaryOut(BaseModel):
+    review_id: str
+    reviewer_verdict: str | None = None
+    is_override: bool = False
+    reviewer: str | None = None
+    reviewed_at: datetime | None = None
+    comment: str | None = None
+    resolution_status: str = "open"
+    issue_status: str = "open"
+    is_closed: bool = False
+    learning_status: str | None = None
+
+
 class FindingOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -495,6 +508,10 @@ class FindingOut(BaseModel):
     triage_status: str | None = None
     assignee: str | None = None
     triage_note: str | None = None
+    # `verdict` is the effective verdict (the reviewer's, when there is one); the engine's
+    # original stays here. `review` is None until a reviewer has decided.
+    llm_verdict: str | None = None
+    review: ReviewSummaryOut | None = None
 
 
 class DastTrafficOut(BaseModel):
@@ -652,3 +669,87 @@ class DastAuthzMatrixOut(BaseModel):
     degraded: bool
     degraded_reason: str = ""
     cells: list[DastAuthzCellOut]
+
+
+# --- reviewer feedback ---------------------------------------------------------------------
+
+
+class ReviewIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["confirmed_issue", "false_positive", "needs_more_info", "resolved", "accept_risk"]
+    reviewer: str = Field(min_length=1, max_length=120)
+    comment: str | None = Field(default=None, max_length=5000)
+    resolution_notes: str | None = Field(default=None, max_length=5000)
+
+
+class ReviewEventOut(BaseModel):
+    id: str
+    at: datetime
+    actor: str
+    action: str
+    from_verdict: str | None = None
+    to_verdict: str | None = None
+    from_resolution: str | None = None
+    to_resolution: str | None = None
+    comment: str | None = None
+    detail: dict | None = None
+
+
+class FeedbackRowOut(BaseModel):
+    """One issue group with its LLM result and, once reviewed, the reviewer's decision."""
+
+    review_id: str | None = None
+    scan_id: str
+    project_id: str | None = None
+    finding_id: str
+    rule_id: str | None = None
+    cwe: str | None = None
+    severity: str | None = None
+    confidence: float | None = None
+    file_path: str | None = None
+    line: int | None = None
+    title: str | None = None
+    kind: str | None = None
+    snippet: str | None = None
+    occurrence_count: int | None = None
+    llm_verdict: str | None = None
+    llm_explanation: str | None = None
+    llm_remediation: str | None = None
+    reviewer_verdict: str | None = None
+    is_override: bool = False
+    reviewer_comment: str | None = None
+    reviewer: str | None = None
+    reviewed_at: datetime | None = None
+    last_reviewed_at: datetime | None = None
+    review_status: str = "unreviewed"
+    resolution_status: str = "open"
+    resolution_notes: str | None = None
+    resolved_by: str | None = None
+    resolved_at: datetime | None = None
+    issue_status: str = "open"
+    is_closed: bool = False
+    learning_status: str | None = None
+    learning_approved_by: str | None = None
+    learning_approved_at: datetime | None = None
+    learning_processed_at: datetime | None = None
+    events: list[ReviewEventOut] = Field(default_factory=list)
+
+
+class FeedbackListOut(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[FeedbackRowOut]
+
+
+class LearningActionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    review_ids: list[str] = Field(min_length=1, max_length=5000)
+    actor: str = Field(min_length=1, max_length=120)
+
+
+class LearningActionOut(BaseModel):
+    updated: int
+    skipped: int

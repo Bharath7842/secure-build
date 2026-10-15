@@ -6,6 +6,7 @@ from app.db import init_db
 from app.routers.dast_rules import router as dast_rules_router
 from app.routers.dast_settings import router as dast_settings_router
 from app.routers.dast_training import router as dast_training_router
+from app.routers.feedback import router as feedback_router
 from app.routers.git_auth import router as git_auth_router
 from app.routers.llm_presets import router as llm_presets_router
 from app.routers.projects import router as projects_router
@@ -31,6 +32,7 @@ app = FastAPI(title="Secure Build SAST API", lifespan=lifespan)
 
 app.include_router(projects_router)
 app.include_router(scans_router)
+app.include_router(feedback_router)
 app.include_router(llm_presets_router)
 app.include_router(scan_limitations_router)
 app.include_router(git_auth_router)

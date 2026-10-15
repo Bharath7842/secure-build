@@ -12,7 +12,7 @@ from app.config import settings
 from app.db import get_db
 from app.defaults.reference_sources import normalize_sources, sync_legacy_fields
 from app.defaults.scan_limitations import SCAN_LIMITATIONS
-from app.models import FileSnapshot, Finding, LlmResultCache, Project, Scan
+from app.models import FileSnapshot, Finding, FindingReview, FindingReviewEvent, LlmResultCache, Project, Scan
 from app.routers.git_auth import consume_pending_connection
 from app.schemas import ProjectCreate, ProjectDeleteOut, ProjectOut, ProjectUpdate
 from app.services import scan_log
@@ -158,6 +158,10 @@ def delete_project(
         db.query(Scan).filter(Scan.project_id == project_id).delete(synchronize_session=False)
     db.query(FileSnapshot).filter(FileSnapshot.project_id == project_id).delete(synchronize_session=False)
     db.query(LlmResultCache).filter(LlmResultCache.project_id == project_id).delete(synchronize_session=False)
+    # Reviews outlive a deleted scan (they are labelled data) but not their project.
+    review_ids = db.query(FindingReview.id).filter(FindingReview.project_id == project_id)
+    db.query(FindingReviewEvent).filter(FindingReviewEvent.review_id.in_(review_ids)).delete(synchronize_session=False)
+    db.query(FindingReview).filter(FindingReview.project_id == project_id).delete(synchronize_session=False)
 
     for scan_id in scan_ids:
         scan_log.delete(scan_id)

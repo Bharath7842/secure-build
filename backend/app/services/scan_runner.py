@@ -141,14 +141,18 @@ def _should_abort(scan: Scan | None, scan_id: str) -> bool:
 
 def _build_report_from_db_findings(db, scan_id: str) -> dict | None:
     """Build a scan report rollup from persisted Finding rows."""
+    from app.services.feedback import effective_verdicts_by_id
+
     rows = db.query(Finding).filter(Finding.scan_id == scan_id).all()
     if not rows:
         return None
-    tp_count = sum(1 for row in rows if row.verdict == "true_positive")
-    fp_count = sum(1 for row in rows if row.verdict == "false_positive")
+    # Reviewer verdicts win over the LLM's; read through a map so the rows stay untouched.
+    verdicts = effective_verdicts_by_id(db, scan_id, rows)
+    tp_count = sum(1 for row in rows if verdicts[row.id] == "true_positive")
+    fp_count = sum(1 for row in rows if verdicts[row.id] == "false_positive")
     # Regex-only findings carry `unverified`. They are counted separately so
     # they neither inflate the confirmed total nor vanish from the report.
-    unverified_count = sum(1 for row in rows if row.verdict == UNVERIFIED_VERDICT)
+    unverified_count = sum(1 for row in rows if verdicts[row.id] == UNVERIFIED_VERDICT)
     file_paths = {row.file_path for row in rows if row.file_path}
     by_owasp: dict[str, dict[str, int]] = {}
     for row in rows:
@@ -156,8 +160,8 @@ def _build_report_from_db_findings(db, scan_id: str) -> dict | None:
         bucket = by_owasp.setdefault(
             category, {"true_positive": 0, "false_positive": 0, UNVERIFIED_VERDICT: 0}
         )
-        if row.verdict in bucket:
-            bucket[row.verdict] += 1
+        if verdicts[row.id] in bucket:
+            bucket[verdicts[row.id]] += 1
     return {
         "files_scanned": len(file_paths),
         "tp_count": tp_count,
@@ -167,7 +171,7 @@ def _build_report_from_db_findings(db, scan_id: str) -> dict | None:
     }
 
 
-def sync_findings_report_to_metadata(db, scan_id: str) -> dict | None:
+def sync_findings_report_to_metadata(db, scan_id: str, force: bool = False) -> dict | None:
     """Merge DB finding counts into Scan.metadata_json.discovery.report.
 
     Called when a scan is cancelled so the UI can show partial results that
@@ -183,7 +187,8 @@ def sync_findings_report_to_metadata(db, scan_id: str) -> dict | None:
     existing = discovery.get("report") or {}
     existing_total = int(existing.get("tp_count") or 0) + int(existing.get("fp_count") or 0)
     new_total = report["tp_count"] + report["fp_count"]
-    if new_total >= existing_total:
+    # `force`: a reviewer decision can lower the confirmed total, which the guard would block.
+    if force or new_total >= existing_total:
         discovery["report"] = report
         metadata["discovery"] = discovery
         scan.metadata_json = metadata

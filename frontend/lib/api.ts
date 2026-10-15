@@ -17,11 +17,15 @@ import type {
   DastSettingsUpdate,
   DastSummary,
   DastVulnerabilityCoverage,
+  FeedbackFilter,
+  FeedbackList,
+  FeedbackRow,
   GitRepo,
   Project,
   ProjectCreateInput,
   ProjectDeleteResult,
   ProjectUpdateInput,
+  ReviewInput,
   Scan,
   ScanCreateInput,
   ScanFindings,
@@ -206,6 +210,35 @@ export const api = {
     },
     cancel: (id: string): Promise<ScanStatus> =>
       request(`/api/scans/${id}/cancel`, { method: "POST" }),
+  },
+  feedback: {
+    list: (filter: FeedbackFilter = {}): Promise<FeedbackList> => {
+      const params = new URLSearchParams();
+      for (const [key, value] of Object.entries(filter)) {
+        if (value !== undefined && value !== "") params.set(key, String(value));
+      }
+      const search = params.toString();
+      return request(`/api/feedback${search ? `?${search}` : ""}`);
+    },
+    get: (reviewId: string): Promise<FeedbackRow> => request(`/api/feedback/${reviewId}`),
+    /** The review (with history) for the issue group a finding belongs to; rejects with 404 if none. */
+    forFinding: (scanId: string, findingId: string): Promise<FeedbackRow> =>
+      request(`/api/scans/${scanId}/findings/${findingId}/review`),
+    submit: (scanId: string, findingId: string, input: ReviewInput): Promise<FeedbackRow> =>
+      request(`/api/scans/${scanId}/findings/${findingId}/review`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    approveForLearning: (reviewIds: string[], actor: string): Promise<{ updated: number; skipped: number }> =>
+      request("/api/feedback/learning/approve", {
+        method: "POST",
+        body: JSON.stringify({ review_ids: reviewIds, actor }),
+      }),
+    markProcessed: (reviewIds: string[], actor: string): Promise<{ updated: number; skipped: number }> =>
+      request("/api/feedback/learning/mark-processed", {
+        method: "POST",
+        body: JSON.stringify({ review_ids: reviewIds, actor }),
+      }),
   },
   config: {
     scanLimitations: (): Promise<ScanLimitation[]> =>

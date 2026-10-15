@@ -148,6 +148,7 @@ const SAST_LINKS: NavItem[] = [
   { href: "/sca", label: "SCA", short: "SCA", exact: true, icon: "package" },
   { href: "/sbom", label: "SBOM", short: "SB", exact: true, icon: "layers" },
   { href: "/dast", label: "DAST", short: "DA", exact: true, icon: "target" },
+  { href: "/feedback", label: "Feedback & Review", short: "FR", exact: true, icon: "findings" },
   {
     href: "/scans",
     label: "History",

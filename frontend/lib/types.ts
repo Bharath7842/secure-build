@@ -337,6 +337,11 @@ export interface Finding {
   /** Source→sink path that reaches this finding's sink, attached by the
    *  engine's corroborate step (sast_engine pipeline/reachability.py). */
   reachability?: Reachability | null;
+  /** SAST: `verdict` is the effective verdict (the reviewer's, when one exists); this is the
+   *  engine's original. */
+  llm_verdict?: string | null;
+  /** SAST: the reviewer's decision on this finding's issue group, once there is one. */
+  review?: ReviewSummary | null;
   /** DAST fields — present only on `kind=dast` findings. */
   target?: string | null;
   param?: string | null;
@@ -1416,3 +1421,111 @@ export type DastSettingsUpdate = Partial<
   /** Required to turn the safe-mode default off. */
   confirm_unsafe?: boolean;
 };
+
+/** Reviewer decisions a finding group can carry. */
+export type ReviewerVerdict = "confirmed_issue" | "false_positive" | "needs_more_info";
+export type ReviewDecision = ReviewerVerdict | "resolved" | "accept_risk";
+export type ReviewStatus = "unreviewed" | "needs_info" | "reviewed";
+export type ResolutionStatus = "open" | "resolved" | "risk_accepted";
+export type IssueStatus = "open" | "needs_info" | "resolved" | "risk_accepted" | "closed_false_positive";
+export type LearningStatus = "pending_learning" | "approved_for_learning" | "processed";
+
+export interface ReviewSummary {
+  review_id: string;
+  reviewer_verdict: ReviewerVerdict | null;
+  is_override: boolean;
+  reviewer: string | null;
+  reviewed_at: string | null;
+  comment: string | null;
+  resolution_status: ResolutionStatus;
+  issue_status: IssueStatus;
+  is_closed: boolean;
+  learning_status: LearningStatus | null;
+}
+
+export interface ReviewEvent {
+  id: string;
+  at: string;
+  actor: string;
+  action: string;
+  from_verdict: string | null;
+  to_verdict: string | null;
+  from_resolution: string | null;
+  to_resolution: string | null;
+  comment: string | null;
+  detail: Record<string, unknown> | null;
+}
+
+export interface ReviewInput {
+  decision: ReviewDecision;
+  reviewer: string;
+  comment?: string;
+  resolution_notes?: string;
+}
+
+/** One issue group with the LLM's result and, once reviewed, the reviewer's decision. */
+export interface FeedbackRow {
+  review_id: string | null;
+  scan_id: string;
+  project_id: string | null;
+  finding_id: string;
+  rule_id: string | null;
+  cwe: string | null;
+  severity: string | null;
+  confidence: number | null;
+  file_path: string | null;
+  line: number | null;
+  title: string | null;
+  kind: string | null;
+  snippet: string | null;
+  occurrence_count: number | null;
+  llm_verdict: string | null;
+  llm_explanation: string | null;
+  llm_remediation: string | null;
+  reviewer_verdict: ReviewerVerdict | null;
+  is_override: boolean;
+  reviewer_comment: string | null;
+  reviewer: string | null;
+  reviewed_at: string | null;
+  last_reviewed_at: string | null;
+  review_status: ReviewStatus;
+  resolution_status: ResolutionStatus;
+  resolution_notes: string | null;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  issue_status: IssueStatus;
+  is_closed: boolean;
+  learning_status: LearningStatus | null;
+  learning_approved_by: string | null;
+  learning_approved_at: string | null;
+  learning_processed_at: string | null;
+  events: ReviewEvent[];
+}
+
+export interface FeedbackList {
+  total: number;
+  limit: number;
+  offset: number;
+  items: FeedbackRow[];
+}
+
+export interface FeedbackFilter {
+  project_id?: string;
+  scan_id?: string;
+  reviewer_verdict?: string;
+  llm_verdict?: string;
+  override?: "true" | "false";
+  severity?: string;
+  rule_id?: string;
+  cwe?: string;
+  reviewer?: string;
+  review_status?: string;
+  resolution_status?: string;
+  closed?: "true" | "false";
+  learning_status?: string;
+  reviewed_from?: string;
+  reviewed_to?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}

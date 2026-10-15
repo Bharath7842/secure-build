@@ -44,6 +44,9 @@ def build_gate_summary(project: Project, findings: list[Finding]) -> dict:
         verdict = (finding.verdict or "").lower()
         if verdict in ("false_positive", "unverified"):
             continue
+        # Resolved or risk-accepted by a reviewer (see services/feedback): no longer blocking.
+        if (getattr(finding, "review", None) or {}).get("resolution_status") in ("resolved", "risk_accepted"):
+            continue
         severity = (finding.severity or "info").lower()
         if severity not in gated:
             severity = "info"
