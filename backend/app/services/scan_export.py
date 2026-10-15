@@ -633,6 +633,88 @@ def _finding_group_key(finding: Finding) -> tuple:
             _normalized_match(finding))
 
 
+# Kinds whose title/rule_id are model-written and so vary between findings that
+# describe one root cause. Regex rows are excluded on purpose (their matched
+# text split is a design decision), as are dast/flow (structural identity).
+_CONSOLIDATED_KINDS = frozenset({"llm", "joern"})
+_MAX_AFFECTED_LINES = 200
+_IDENT_TOKEN_RE = re.compile(r"[a-z][A-Z]|[_.()/\\]")
+_TOPIC_PREPOSITIONS = frozenset({"in", "at", "within", "inside", "of", "on", "for", "from", "via", "by"})
+
+
+def _cwe_number(finding: Finding) -> int | None:
+    """The CWE as a number, whatever the spelling ('CWE-89', 'cwe 089', '89')."""
+    match = re.search(r"\d+", finding.cwe or "")
+    return int(match.group()) if match else None
+
+
+def _issue_topic(finding: Finding) -> str:
+    """Title with identifier tokens (method/class/variable names) and the
+    preposition leading into them removed, so 'X in getActionCode' and
+    'X in getPortMsgType' share a topic. Empty when too little is left."""
+    tokens = (finding.title or "").split()
+    kept: list[str] = []
+    for token in tokens:
+        if _IDENT_TOKEN_RE.search(token):
+            while kept and kept[-1].lower() in _TOPIC_PREPOSITIONS:
+                kept.pop()
+            continue
+        kept.append(token)
+    topic = re.sub(r"[^a-z0-9]+", " ", " ".join(kept).lower()).split()
+    return " ".join(topic) if len(topic) >= 2 else ""
+
+
+def _consolidate_groups(groups: list[list[Finding]]) -> list[list[Finding]]:
+    """Merge key-groups that describe one root cause, whatever rule_id/title the
+    model gave each. Two scopes, both requiring the same verdict and CWE number:
+    a single-file group merges with every other single-file group in that file;
+    any group merges with groups sharing its identifier-free title topic."""
+    parent = list(range(len(groups)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    seen: dict[tuple, int] = {}
+    for i, members in enumerate(groups):
+        if not all((m.kind or "").strip().lower() in _CONSOLIDATED_KINDS for m in members):
+            continue
+        rep = members[0]
+        cwe = _cwe_number(rep)
+        if cwe is None:
+            continue
+        verdict = (rep.verdict or "").strip().lower()
+        keys: list[tuple] = []
+        files = {m.file_path or "" for m in members}
+        if len(files) == 1:
+            keys.append((verdict, cwe, "file", next(iter(files))))
+        topic = _issue_topic(rep)
+        if topic:
+            keys.append((verdict, cwe, "topic", topic))
+        for key in keys:
+            if key in seen:
+                parent[find(i)] = find(seen[key])
+            else:
+                seen[key] = i
+
+    merged: dict[int, list[Finding]] = {}
+    for i, members in enumerate(groups):
+        merged.setdefault(find(i), []).extend(members)
+    return list(merged.values())
+
+
+def issue_groups(findings: list[Finding]) -> list[list[Finding]]:
+    """The member lists `group_findings_by_issue` collapses `findings` into
+    (key-groups, then consolidated). Reviews use this too, so a decision on a
+    merged row covers every row it stands for."""
+    groups: dict[tuple, list[Finding]] = {}
+    for f in findings:
+        groups.setdefault(_finding_group_key(f), []).append(f)
+    return _consolidate_groups(list(groups.values()))
+
+
 def group_findings_by_issue(findings: list[Finding]) -> list[Finding]:
     """Collapse findings that represent the same issue across multiple files
     into one representative Finding per group, with every affected file path
@@ -647,20 +729,11 @@ def group_findings_by_issue(findings: list[Finding]) -> list[Finding]:
     Every returned finding carries `occurrence_count` (how many rows it
     stands for). Like `affected_files`, it is set on the ORM instance and
     must never be flushed — nothing commits after this runs."""
-    order: list[tuple] = []
-    groups: dict[tuple, list[Finding]] = {}
-    for f in findings:
-        key = _finding_group_key(f)
-        bucket = groups.setdefault(key, [])
-        if not bucket:
-            order.append(key)
-        bucket.append(f)
-
     result: list[Finding] = []
-    for key in order:
-        members = groups[key]
+    for members in issue_groups(findings):
         if len(members) == 1:
             members[0].occurrence_count = 1
+            members[0].affected_lines = None
             result.append(members[0])
             continue
         # Among equals, prefer the member with the strongest reachability
@@ -684,7 +757,11 @@ def group_findings_by_issue(findings: list[Finding]) -> list[Finding]:
                 if p and p not in seen:
                     seen.add(p)
                     paths.append(p)
+        locations = sorted(
+            {((m.file_path or ""), int(m.line or 0)) for m in members if m.line}
+        )[:_MAX_AFFECTED_LINES]
         representative.affected_files = paths
+        representative.affected_lines = [{"file_path": p, "line": n} for p, n in locations] or None
         representative.occurrence_count = len(members)
         result.append(representative)
     return _sorted_findings(result)

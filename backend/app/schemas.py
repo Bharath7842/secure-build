@@ -500,6 +500,8 @@ class FindingOut(BaseModel):
     data_flow: str | None = None
     verdict_reason: str | None = None
     affected_files: list[str] | None = None
+    # Every file:line a merged group stands for ({file_path, line}); None for a single row.
+    affected_lines: list[dict] | None = None
     # Rows this grouped finding stands for (group_findings_by_issue).
     occurrence_count: int | None = None
     matched_text: str | None = None

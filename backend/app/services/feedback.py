@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
 
 from app.models import Finding, FindingReview, FindingReviewEvent, Scan
-from app.services.scan_export import _finding_group_key, group_findings_by_issue
+from app.services.scan_export import _finding_group_key, group_findings_by_issue, issue_groups
 
 # --- vocabulary -------------------------------------------------------------------------
 
@@ -68,14 +68,12 @@ def _fingerprint(project_id: str | None, finding: Finding) -> str:
     return hashlib.sha1(f"{project_id or ''}|{key!r}".encode("utf-8")).hexdigest()
 
 
-def _issue_key(finding: Finding) -> tuple:
-    return _finding_group_key(finding)
-
-
 def _members_of(db: Session, scan_id: str, finding: Finding) -> list[Finding]:
-    key = _issue_key(finding)
     rows = db.query(Finding).filter(Finding.scan_id == scan_id).all()
-    return [row for row in rows if _issue_key(row) == key]
+    for members in issue_groups(rows):
+        if any(row.id == finding.id for row in members):
+            return members
+    return [finding]
 
 
 def _reviews_by_member(db: Session, scan_id: str) -> dict[str, FindingReview]:

@@ -80,6 +80,35 @@ function AffectedFiles({ paths }: { paths: string[] }) {
   );
 }
 
+function AffectedLines({ locations }: { locations: { file_path: string; line: number }[] }) {
+  const [showAll, setShowAll] = useState(false);
+  const shown = showAll ? locations : locations.slice(0, AFFECTED_FILES_PREVIEW);
+  const hidden = locations.length - shown.length;
+  return (
+    <div className="mt-2 rounded border border-slate-200 bg-slate-50 p-2">
+      <p className="text-xs font-medium text-[var(--muted)]">
+        {locations.length} locations in this group
+      </p>
+      <ul className="mt-1 space-y-0.5">
+        {shown.map((loc, idx) => (
+          <li key={idx} className="break-all font-mono text-xs text-[var(--ink)]" title={loc.file_path}>
+            • {toModulePath(loc.file_path)}:{loc.line}
+          </li>
+        ))}
+      </ul>
+      {locations.length > AFFECTED_FILES_PREVIEW && (
+        <button
+          type="button"
+          onClick={() => setShowAll((v) => !v)}
+          className="mt-1 text-xs font-medium text-blue-700 hover:underline"
+        >
+          {showAll ? "Show fewer" : `Show ${hidden} more`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 interface ScanFindingsPanelProps {
   scanId: string;
   report: ScanReport;
@@ -314,9 +343,13 @@ export default function ScanFindingsPanel({
                       >
                         {toModulePath(finding.file_path ?? "")}
                         {finding.line ? `:${finding.line}` : ""}
-                        {(finding.affected_files?.length ?? 0) > 1
-                          ? ` +${(finding.affected_files?.length ?? 1) - 1} more`
-                          : ""}
+                        {(() => {
+                          const more = Math.max(
+                            (finding.affected_files?.length ?? 1) - 1,
+                            (finding.affected_lines?.length ?? 1) - 1,
+                          );
+                          return more > 0 ? ` +${more} more` : "";
+                        })()}
                       </span>
                     </span>
                   </button>
@@ -379,6 +412,9 @@ export default function ScanFindingsPanel({
                       {toModulePath(finding.file_path ?? "")}
                       {finding.line ? `:${finding.line}` : ""}
                     </p>
+                  )}
+                  {(finding.affected_lines?.length ?? 0) > 1 && (
+                    <AffectedLines locations={finding.affected_lines ?? []} />
                   )}
                   {flowHops.length >= 2 ? (
                     <FlowTracePanel hops={flowHops} />

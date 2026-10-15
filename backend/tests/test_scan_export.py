@@ -1,5 +1,6 @@
 """PDF / Excel export smoke tests."""
 
+import pytest
 from io import BytesIO
 
 from openpyxl import load_workbook
@@ -637,3 +638,66 @@ def test_pdf_headline_names_groups_and_dismissed():
     text = "".join(page.extract_text() for page in PdfReader(BytesIO(data)).pages[:1])
     assert "group · 3 occurrences" in text
     assert "Dismissed: 1 group (2 occurrences)" in text
+
+
+def _llm(fid, cwe, title, path, line, rule_id="llm-extra", verdict="true_positive", kind="llm"):
+    return Finding(
+        id=fid, scan_id="s1", severity="high", title=title, cwe=cwe, rule_id=rule_id,
+        file_path=path, line=line, verdict=verdict, kind=kind,
+    )
+
+
+@pytest.mark.parametrize("cwe_a,cwe_b,title_a,title_b", [
+    ("CWE-89", "CWE-089", "SQL Injection via SOAP Message Fields", "SQL Injection via String Concatenation in getActionCode"),
+    ("CWE-79", "cwe 79", "Reflected XSS in response body", "Stored cross-site scripting in template"),
+    ("CWE-22", "22", "Path traversal in upload handler", "Unsanitised filename used for file read"),
+])
+def test_consolidates_same_file_same_cwe_whatever_rule_or_title(cwe_a, cwe_b, title_a, title_b):
+    findings = [
+        _llm("a", cwe_a, title_a, "src/Mgr.java", 10, rule_id="rule-one"),
+        _llm("b", cwe_b, title_b, "src/Mgr.java", 90, rule_id="llm-extra"),
+        _llm("c", cwe_a, title_a, "src/Mgr.java", 200, rule_id="rule-two"),
+    ]
+    grouped = group_findings_by_issue(findings)
+    assert len(grouped) == 1
+    assert grouped[0].occurrence_count == 3
+    assert [(x["file_path"], x["line"]) for x in grouped[0].affected_lines] == [
+        ("src/Mgr.java", 10), ("src/Mgr.java", 90), ("src/Mgr.java", 200),
+    ]
+
+
+def test_consolidation_does_not_merge_different_files_with_different_topics():
+    findings = [
+        _llm("a", "CWE-89", "SQL Injection via SOAP Message Fields", "a/One.java", 1, rule_id="r1"),
+        _llm("b", "CWE-89", "Dynamic query built from request parameter", "b/Two.java", 1, rule_id="r2"),
+    ]
+    assert len(group_findings_by_issue(findings)) == 2
+
+
+def test_consolidation_merges_identifier_only_title_differences_across_files():
+    findings = [
+        _llm("a", "CWE-89", "SQL Injection via String Concatenation in getActionCode", "a/One.java", 1, rule_id="r1"),
+        _llm("b", "CWE-89", "SQL Injection via String Concatenation in getPortMsgType", "b/Two.java", 5, rule_id="r2"),
+    ]
+    grouped = group_findings_by_issue(findings)
+    assert len(grouped) == 1
+    assert sorted(grouped[0].affected_files) == ["a/One.java", "b/Two.java"]
+
+
+def test_consolidation_never_crosses_verdicts_or_missing_cwe():
+    findings = [
+        _llm("a", "CWE-89", "SQL injection one", "f.java", 1, rule_id="r1"),
+        _llm("b", "CWE-89", "SQL injection two", "f.java", 2, rule_id="r2", verdict="false_positive"),
+        _llm("c", None, "No cwe one", "f.java", 3, rule_id="r3"),
+        _llm("d", None, "No cwe two", "f.java", 4, rule_id="r4"),
+    ]
+    assert len(group_findings_by_issue(findings)) == 4
+
+
+@pytest.mark.parametrize("kind", ["regex", "flow", "dast"])
+def test_consolidation_leaves_other_kinds_alone(kind):
+    findings = [
+        _llm("a", "CWE-89", "Thing one", "f.java", 1, rule_id="r1", kind=kind),
+        _llm("b", "CWE-89", "Thing two", "f.java", 2, rule_id="r2", kind=kind),
+    ]
+    assert len(group_findings_by_issue(findings)) == 2

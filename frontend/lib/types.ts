@@ -328,6 +328,8 @@ export interface Finding {
   data_flow: string | null;
   verdict_reason: string | null;
   affected_files: string[] | null;
+  /** Every file:line a merged group stands for; null for a single row. */
+  affected_lines?: { file_path: string; line: number }[] | null;
   /** Raw rows this grouped finding stands for (1 when ungrouped). */
   occurrence_count?: number | null;
   /** The literal text the regex matched — findings group by rule + this. */

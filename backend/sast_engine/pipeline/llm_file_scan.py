@@ -1154,37 +1154,51 @@ def normalize_finding(
     }
 
 
+# Re-anchoring can shift one issue's reported line by a line or two between
+# overlapping chunks or batched calls; same-CWE findings this close are one issue.
+DEDUPE_LINE_WINDOW = 2
+
+
 def _dedupe_key(finding: Dict[str, Any]) -> tuple:
-    """Group by line plus a coarse topic so the same issue reported under two
-    different rule_ids across an overlap region collapses into one row."""
+    """Group by a coarse topic so the same issue reported under two different
+    rule_ids across an overlap region collapses into one row. The CWE is
+    compared by number, so 'CWE-89' and 'CWE-089' are the same."""
     title = re.sub(r"[^a-z]+", " ", str(finding.get("title") or "").lower()).strip()
     topic = " ".join(title.split()[:3])
-    return (finding["line"], finding.get("cwe") or topic)
+    cwe = re.search(r"\d+", str(finding.get("cwe") or ""))
+    return (int(cwe.group()) if cwe else topic, bool(cwe))
+
+
+def _is_better(new: Dict[str, Any], current: Dict[str, Any]) -> bool:
+    cur_tp = current["verdict"] == "true_positive"
+    new_tp = new["verdict"] == "true_positive"
+    if new_tp != cur_tp:
+        return new_tp
+    cur_rank = _SEVERITY_RANK.get(current["severity"], 9)
+    new_rank = _SEVERITY_RANK.get(new["severity"], 9)
+    return new_rank < cur_rank or (
+        new_rank == cur_rank and new.get("confidence", 0) > current.get("confidence", 0)
+    )
 
 
 def merge_dedupe(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Dedupe on (line, cwe-or-topic), preferring true_positive over
+    """Dedupe on (cwe-or-topic) within the same line, or within
+    `DEDUPE_LINE_WINDOW` lines when both carry a CWE. Prefers true_positive over
     false_positive, then higher severity, then higher confidence."""
-    best: Dict[tuple, Dict[str, Any]] = {}
-    for f in findings:
+    best: List[Tuple[tuple, Dict[str, Any]]] = []
+    for f in sorted(findings, key=lambda x: x["line"]):
         key = _dedupe_key(f)
-        current = best.get(key)
-        if current is None:
-            best[key] = f
-            continue
-        cur_tp = current["verdict"] == "true_positive"
-        new_tp = f["verdict"] == "true_positive"
-        if new_tp != cur_tp:
-            if new_tp:
-                best[key] = f
-            continue
-        cur_rank = _SEVERITY_RANK.get(current["severity"], 9)
-        new_rank = _SEVERITY_RANK.get(f["severity"], 9)
-        if new_rank < cur_rank or (
-            new_rank == cur_rank and f.get("confidence", 0) > current.get("confidence", 0)
-        ):
-            best[key] = f
-    return sorted(best.values(), key=lambda f: (f["line"], f["rule_id"]))
+        for i, (other_key, current) in enumerate(best):
+            if other_key != key:
+                continue
+            gap = abs(f["line"] - current["line"])
+            if gap == 0 or (key[1] and gap <= DEDUPE_LINE_WINDOW):
+                if _is_better(f, current):
+                    best[i] = (key, f)
+                break
+        else:
+            best.append((key, f))
+    return sorted((f for _, f in best), key=lambda f: (f["line"], f["rule_id"]))
 
 
 # --- suppression / enrichment ----------------------------------------------

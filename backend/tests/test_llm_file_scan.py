@@ -1808,3 +1808,13 @@ def test_group_confirm_unverified_findings_group_cap_selects_top_n_by_occurrence
 
     low_finding = file_results[-1]["findings"][0]
     assert low_finding["verdict"] == "unverified"
+
+
+def test_merge_dedupe_merges_same_cwe_within_line_window(llm_file_scan):
+    findings = [
+        {"rule_id": "a", "line": 10, "cwe": "CWE-89", "verdict": "true_positive", "severity": "LOW", "title": "SQLi one"},
+        {"rule_id": "b", "line": 12, "cwe": "CWE-089", "verdict": "true_positive", "severity": "HIGH", "title": "SQLi two"},
+        {"rule_id": "c", "line": 40, "cwe": "CWE-89", "verdict": "true_positive", "severity": "HIGH", "title": "SQLi three"},
+    ]
+    merged = llm_file_scan.merge_dedupe(findings)
+    assert [(f["line"], f["severity"]) for f in merged] == [(12, "HIGH"), (40, "HIGH")]
