@@ -369,7 +369,7 @@ The backend reads the **root** `.env` file (`secure-build/.env`) via `app/config
 
 ### Git access for private repositories
 
-`GITHUB_OAUTH_CLIENT_ID/SECRET/REDIRECT_URI` and `GITLAB_OAUTH_CLIENT_ID/SECRET/REDIRECT_URI` (plus `GITLAB_BASE_URL` for self-hosted GitLab) enable the "Connect GitHub / Connect GitLab" buttons. An empty client ID disables that provider.
+`GITLAB_OAUTH_CLIENT_ID/SECRET/REDIRECT_URI` (plus `GITLAB_BASE_URL` for self-hosted GitLab) enable the "Connect GitLab" button. An empty client ID disables it.
 
 ### DAST
 

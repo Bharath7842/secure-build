@@ -25,7 +25,7 @@ const GIT_PROVIDER_LABELS: Record<string, string> = {
 };
 
 // sessionStorage key for the in-progress "New Project" form, saved right
-// before "Connect GitHub"/"Connect GitLab" navigates the browser away to the
+// before "Connect GitLab" navigates the browser away to the
 // provider's authorize page, and restored when it comes back.
 const NEW_PROJECT_DRAFT_KEY = "new-project-draft";
 
@@ -84,27 +84,11 @@ function Field({
   );
 }
 
-function GitHubLogo({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden="true">
-      <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
-    </svg>
-  );
-}
-
 function GitLabLogo({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden="true">
       <path d="M23.6004 9.5927l-.0318-.0817-3.3243-8.4664a.851.851 0 00-.3374-.4046.8748.8748 0 00-1.021.0561.8748.8748 0 00-.2839.4046l-2.2258 6.8102H7.5769L5.351 1.19631a.8748.8748 0 00-.2846-.404.8749.8749 0 00-1.021-.0561.8749.8749 0 00-.3374.404L.3844 9.5107l-.032.082a6.0657 6.0657 0 002.0138 7.0135l.011.0083.0312.0209 5.1618 3.869 2.5599 1.9354 1.5622 1.1793a1.0273 1.0273 0 001.2416 0l1.5622-1.1793 2.5599-1.9354 5.1926-3.8919.0122-.0093a6.0657 6.0657 0 002.0009-7.0009z" />
     </svg>
-  );
-}
-
-function ProviderLogo({ provider, className }: { provider: string | null; className?: string }) {
-  return provider === "gitlab" ? (
-    <GitLabLogo className={className} />
-  ) : (
-    <GitHubLogo className={className} />
   );
 }
 
@@ -144,12 +128,13 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
   const [gitProvider, setGitProvider] = useState<string | null>(initial?.git_provider ?? null);
   const [gitConnected, setGitConnected] = useState(initial?.git_connected ?? false);
   const [pendingConnectionId, setPendingConnectionId] = useState<string | null>(null);
-  const [connectingProvider, setConnectingProvider] = useState<"github" | "gitlab" | null>(null);
+  const [connectingProvider, setConnectingProvider] = useState<"gitlab" | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
   const [gitError, setGitError] = useState<string | null>(null);
-  const [repos, setRepos] = useState<GitRepo[]>([]);
-  const [reposLoading, setReposLoading] = useState(false);
-  const [selectedRepo, setSelectedRepo] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
+  const [repoLookup, setRepoLookup] = useState<GitRepo | null>(null);
+  const [repoLookupLoading, setRepoLookupLoading] = useState(false);
+  const [repoLookupError, setRepoLookupError] = useState<string | null>(null);
 
   useEffect(() => {
     if (mode !== "create") return;
@@ -160,8 +145,8 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
       setGitProvider(provider);
       setGitConnected(true);
 
-      // Restore whatever the user had typed before "Connect GitHub"/"Connect
-      // GitLab" navigated the browser away to the provider and back.
+      // Restore whatever the user had typed before "Connect GitLab"
+      // navigated the browser away to the provider and back.
       try {
         const raw = sessionStorage.getItem(NEW_PROJECT_DRAFT_KEY);
         if (raw) {
@@ -184,12 +169,10 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
-  useEffect(() => {
-    if (!gitConnected || !gitProvider) {
-      setRepos([]);
-      return;
-    }
-    const provider = gitProvider === "gitlab" ? "gitlab" : "github";
+  // Look up the one pasted repository instead of listing every project the
+  // account can see (a list is capped at one page and hides the rest).
+  async function handleLookupRepo() {
+    const provider = "gitlab";
     const by =
       mode === "edit" && initial?.id
         ? { projectId: initial.id }
@@ -197,40 +180,29 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
           ? { connectionId: pendingConnectionId }
           : null;
     if (!by) return;
+    if (!repoUrl.trim()) {
+      setRepoLookupError("Paste the full Git URL of the repository.");
+      return;
+    }
 
-    let active = true;
-    setReposLoading(true);
-    setGitError(null);
-    api.gitAuth
-      .listRepos(provider, by)
-      .then((list) => {
-        if (active) setRepos(list);
-      })
-      .catch((err) => {
-        if (active) {
-          setGitError(
-            err instanceof ApiError ? err.message : `Failed to list ${GIT_PROVIDER_LABELS[provider]} repositories.`
-          );
-        }
-      })
-      .finally(() => {
-        if (active) setReposLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gitConnected, gitProvider, pendingConnectionId]);
-
-  function handleSelectRepo(cloneUrl: string) {
-    setSelectedRepo(cloneUrl);
-    if (!cloneUrl) return;
-    setDefaultGitUrl(cloneUrl);
-    const repo = repos.find((r) => r.clone_url === cloneUrl);
-    if (repo?.default_branch) setDefaultBranch(repo.default_branch);
+    setRepoLookupLoading(true);
+    setRepoLookupError(null);
+    setRepoLookup(null);
+    try {
+      const repo = await api.gitAuth.lookupRepo(provider, repoUrl.trim(), by);
+      setRepoLookup(repo);
+      setDefaultGitUrl(repo.clone_url);
+      if (repo.default_branch) setDefaultBranch(repo.default_branch);
+    } catch (err) {
+      setRepoLookupError(
+        err instanceof ApiError ? err.message : `Failed to look up the ${GIT_PROVIDER_LABELS[provider]} repository.`
+      );
+    } finally {
+      setRepoLookupLoading(false);
+    }
   }
 
-  async function handleConnect(provider: "github" | "gitlab") {
+  async function handleConnect(provider: "gitlab") {
     setGitError(null);
     setConnectingProvider(provider);
     try {
@@ -369,7 +341,7 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
 
       <FormSection
         title="Git provider"
-        description="Connect GitHub or GitLab so scans can clone this project's private repository, or paste a Git URL below directly."
+        description="Connect GitLab so scans can clone this project's private repository, or paste a Git URL below directly."
       >
         {gitError && (
           <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -382,10 +354,10 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
               <div className="flex items-center gap-3">
                 <span
                   className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
-                    gitProvider === "gitlab" ? "bg-orange-50 text-orange-600" : "bg-slate-900 text-white"
+                    gitProvider === "gitlab" ? "bg-orange-50 text-orange-600" : "bg-slate-100 text-slate-600"
                   }`}
                 >
-                  <ProviderLogo provider={gitProvider} className="h-5 w-5" />
+                  {gitProvider === "gitlab" && <GitLabLogo className="h-5 w-5" />}
                 </span>
                 <div>
                   <p className="text-sm font-medium text-[var(--ink)]">
@@ -407,52 +379,59 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
             </div>
             <div className="mt-4 border-t border-slate-100 pt-4">
               <Field
-                label="Repository"
-                htmlFor="repo-picker"
-                hint="Picking a repository here fills in the Git URL (and default branch) below."
+                label="Repository URL"
+                htmlFor="repo-url"
+                hint={`Paste the repository's full Git URL. It is checked against your ${
+                  GIT_PROVIDER_LABELS[gitProvider ?? ""] ?? "Git"
+                } account, then fills in the Git URL and default branch below.`}
               >
-                <select
-                  id="repo-picker"
-                  value={selectedRepo}
-                  onChange={(event) => handleSelectRepo(event.target.value)}
-                  className={selectClass}
-                  disabled={reposLoading || repos.length === 0}
-                >
-                  <option value="">
-                    {reposLoading
-                      ? "Loading repositories…"
-                      : repos.length === 0
-                        ? "No repositories found"
-                        : "Select a repository"}
-                  </option>
-                  {repos.map((repo) => (
-                    <option key={repo.clone_url} value={repo.clone_url}>
-                      {repo.full_name}
-                      {repo.private ? " (private)" : ""}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex gap-2">
+                  <input
+                    id="repo-url"
+                    value={repoUrl}
+                    onChange={(event) => {
+                      setRepoUrl(event.target.value);
+                      setRepoLookup(null);
+                      setRepoLookupError(null);
+                    }}
+                    onKeyDown={(event) => {
+                      // Enter looks the repository up; it must not submit the whole project form.
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void handleLookupRepo();
+                      }
+                    }}
+                    className={inputClass}
+                    placeholder="https://gitlab.com/group/project.git"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleLookupRepo()}
+                    disabled={repoLookupLoading || !repoUrl.trim()}
+                    className="shrink-0 rounded-md border border-slate-300 bg-white px-3.5 py-1.5 text-sm font-medium text-[var(--ink)] transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {repoLookupLoading ? "Checking…" : "Find repository"}
+                  </button>
+                </div>
               </Field>
+              {repoLookup && (
+                <p className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  Found <span className="font-medium">{repoLookup.full_name}</span>
+                  {repoLookup.private ? " (private)" : " (public)"}
+                  {repoLookup.default_branch ? ` · default branch ${repoLookup.default_branch}` : ""}
+                </p>
+              )}
+              {repoLookupError && (
+                <p className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {repoLookupError}
+                </p>
+              )}
             </div>
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <button
-              type="button"
-              onClick={() => handleConnect("github")}
-              disabled={connectingProvider !== null}
-              className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-left transition-all hover:-translate-y-0.5 hover:border-slate-400 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:shadow-none"
-            >
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white">
-                <GitHubLogo className="h-5 w-5" />
-              </span>
-              <span>
-                <span className="block text-sm font-medium text-[var(--ink)]">
-                  {connectingProvider === "github" ? "Redirecting…" : "Connect GitHub"}
-                </span>
-                <span className="block text-xs text-[var(--muted)]">Authorize access to your repositories</span>
-              </span>
-            </button>
+          <div className="grid gap-3">
             <button
               type="button"
               onClick={() => handleConnect("gitlab")}
@@ -483,7 +462,7 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
             value={defaultGitUrl}
             onChange={(event) => setDefaultGitUrl(event.target.value)}
             className={inputClass}
-            placeholder="https://github.com/org/repo.git (optional for DAST-only projects)"
+            placeholder="https://gitlab.com/group/project.git (optional for DAST-only projects)"
           />
         </Field>
         <Field label="Default branch" htmlFor="branch">

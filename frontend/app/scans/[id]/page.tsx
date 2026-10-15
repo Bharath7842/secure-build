@@ -394,14 +394,11 @@ export default function ScanDetailPage() {
             ? DEEP_SCAN_SECTION_RE
             : "Generating report",
         node: (
-          <div className="space-y-2">
-            <ScanFindingsCard
-              report={effectiveReport}
-              active={sidePanel === "findings"}
-              onOpen={() => setSidePanel("findings")}
-            />
-            {canExportFindings && <ScanExportButtons scanId={id} compact />}
-          </div>
+          <ScanFindingsCard
+            report={effectiveReport}
+            active={sidePanel === "findings"}
+            onOpen={() => setSidePanel("findings")}
+          />
         ),
       });
     }
@@ -425,7 +422,6 @@ export default function ScanDetailPage() {
     derivedRulesSummary,
     hasFindingsReport,
     effectiveReport,
-    canExportFindings,
     sidePanel,
     scanningFindings,
     scanningLow,
@@ -639,7 +635,10 @@ export default function ScanDetailPage() {
             )}
           </p>
         </div>
-        <ScanStatusBadge status={status.status} />
+        <div className="flex shrink-0 items-center gap-3">
+          {canExportFindings && <ScanExportButtons scanId={id} compact />}
+          <ScanStatusBadge status={status.status} />
+        </div>
       </div>
 
       {hasNotices && (

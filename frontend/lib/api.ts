@@ -115,14 +115,14 @@ export const api = {
     // the project row exists — the resulting token is held in a short-lived
     // pending connection instead (see callback()).
     authorizeUrl: (
-      provider: "github" | "gitlab",
+      provider: "gitlab",
       projectId?: string
     ): Promise<{ authorize_url: string }> => {
       const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
       return request(`/api/git-auth/${provider}/authorize${query}`);
     },
     callback: (
-      provider: "github" | "gitlab",
+      provider: "gitlab",
       code: string,
       state: string
     ): Promise<{ git_provider: string; project_id?: string; connection_id?: string }> =>
@@ -132,14 +132,15 @@ export const api = {
       }),
     disconnect: (projectId: string): Promise<void> =>
       request(`/api/git-auth/disconnect/${projectId}`, { method: "DELETE" }),
-    listRepos: (
-      provider: "github" | "gitlab",
+    lookupRepo: (
+      provider: "gitlab",
+      url: string,
       by: { connectionId?: string; projectId?: string }
-    ): Promise<GitRepo[]> => {
-      const query = new URLSearchParams();
+    ): Promise<GitRepo> => {
+      const query = new URLSearchParams({ url });
       if (by.connectionId) query.set("connection_id", by.connectionId);
       if (by.projectId) query.set("project_id", by.projectId);
-      return request(`/api/git-auth/${provider}/repos?${query.toString()}`);
+      return request(`/api/git-auth/${provider}/repo?${query.toString()}`);
     },
   },
   scans: {

@@ -19,25 +19,6 @@ import { verdictKind, type VerdictKind } from "@/lib/verdict";
 import FlowTracePanel, { hopsForFinding } from "@/components/FlowTracePanel";
 import ReachabilityEvidence from "@/components/ReachabilityEvidence";
 
-function ShieldIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-    </svg>
-  );
-}
-
 function ChevronIcon() {
   return (
     <svg
@@ -196,13 +177,7 @@ export default function ScanFindingsPanel({
       {/* overflow-clip (not -hidden) so the sticky toolbar below still sticks to
           the panel's scroll container. */}
       <section className="overflow-clip rounded-md border border-slate-200 border-t-2 border-t-blue-500 bg-gradient-to-br from-white via-white to-blue-50/40 p-5">
-        <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">
-          <span className="flex h-6 w-6 items-center justify-center rounded bg-blue-100 text-blue-600">
-            <ShieldIcon />
-          </span>
-          Findings
-        </h3>
-        <div className="sticky top-0 z-10 -mx-5 mt-3 border-b border-slate-200 bg-white/95 px-5 pb-3 pt-3 backdrop-blur">
+        <div className="sticky top-0 z-10 -mx-5 -mt-5 border-b border-slate-200 bg-white/95 px-5 pb-3 pt-5 backdrop-blur">
         <div className="flex flex-wrap items-center gap-2">
           {RISK_LEVELS.map((risk) => {
             const selected = severityFilter === risk;

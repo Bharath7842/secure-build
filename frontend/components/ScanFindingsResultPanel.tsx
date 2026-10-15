@@ -1,9 +1,12 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 import type { ScanReport } from "@/lib/types";
 
-import ScanExportButtons from "@/components/ScanExportButtons";
 import ScanFindingsPanel from "@/components/ScanFindingsPanel";
+
+const FULL_SCREEN_HINT_MS = 5000;
 
 interface ScanFindingsResultPanelProps {
   scanId: string;
@@ -99,6 +102,15 @@ export default function ScanFindingsResultPanel({
   onToggleExpand,
   live = false,
 }: ScanFindingsResultPanelProps) {
+  // The panel mounts each time Findings is opened, so this draws attention to
+  // the full-screen button for a few seconds on every open, then goes quiet.
+  const [showHint, setShowHint] = useState(true);
+  useEffect(() => {
+    const timer = setTimeout(() => setShowHint(false), FULL_SCREEN_HINT_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  const hintVisible = showHint && !expanded && Boolean(onToggleExpand);
+
   return (
     <div
       className="flex h-full min-h-0 flex-col overflow-hidden border-l border-slate-200 bg-white"
@@ -114,15 +126,19 @@ export default function ScanFindingsResultPanel({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          <ScanExportButtons scanId={scanId} compact />
           {onToggleExpand && (
             <button
               type="button"
               onClick={onToggleExpand}
               aria-label={expanded ? "Collapse to split view" : "Expand to full page"}
-              className="agent-focus-ring rounded-md p-1.5 text-[var(--muted)] transition-colors hover:bg-slate-100 hover:text-[var(--ink)]"
+              className={`agent-focus-ring inline-flex items-center gap-1.5 rounded-md p-1.5 transition-colors hover:bg-slate-100 hover:text-[var(--ink)] ${
+                hintVisible
+                  ? "bg-blue-50 text-blue-700 ring-2 ring-blue-400 motion-safe:animate-pulse"
+                  : "text-[var(--muted)]"
+              }`}
             >
               {expanded ? <CollapseIcon /> : <ExpandIcon />}
+              {!expanded && <span className="pr-0.5 text-xs font-medium">Full screen</span>}
             </button>
           )}
           <button

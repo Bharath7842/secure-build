@@ -1,4 +1,4 @@
-"""OAuth handshake for "Connect GitHub" / "Connect GitLab", from either the
+"""OAuth handshake for "Connect GitLab", from either the
 new-project form (no project row yet) or an existing project's edit page.
 
 Two-step flow:
@@ -19,10 +19,11 @@ The stored token is only ever used server-side (see `git_workspace.py`) to
 build an authenticated clone URL — it's never sent back to the client.
 """
 
+import re
 import secrets
 import time
 from datetime import timedelta
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -37,10 +38,10 @@ from app.services import git_token
 
 router = APIRouter(prefix="/git-auth", tags=["git-auth"])
 
-_PROVIDERS = {"github", "gitlab"}
+_PROVIDERS = {"gitlab"}
 
 # Pending connections made before a project exists (new-project form). Short
-# TTL — this only needs to survive the few minutes between "Connect GitHub"
+# TTL — this only needs to survive the few minutes between "Connect GitLab"
 # and clicking "Create project". Process-local by design: a demo/local-scale
 # concern, not meant to survive a backend restart mid-flow.
 _PENDING_TTL_SECONDS = 15 * 60
@@ -117,35 +118,21 @@ def get_authorize_url(
     else:
         state = f"pending:{secrets.token_urlsafe(16)}"
 
-    if provider == "github":
-        if not settings.github_oauth_client_id:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="GitHub OAuth is not configured on the server.",
-            )
-        params = {
-            "client_id": settings.github_oauth_client_id,
-            "redirect_uri": settings.github_oauth_redirect_uri,
-            "scope": "repo",
-            "state": state,
-        }
-        authorize_url = f"https://github.com/login/oauth/authorize?{urlencode(params)}"
-    else:
-        if not settings.gitlab_oauth_client_id:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="GitLab OAuth is not configured on the server.",
-            )
-        params = {
-            "client_id": settings.gitlab_oauth_client_id,
-            "redirect_uri": settings.gitlab_oauth_redirect_uri,
-            "response_type": "code",
-            # read_api: lists projects via GET /api/v4/projects (list_repos below).
-            # read_repository: git clone/pull access for the actual scan checkout.
-            "scope": "read_api read_repository",
-            "state": state,
-        }
-        authorize_url = f"{settings.gitlab_base_url}/oauth/authorize?{urlencode(params)}"
+    if not settings.gitlab_oauth_client_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="GitLab OAuth is not configured on the server.",
+        )
+    params = {
+        "client_id": settings.gitlab_oauth_client_id,
+        "redirect_uri": settings.gitlab_oauth_redirect_uri,
+        "response_type": "code",
+        # read_api: lists projects via GET /api/v4/projects (list_repos below).
+        # read_repository: git clone/pull access for the actual scan checkout.
+        "scope": "read_api read_repository",
+        "state": state,
+    }
+    authorize_url = f"{settings.gitlab_base_url}/oauth/authorize?{urlencode(params)}"
 
     return AuthorizeUrlOut(authorize_url=authorize_url)
 
@@ -164,55 +151,30 @@ class CallbackOut(BaseModel):
 def _exchange_code_for_token(provider: str, code: str) -> dict:
     """Returns the token fields to store: access_token/refresh_token/expires_at."""
     try:
-        if provider == "github":
-            resp = httpx.post(
-                "https://github.com/login/oauth/access_token",
-                data={
-                    "client_id": settings.github_oauth_client_id,
-                    "client_secret": settings.github_oauth_client_secret,
-                    "code": code,
-                    "redirect_uri": settings.github_oauth_redirect_uri,
-                },
-                headers={"Accept": "application/json"},
-                timeout=15,
+        resp = httpx.post(
+            f"{settings.gitlab_base_url}/oauth/token",
+            data={
+                "client_id": settings.gitlab_oauth_client_id,
+                "client_secret": settings.gitlab_oauth_client_secret,
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": settings.gitlab_oauth_redirect_uri,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        token_data = resp.json()
+        if "error" in token_data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=token_data.get("error_description") or token_data["error"],
             )
-            resp.raise_for_status()
-            token_data = resp.json()
-            if "error" in token_data:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=token_data.get("error_description") or token_data["error"],
-                )
-            return {
-                "access_token": token_data["access_token"],
-                "refresh_token": None,
-                "expires_at": None,
-            }
-        else:
-            resp = httpx.post(
-                f"{settings.gitlab_base_url}/oauth/token",
-                data={
-                    "client_id": settings.gitlab_oauth_client_id,
-                    "client_secret": settings.gitlab_oauth_client_secret,
-                    "code": code,
-                    "grant_type": "authorization_code",
-                    "redirect_uri": settings.gitlab_oauth_redirect_uri,
-                },
-                timeout=15,
-            )
-            resp.raise_for_status()
-            token_data = resp.json()
-            if "error" in token_data:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=token_data.get("error_description") or token_data["error"],
-                )
-            expires_in = token_data.get("expires_in")
-            return {
-                "access_token": token_data["access_token"],
-                "refresh_token": token_data.get("refresh_token"),
-                "expires_at": utcnow() + timedelta(seconds=expires_in) if expires_in else None,
-            }
+        expires_in = token_data.get("expires_in")
+        return {
+            "access_token": token_data["access_token"],
+            "refresh_token": token_data.get("refresh_token"),
+            "expires_at": utcnow() + timedelta(seconds=expires_in) if expires_in else None,
+        }
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -284,64 +246,101 @@ def _resolve_token(
     )
 
 
-@router.get("/{provider}/repos", response_model=list[RepoOut])
-def list_repos(
+_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _provider_host(provider: str) -> str:
+    return (urlparse(settings.gitlab_base_url).hostname or "").lower()
+
+
+def repo_path_from_url(provider: str, raw: str) -> str:
+    """`owner/repo` (GitLab: `group/sub/repo`) from a pasted clone or browser URL.
+
+    The host must be this provider's own — the lookup only ever calls the
+    configured API with a path taken from the URL, so a pasted URL can never
+    make the backend send the token to another server. Raises ValueError with
+    a message fit to show the user.
+    """
+    text = raw.strip()
+    if not text:
+        raise ValueError("Paste the full Git URL of the repository.")
+    scp = re.match(r"^[\w.-]+@([\w.-]+):(.+)$", text)  # git@host:group/repo.git
+    if scp:
+        host, path = scp.group(1).lower(), scp.group(2)
+    else:
+        parsed = urlparse(text)
+        if parsed.scheme not in {"http", "https", "ssh"} or not parsed.hostname:
+            raise ValueError("That doesn't look like a Git URL — use the full https:// address.")
+        host, path = parsed.hostname.lower(), parsed.path
+
+    expected = _provider_host(provider)
+    if host not in {expected, f"www.{expected}"}:
+        raise ValueError(
+            f"That URL is on {host}, but this connection is to {expected}. "
+            f"Paste a {expected} repository URL."
+        )
+
+    segments = [seg for seg in path.split("/") if seg]
+    if "-" in segments:  # GitLab page URLs: group/repo/-/tree/main
+        segments = segments[: segments.index("-")]
+    if segments and segments[-1].endswith(".git"):
+        segments[-1] = segments[-1][: -len(".git")]
+    if len(segments) < 2 or not all(
+        _SEGMENT_RE.match(seg) and seg not in {".", ".."} for seg in segments
+    ):
+        raise ValueError("The URL must point at a repository, like https://host/group/repo.git.")
+    return "/".join(segments)
+
+
+@router.get("/{provider}/repo", response_model=RepoOut)
+def lookup_repo(
     provider: str,
+    url: str,
     connection_id: str | None = None,
     project_id: str | None = None,
     db: Session = Depends(get_db),
     _: None = Depends(verify_bearer),
 ):
+    """Find one repository by its Git URL using the connected account's token.
+
+    Replaces listing every repository (one page of 100 at most): the user pastes
+    the URL and we ask the provider for exactly that repository.
+    """
     provider = _require_provider(provider)
+    try:
+        path = repo_path_from_url(provider, url)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     token = _resolve_token(db, provider, connection_id, project_id)
 
     try:
-        if provider == "github":
-            resp = httpx.get(
-                "https://api.github.com/user/repos",
-                params={"per_page": 100, "sort": "updated"},
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/vnd.github+json",
-                },
-                timeout=15,
+        resp = httpx.get(
+            f"{settings.gitlab_base_url}/api/v4/projects/{quote(path, safe='')}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15,
+        )
+        if resp.status_code == 404:
+            # Same answer whether the repository doesn't exist or this account
+            # can't see it, so a lookup never confirms a private repository.
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No repository at {path} is visible to your {provider} account.",
             )
-            resp.raise_for_status()
-            repos = [
-                RepoOut(
-                    name=r["name"],
-                    full_name=r["full_name"],
-                    clone_url=r["clone_url"],
-                    default_branch=r.get("default_branch"),
-                    private=bool(r.get("private")),
-                )
-                for r in resp.json()
-            ]
-        else:
-            resp = httpx.get(
-                f"{settings.gitlab_base_url}/api/v4/projects",
-                params={"membership": "true", "per_page": 100, "order_by": "last_activity_at"},
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=15,
-            )
-            resp.raise_for_status()
-            repos = [
-                RepoOut(
-                    name=r["name"],
-                    full_name=r["path_with_namespace"],
-                    clone_url=r["http_url_to_repo"],
-                    default_branch=r.get("default_branch"),
-                    private=r.get("visibility") != "public",
-                )
-                for r in resp.json()
-            ]
+        resp.raise_for_status()
+        r = resp.json()
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Could not list {provider} repositories: {exc}",
+            detail=f"Could not look up the {provider} repository: {exc}",
         ) from exc
 
-    return repos
+    return RepoOut(
+        name=r["name"],
+        full_name=r["path_with_namespace"],
+        clone_url=r["http_url_to_repo"],
+        default_branch=r.get("default_branch"),
+        private=r.get("visibility") != "public",
+    )
 
 
 @router.delete("/{project_id}/disconnect", status_code=status.HTTP_204_NO_CONTENT)

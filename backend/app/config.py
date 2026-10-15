@@ -164,12 +164,9 @@ class Settings(BaseSettings):
     run_regex_scan: bool = True
     semgrep_rules: str = "p/owasp-top-ten,p/java,p/python,p/javascript"
 
-    # "Connect GitHub" / "Connect GitLab" OAuth apps (per-project git access,
+    # "Connect GitLab" OAuth app (per-project git access,
     # used to clone private repos without a manually pasted PAT). Empty
-    # client id disables that provider's /git-auth/{provider}/authorize route.
-    github_oauth_client_id: str = ""
-    github_oauth_client_secret: str = ""
-    github_oauth_redirect_uri: str = "http://localhost:3000/git-auth/github/callback"
+    # client id disables the /git-auth/{provider}/authorize route.
     gitlab_oauth_client_id: str = ""
     gitlab_oauth_client_secret: str = ""
     gitlab_oauth_redirect_uri: str = "http://localhost:3000/git-auth/gitlab/callback"

@@ -1,20 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import PageContainer from "@/components/PageContainer";
 import { ApiError, api } from "@/lib/api";
 
 const PROVIDER_LABELS: Record<string, string> = {
-  github: "GitHub",
   gitlab: "GitLab",
 };
 
 export default function GitAuthCallbackPage() {
-  const params = useParams<{ provider: string }>();
-  const provider = params.provider === "gitlab" ? "gitlab" : "github";
+  const provider = "gitlab";
   const providerLabel = PROVIDER_LABELS[provider] ?? provider;
   const searchParams = useSearchParams();
   const router = useRouter();
