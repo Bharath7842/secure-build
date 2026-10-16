@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-type Credentials = { email: string; password: string };
+/** `remember` = the "Remember me" checkbox: whether to issue a persistent (vs. session) cookie. */
+type Credentials = { email: string; password: string; remember?: boolean };
 
 type AuthResult =
   | { ok: true }
@@ -33,12 +34,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
-  const { email, password } = (body ?? {}) as Partial<Credentials>;
+  const { email, password, remember } = (body ?? {}) as Partial<Credentials>;
   if (typeof email !== "string" || typeof password !== "string" || !email.trim() || !password) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
-  const result = await authenticate({ email: email.trim(), password });
+  const result = await authenticate({ email: email.trim(), password, remember: remember === true });
   if (result.ok) {
     return NextResponse.json({ ok: true });
   }

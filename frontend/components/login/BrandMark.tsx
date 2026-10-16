@@ -1,24 +1,28 @@
-/** Secure Build shield mark + wordmark. The wordmark matches the sidebar (Georgia display face). */
-export default function BrandMark({ className = "" }: { className?: string }) {
+/** Securebuild shield mark + wordmark. */
+export default function BrandMark({
+  tone = "dark-bg",
+  className = "",
+}: {
+  /** "dark-bg" for the navy panel, "light-bg" for the white card. */
+  tone?: "dark-bg" | "light-bg";
+  className?: string;
+}) {
   return (
-    <div className={`flex items-center gap-2.5 text-white ${className}`}>
+    <div className={`flex items-center gap-3 ${tone === "dark-bg" ? "text-white" : "text-[var(--ink)]"} ${className}`}>
       <svg
         xmlns="http://www.w3.org/2000/svg"
-        width="28"
-        height="28"
-        viewBox="0 0 24 24"
+        width="38"
+        height="40"
+        viewBox="0 0 38 40"
         fill="none"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-        strokeLinejoin="round"
         aria-hidden
-        className="shrink-0 text-blue-400"
+        className="shrink-0"
       >
-        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
-        <path d="m8.5 12 2.5 2.5 4.5-5" className="text-white" />
+        <path d="m19 2 15 6v12c0 8-6 14-15 18C10 34 4 28 4 20V8z" fill="#3778f6" />
+        <path d="m19 2 15 6v12c0 8-6 14-15 18V2Z" fill="#2563eb" />
+        <path d="m13 14-4 5 4 5m12-10 4 5-4 5m-4-11-4 13" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
-      <span className="font-display text-2xl tracking-wide">Secure Build</span>
+      <span className="text-[1.375rem] font-semibold tracking-[-0.04em]">Securebuild<span className="text-[#76a4ff]">.</span></span>
     </div>
   );
 }
