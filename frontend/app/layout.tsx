@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import Sidebar from "@/components/Sidebar";
+import AppShell from "@/components/AppShell";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -15,10 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full overflow-hidden">
       <body className="flex h-screen min-w-0 overflow-hidden antialiased">
-        <Sidebar />
-        <main className="h-screen min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
-          {children}
-        </main>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );
