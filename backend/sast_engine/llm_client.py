@@ -24,7 +24,7 @@ BEDROCK_MODEL_ID = os.environ.get(
 )
 DEFAULT_LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "bedrock")
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "granite-code:3b")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "granite-code:3b-instruct")
 OLLAMA_REQUEST_TIMEOUT = int(os.environ.get("OLLAMA_REQUEST_TIMEOUT", "600"))
 OLLAMA_NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "8192"))
 

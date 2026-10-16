@@ -36,7 +36,7 @@ Usage:
     python sast_scan_agent.py --path /path/to/project
     python sast_scan_agent.py --path /path/to/project --verbose-files --db sast_history.db --out ./sast_output
     python sast_scan_agent.py --path /path/to/project --no-llm
-    python sast_scan_agent.py --path /path/to/project --llm-provider ollama --llm-model granite-code:3b
+    python sast_scan_agent.py --path /path/to/project --llm-provider ollama --llm-model granite-code:3b-instruct
 """
 
 from __future__ import annotations

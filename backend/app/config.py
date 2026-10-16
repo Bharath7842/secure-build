@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     aws_region: str = "us-east-1"
     bedrock_model_id: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
     # Local Ollama server used when a project's llm_provider == "ollama"
-    # (e.g. granite-code:3b). Not required when every project uses Bedrock.
+    # (e.g. granite-code:3b-instruct). Not required when every project uses Bedrock.
     ollama_base_url: str = "http://localhost:11434"
     ollama_request_timeout: int = 600  # seconds per Ollama /api/chat call
     # Default OpenAI-compatible endpoint (vLLM, LM Studio, llama.cpp server,

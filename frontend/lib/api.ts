@@ -21,6 +21,7 @@ import type {
   FeedbackList,
   FeedbackRow,
   GitRepo,
+  ModelCatalog,
   Project,
   ProjectCreateInput,
   ProjectDeleteResult,
@@ -243,6 +244,14 @@ export const api = {
   config: {
     scanLimitations: (): Promise<ScanLimitation[]> =>
       request("/api/config/scan-limitations"),
+  },
+  /** App-wide settings. `models` controls which models the model selects offer (UI only). */
+  settings: {
+    models: {
+      get: (): Promise<ModelCatalog> => request("/api/settings/models"),
+      update: (hidden: string[]): Promise<ModelCatalog> =>
+        request("/api/settings/models", { method: "PATCH", body: JSON.stringify({ hidden }) }),
+    },
   },
   /** DAST settings, rule sets and model routing. Credentials are never accepted or returned. */
   dast: {

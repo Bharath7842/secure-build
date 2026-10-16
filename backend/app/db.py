@@ -159,7 +159,7 @@ def _run_light_migrations(engine) -> None:
                 conn.execute(
                     text(
                         "ALTER TABLE projects ADD COLUMN fallback_llm_model "
-                        "VARCHAR(200) DEFAULT 'granite-code:3b'"
+                        "VARCHAR(200) DEFAULT 'granite-code:3b-instruct'"
                     )
                 )
         if "llm_base_url" not in existing_cols:

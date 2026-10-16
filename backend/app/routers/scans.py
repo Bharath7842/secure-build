@@ -36,6 +36,7 @@ from app.services.dast_findings_query import build_dast_findings
 from app.services.dast_scan_setup import DastSetupError, prepare_dast_scan
 from app.services.feedback import apply_effective_verdicts, effective_scan_findings
 from app.services.llm_policy import DATA_POLICY_ALLOW_EXTERNAL, data_policy_violation
+from app.services.ollama_check import DEFAULT_FALLBACK_OLLAMA_MODEL, ollama_model_error
 from app.services.scan_export import (
     build_excel_report,
     build_pdf_report,
@@ -284,6 +285,8 @@ def trigger_scan(
                 or getattr(project, "fallback_llm_model", None)
                 or None
             )
+            if fallback_llm_provider == "ollama" and not fallback_llm_model:
+                fallback_llm_model = DEFAULT_FALLBACK_OLLAMA_MODEL
         llm_base_url = getattr(project, "llm_base_url", None) or None
         llm_data_policy = getattr(project, "llm_data_policy", None) or DATA_POLICY_ALLOW_EXTERNAL
         # Refuse up front rather than fail mid-scan: under local_only, neither
@@ -298,6 +301,16 @@ def trigger_scan(
             )
             if violation:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=violation)
+        # The fallback only matters once the cutoff is hit, so a missing model
+        # would otherwise surface mid-scan. Skipped for the offline mock engine.
+        if (
+            fallback_llm_provider == "ollama"
+            and not settings.use_mock_engine
+            and settings.run_live_sast
+        ):
+            missing = ollama_model_error(settings.ollama_base_url, fallback_llm_model)
+            if missing:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=missing)
     elif is_dast:
         # DAST does not use the SAST LLM path (`use_llm` stays false) but still
         # calls models through the gateway. Snapshot the routing so the scan

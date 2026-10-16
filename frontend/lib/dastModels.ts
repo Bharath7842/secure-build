@@ -14,6 +14,7 @@ export const DAST_MODEL_OPTIONS: Record<DastModelProvider, { id: string; label: 
   ollama: [
     { id: "gpt-oss:20b", label: "gpt-oss:20b" },
     { id: "gpt-oss:latest", label: "gpt-oss:latest" },
+    { id: "granite-code:3b-instruct", label: "granite-code:3b-instruct" },
     { id: "granite-code:3b", label: "granite-code:3b" },
     { id: "granite-code:8b", label: "granite-code:8b" },
     { id: "granite4.2:3b", label: "granite4.2:3b" },
@@ -59,11 +60,13 @@ export function dastRoutingLabel(routing: unknown): string | null {
   return labels.length ? labels.join(" · ") : null;
 }
 
-/** Model to fill in when the provider dropdown changes. Bedrock always lands on Haiku. */
+/** Model to fill in when the provider dropdown changes. Bedrock always lands on Haiku. `visible` is
+ *  the provider's options after Settings hides some; the last-resort pick comes from it. */
 export function defaultDastModel(
   provider: DastModelProvider,
   settings?: DastSettings | null,
   providers?: DastProviders | null,
+  visible?: { id: string }[],
 ): string {
   if (provider === "bedrock") {
     return providers?.default_models?.bedrock || settings?.model_routing.find((r) => r.provider === "bedrock")?.model || BEDROCK_HAIKU_MODEL;
@@ -72,5 +75,5 @@ export function defaultDastModel(
   if (fromApi) return fromApi;
   const fromRouting = settings?.model_routing.find((r) => r.provider === provider)?.model;
   if (fromRouting) return fromRouting;
-  return DAST_MODEL_OPTIONS[provider][0]?.id ?? "";
+  return (visible ?? DAST_MODEL_OPTIONS[provider])[0]?.id ?? "";
 }

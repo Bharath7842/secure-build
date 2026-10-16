@@ -1,22 +1,20 @@
 import type { SastLlmProvider } from "@/lib/types";
 
-export type LlmPresetId =
-  | "bedrock-haiku"
-  | "bedrock-sonnet"
-  | "openai-compat"
-  | "ollama-granite-3b"
-  | "ollama-granite4-2-3b"
-  | "ollama-granite-3b-instruct"
-  | "ollama-granite-8b"
-  | "ollama-gpt-oss"
-  | "ollama-gpt-oss-20b"
-  | "ollama-gpt-oss-safeguard"
-  | "ollama-codegemma";
+/** Catalog id; matches the backend `app/defaults/llm_presets.py` ids. */
+export type LlmPresetId = string;
 
-export const LLM_PRESETS: Record<
-  LlmPresetId,
-  { label: string; provider: SastLlmProvider; model: string }
-> = {
+export interface LlmPresetInfo {
+  label: string;
+  provider: SastLlmProvider;
+  model: string;
+}
+
+/**
+ * Bundled copy of the backend preset catalog (`app/defaults/llm_presets.py`). The backend is the
+ * source of truth and `useModelCatalog` loads it (with Settings visibility); this copy is the
+ * fallback when that request fails and what stored project/scan settings are matched against.
+ */
+export const LLM_PRESETS: Record<LlmPresetId, LlmPresetInfo> = {
   "bedrock-haiku": {
     label: "AWS Bedrock — Claude Haiku 4.5",
     provider: "bedrock",
@@ -28,9 +26,9 @@ export const LLM_PRESETS: Record<
     model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
   },
   // Any OpenAI-compatible /chat/completions server; the model id and base URL
-  // are entered on the project form (mirrors backend llm_presets.py).
-  "openai-compat": {
-    label: "OpenAI-compatible endpoint (vLLM, LM Studio, llama.cpp, OpenAI, …)",
+  // are entered on the project form.
+  "openai-compat-qwen-coder-32b": {
+    label: "OpenAI-compatible — Qwen2.5-Coder-32B-Instruct (vLLM / LM Studio)",
     provider: "openai_compat",
     model: "Qwen/Qwen2.5-Coder-32B-Instruct",
   },
@@ -69,6 +67,16 @@ export const LLM_PRESETS: Record<
     provider: "ollama",
     model: "gpt-oss-safeguard:latest",
   },
+  "ollama-starcoder2-3b": {
+    label: "Ollama — starcoder2:3b (local)",
+    provider: "ollama",
+    model: "starcoder2:3b",
+  },
+  "ollama-qwen2-72b": {
+    label: "Ollama — Qwen2 72B Instruct (local)",
+    provider: "ollama",
+    model: "hf.co/bartowski/Qwen2-72B-Instruct-GGUF:Q4_K_M",
+  },
   "ollama-codegemma": {
     label: "Ollama — CodeGemma:latest (local)",
     provider: "ollama",
@@ -76,38 +84,22 @@ export const LLM_PRESETS: Record<
   },
 };
 
-/** Ollama model id → preset id (for round-trip from stored project/scan settings). */
-const OLLAMA_MODEL_TO_PRESET: Record<string, LlmPresetId> = Object.fromEntries(
-  (Object.entries(LLM_PRESETS) as [LlmPresetId, (typeof LLM_PRESETS)[LlmPresetId]][])
-    .filter(([, p]) => p.provider === "ollama")
-    .map(([id, p]) => [p.model, id])
-) as Record<string, LlmPresetId>;
-
+/**
+ * Preset id for stored project/scan settings. Matches against `presets` (default: the bundled
+ * catalog, hidden models included) so a project on a hidden model still round-trips.
+ */
 export function llmPresetForProviderModel(
   provider: string | undefined,
-  model: string | undefined
+  model: string | undefined,
+  presets: Record<LlmPresetId, LlmPresetInfo> = LLM_PRESETS,
 ): LlmPresetId {
+  const entries = Object.entries(presets);
   if (provider === "ollama" && model) {
-    const preset = OLLAMA_MODEL_TO_PRESET[model];
-    if (preset) return preset;
-    return "ollama-granite-3b";
+    const match = entries.find(([, p]) => p.provider === "ollama" && p.model === model);
+    return match ? match[0] : "ollama-granite-3b-instruct";
   }
-  if (provider === "openai_compat") return "openai-compat";
+  if (provider === "openai_compat") {
+    return entries.find(([, p]) => p.provider === "openai_compat")?.[0] ?? "openai-compat-qwen-coder-32b";
+  }
   return "bedrock-haiku";
-}
-
-export const LLM_PRESET_ENTRIES = Object.entries(LLM_PRESETS) as [
-  LlmPresetId,
-  (typeof LLM_PRESETS)[LlmPresetId],
-][];
-
-/** Ollama-only presets for the post–Bedrock-cutoff fallback selector. */
-export const OLLAMA_PRESET_ENTRIES = LLM_PRESET_ENTRIES.filter(
-  ([, preset]) => preset.provider === "ollama"
-);
-
-export const DEFAULT_FALLBACK_PRESET_ID: LlmPresetId = "ollama-granite-3b";
-
-export function isBedrockPrimaryPreset(presetId: LlmPresetId): boolean {
-  return LLM_PRESETS[presetId].provider === "bedrock";
 }

@@ -412,6 +412,24 @@ export interface ScanFindings {
   findings: Finding[];
 }
 
+/** One selectable model in `GET /settings/models`; `key` is `sast:<preset id>` or `dast:<provider>:<model>`. */
+export interface ModelCatalogEntry {
+  key: string;
+  id: string;
+  label: string;
+  provider: string;
+  model: string;
+  visible: boolean;
+  /** The always-available local model: can't be hidden. */
+  pinned: boolean;
+}
+
+export interface ModelCatalog {
+  sast: ModelCatalogEntry[];
+  dast: Record<string, ModelCatalogEntry[]>;
+  hidden: string[];
+}
+
 export interface ScanLimitation {
   id: string;
   enabled_by_default: boolean;

@@ -3,8 +3,9 @@
 import { useState } from "react";
 
 import { ApiError, api } from "@/lib/api";
-import { DAST_MODEL_OPTIONS, defaultDastModel } from "@/lib/dastModels";
+import { defaultDastModel } from "@/lib/dastModels";
 import type { DastModelProvider, DastModelRoute, DastModelRouteTestResult, DastModelTask, DastProviders } from "@/lib/types";
+import { useModelCatalog } from "@/lib/useModelCatalog";
 
 const TASK_LABEL: Record<DastModelTask, string> = {
   fingerprint: "Fingerprinting the target",
@@ -27,6 +28,7 @@ interface Props {
 /** Provider and model per task (DAST-15-010). Provider keys are read-only here: they live in the
  *  environment, and this page only shows whether each one is set. */
 export default function DastSettingsModels({ routes, providers, onSaved }: Props) {
+  const { dastOptions, dastProviders } = useModelCatalog();
   const [draft, setDraft] = useState<DastModelRoute[]>(routes);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
@@ -40,7 +42,7 @@ export default function DastSettingsModels({ routes, providers, onSaved }: Props
         if (r.task !== task) return r;
         const next = { ...r, ...patch };
         if (patch.provider && patch.provider !== r.provider && patch.model === undefined) {
-          next.model = defaultDastModel(patch.provider, null, providers);
+          next.model = defaultDastModel(patch.provider, null, providers, dastOptions(patch.provider));
         }
         return next;
       }),
@@ -113,7 +115,7 @@ export default function DastSettingsModels({ routes, providers, onSaved }: Props
                   </td>
                   <td className="py-2 pr-3">
                     <select aria-label={`Provider for ${TASK_LABEL[route.task]}`} className={field} value={route.provider} onChange={(e) => edit(route.task, { provider: e.target.value as DastModelProvider })}>
-                      {PROVIDERS.map((p) => <option key={p} value={p}>{p}</option>)}
+                      {dastProviders(PROVIDERS, route.provider).map((p) => <option key={p} value={p}>{p}</option>)}
                     </select>
                     {missing && <p className="mt-1 text-xs text-amber-800">No key set for this provider.</p>}
                   </td>
@@ -124,12 +126,12 @@ export default function DastSettingsModels({ routes, providers, onSaved }: Props
                       value={route.model}
                       onChange={(e) => edit(route.task, { model: e.target.value })}
                     >
-                      {(DAST_MODEL_OPTIONS[route.provider] ?? []).map((o) => (
+                      {dastOptions(route.provider, route.model).map((o) => (
                         <option key={o.id} value={o.id}>
                           {o.label}
                         </option>
                       ))}
-                      {route.model && !(DAST_MODEL_OPTIONS[route.provider] ?? []).some((o) => o.id === route.model) && (
+                      {route.model && !dastOptions(route.provider, route.model).some((o) => o.id === route.model) && (
                         <option value={route.model}>{route.model}</option>
                       )}
                     </select>

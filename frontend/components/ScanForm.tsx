@@ -4,13 +4,9 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { inputClass, selectClass } from "@/lib/formStyles";
-import {
-  LLM_PRESETS,
-  LLM_PRESET_ENTRIES,
-  llmPresetForProviderModel,
-  type LlmPresetId,
-} from "@/lib/llmPresets";
+import { llmPresetForProviderModel, type LlmPresetId } from "@/lib/llmPresets";
 import type { Project, ScanCreateInput } from "@/lib/types";
+import { useModelCatalog } from "@/lib/useModelCatalog";
 
 interface ScanFormProps {
   projectId?: string;
@@ -37,6 +33,7 @@ export default function ScanForm({ projectId, scanType = "sast", onSubmit }: Sca
   // LLM scanning is always on for SAST scans now — no UI toggle. SCA/SBOM
   // never use it regardless (see isLlmFree below).
   const useLlm = true;
+  const { presets, sastOptions } = useModelCatalog();
   const [llmPreset, setLlmPreset] = useState<LlmPresetId>("bedrock-haiku");
 
   const [submitting, setSubmitting] = useState(false);
@@ -121,7 +118,7 @@ export default function ScanForm({ projectId, scanType = "sast", onSubmit }: Sca
     };
 
     if (!isLlmFree && useLlm) {
-      const preset = LLM_PRESETS[llmPreset];
+      const preset = presets[llmPreset];
       payload.llm_provider = preset.provider;
       // An OpenAI-compatible server serves whatever model id the project
       // configured; the preset's model is only a placeholder.
@@ -249,7 +246,7 @@ export default function ScanForm({ projectId, scanType = "sast", onSubmit }: Sca
               onChange={(event) => setLlmPreset(event.target.value as LlmPresetId)}
               className={selectClass}
             >
-              {LLM_PRESET_ENTRIES.map(([id, preset]) => (
+              {sastOptions(llmPreset).map(([id, preset]) => (
                 <option key={id} value={id}>
                   {preset.label}
                 </option>

@@ -76,6 +76,13 @@ LLM_PRESETS: tuple[LlmPreset, ...] = (
         ollama_size="large",
     ),
     LlmPreset(
+        id="ollama-gpt-oss-20b",
+        label="Ollama — gpt-oss:20b (local)",
+        provider="ollama",
+        model="gpt-oss:20b",
+        ollama_size="large",
+    ),
+    LlmPreset(
         id="ollama-gpt-oss-safeguard",
         label="Ollama — gpt-oss-safeguard:latest (local)",
         provider="ollama",

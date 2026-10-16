@@ -168,6 +168,7 @@ const SAST_LINKS: NavItem[] = [
     isActive: (p) => p === "/projects" || (p.startsWith("/projects/") && !p.startsWith("/projects/new")),
   },
   { href: "/projects/new", label: "New Project", short: "NP", exact: true, icon: "plus" },
+  { href: "/settings", label: "Settings", short: "Se", exact: true, icon: "settings" },
 ];
 
 const SidebarContext = createContext(false);

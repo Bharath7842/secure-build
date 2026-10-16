@@ -57,8 +57,8 @@ class Project(Base):
     # After spend hits the soft cutoff, continue on this provider/model;
     # "none" stops LLM work and leaves the rest unverified. Ignored when
     # llm_provider is ollama.
-    fallback_llm_provider: Mapped[str] = mapped_column(String(20), default="none")
-    fallback_llm_model: Mapped[str] = mapped_column(String(200), default="")
+    fallback_llm_provider: Mapped[str] = mapped_column(String(20), default="ollama")
+    fallback_llm_model: Mapped[str] = mapped_column(String(200), default="granite-code:3b-instruct")
     owasp_mode: Mapped[str] = mapped_column(String(20), default="top10")  # top10|top15|custom
     owasp_urls: Mapped[list] = mapped_column(JSON, default=list)
     nvd_mode: Mapped[str] = mapped_column(String(20), default="top10")  # top10|top15|custom
@@ -209,6 +209,16 @@ class DastGlobalConfig(Base):
     rather than a column per setting."""
 
     __tablename__ = "dast_global_config"
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class AppSetting(Base):
+    """App-wide setting, one JSON document per key (e.g. key="hidden_models" holds the model
+    keys hidden from the model selects). Small and rarely written, so a key/value table."""
+
+    __tablename__ = "app_settings"
     key: Mapped[str] = mapped_column(String(80), primary_key=True)
     value: Mapped[dict] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

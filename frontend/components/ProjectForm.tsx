@@ -5,12 +5,8 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { inputClass, selectClass } from "@/lib/formStyles";
-import {
-  LLM_PRESETS,
-  LLM_PRESET_ENTRIES,
-  llmPresetForProviderModel,
-  type LlmPresetId,
-} from "@/lib/llmPresets";
+import { LLM_PRESETS, llmPresetForProviderModel, type LlmPresetId } from "@/lib/llmPresets";
+import { useModelCatalog } from "@/lib/useModelCatalog";
 import type { GitRepo, LlmDataPolicy, Project, ProjectCreateInput } from "@/lib/types";
 
 interface ProjectFormProps {
@@ -103,18 +99,19 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
   const enableSecrets = true;
   const [enableSca, setEnableSca] = useState(initial?.enable_sca ?? true);
   const [enableSbom, setEnableSbom] = useState(initial?.enable_sbom ?? true);
+  const { presets, sastOptions } = useModelCatalog();
   const [llmChoice, setLlmChoice] = useState<LlmPresetId>(
     llmPresetForProviderModel(initial?.llm_provider, initial?.llm_model),
   );
   // OpenAI-compatible servers serve whatever model id they were started
   // with, so the model is free text for that provider.
   const [llmModel, setLlmModel] = useState(
-    initial?.llm_provider === "openai_compat" ? initial.llm_model : LLM_PRESETS["openai-compat"].model,
+    initial?.llm_provider === "openai_compat" ? initial.llm_model : LLM_PRESETS["openai-compat-qwen-coder-32b"].model,
   );
   const [llmBaseUrl, setLlmBaseUrl] = useState(initial?.llm_base_url ?? "");
   const [llmApiKey, setLlmApiKey] = useState("");
   const [dataPolicy, setDataPolicy] = useState<LlmDataPolicy>(initial?.llm_data_policy ?? "allow_external");
-  const isOpenAiCompat = LLM_PRESETS[llmChoice].provider === "openai_compat";
+  const isOpenAiCompat = presets[llmChoice]?.provider === "openai_compat";
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -156,7 +153,7 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
           if (draft.defaultGitUrl !== undefined) setDefaultGitUrl(draft.defaultGitUrl);
           if (draft.defaultBranch !== undefined) setDefaultBranch(draft.defaultBranch);
           if (draft.monorepoPath !== undefined) setMonorepoPath(draft.monorepoPath);
-          if (draft.llmChoice !== undefined) setLlmChoice(draft.llmChoice);
+          if (draft.llmChoice !== undefined && draft.llmChoice in LLM_PRESETS) setLlmChoice(draft.llmChoice);
           if (draft.llmModel !== undefined) setLlmModel(draft.llmModel);
           if (draft.llmBaseUrl !== undefined) setLlmBaseUrl(draft.llmBaseUrl);
           if (draft.dataPolicy !== undefined) setDataPolicy(draft.dataPolicy);
@@ -281,8 +278,8 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
       enable_sbom: enableSbom,
       enable_secrets: enableSecrets,
       scan_mode: "full",
-      llm_provider: LLM_PRESETS[llmChoice].provider,
-      llm_model: isOpenAiCompat ? llmModel.trim() || LLM_PRESETS[llmChoice].model : LLM_PRESETS[llmChoice].model,
+      llm_provider: presets[llmChoice].provider,
+      llm_model: isOpenAiCompat ? llmModel.trim() || presets[llmChoice].model : presets[llmChoice].model,
       llm_data_policy: dataPolicy,
     };
     if (isOpenAiCompat) {
@@ -497,7 +494,7 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
             onChange={(event) => setLlmChoice(event.target.value as LlmPresetId)}
             className={selectClass}
           >
-            {LLM_PRESET_ENTRIES.map(([id, preset]) => (
+            {sastOptions(llmChoice).map(([id, preset]) => (
               <option key={id} value={id}>
                 {preset.label}
               </option>

@@ -49,8 +49,8 @@ class ProjectBase(BaseModel):
     llm_data_policy: str = DATA_POLICY_ALLOW_EXTERNAL  # allow_external|local_only
     # After the soft $ cutoff, continue on this provider/model; "none" stops
     # LLM work instead (ignored if primary is ollama).
-    fallback_llm_provider: str = "none"
-    fallback_llm_model: str = ""
+    fallback_llm_provider: str = "ollama"
+    fallback_llm_model: str = "granite-code:3b-instruct"
     owasp_mode: str = "top10"  # top10|top15|custom (synced from reference_sources)
     owasp_urls: list[str] = Field(default_factory=list)
     nvd_mode: str = "top10"  # top10|top15|custom (synced from reference_sources)

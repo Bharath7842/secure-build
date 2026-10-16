@@ -5,6 +5,7 @@ import { useState } from "react";
 import { DAST_MODEL_OPTIONS, defaultDastModel } from "@/lib/dastModels";
 import { selectClass } from "@/lib/formStyles";
 import type { DastModelChoice, DastModelProvider, DastModelTask, DastProviders, DastSettings } from "@/lib/types";
+import { useModelCatalog } from "@/lib/useModelCatalog";
 
 const TASKS: { task: DastModelTask; label: string }[] = [
   { task: "construct", label: "Test construction" },
@@ -43,7 +44,8 @@ function ModelSelect({
   model: string;
   onChange: (model: string) => void;
 }) {
-  const options = DAST_MODEL_OPTIONS[provider] ?? [];
+  const { dastOptions } = useModelCatalog();
+  const options = dastOptions(provider, model);
   const known = options.some((o) => o.id === model);
   const selectValue = known ? model : model ? "__custom" : options[0]?.id ?? "";
   return (
@@ -68,6 +70,7 @@ function ModelSelect({
 /** Provider and model for this scan (DAST-13-040), defaulting to the configured routing. Switching
  *  the provider to Bedrock fills Claude Haiku. A provider without credentials is flagged before submit. */
 export default function DastModelPicker({ settings, providers, value, onChange }: DastModelPickerProps) {
+  const { dastOptions, dastProviders } = useModelCatalog();
   const defaults = new Map((settings?.model_routing ?? []).map((r) => [r.task, r]));
   const configured = new Map((providers?.providers ?? []).map((p) => [p.provider, p.configured]));
   const changed = Object.keys(value).length;
@@ -90,7 +93,7 @@ export default function DastModelPicker({ settings, providers, value, onChange }
   }
 
   function setProvider(task: DastModelTask, provider: DastModelProvider) {
-    setRoute(task, provider, defaultDastModel(provider, settings, providers));
+    setRoute(task, provider, defaultDastModel(provider, settings, providers, dastOptions(provider)));
   }
 
   function setAll(provider: DastModelProvider | "") {
@@ -98,7 +101,7 @@ export default function DastModelPicker({ settings, providers, value, onChange }
       onChange({});
       return;
     }
-    const model = defaultDastModel(provider, settings, providers);
+    const model = defaultDastModel(provider, settings, providers, dastOptions(provider));
     const next: Partial<Record<DastModelTask, DastModelChoice>> = {};
     for (const { task } of TASKS) {
       const base = defaults.get(task);
@@ -150,7 +153,7 @@ export default function DastModelPicker({ settings, providers, value, onChange }
             >
               <option value="">Configured routing</option>
               {topValue === "__mixed" && <option value="__mixed">Mixed (set per task below)</option>}
-              {PROVIDERS.map((p) => (
+              {dastProviders(PROVIDERS, scanProvider).map((p) => (
                 <option key={p} value={p}>
                   {PROVIDER_LABELS[p]}
                   {p === "bedrock" ? " — Claude Haiku 4.5" : ""}
@@ -186,7 +189,7 @@ export default function DastModelPicker({ settings, providers, value, onChange }
                       onChange={(e) => setProvider(task, e.target.value as DastModelProvider)}
                       className={selectClass.replace("mt-1.5", "mt-0")}
                     >
-                      {PROVIDERS.map((p) => (
+                      {dastProviders(PROVIDERS, current.provider).map((p) => (
                         <option key={p} value={p}>
                           {PROVIDER_LABELS[p]}
                         </option>

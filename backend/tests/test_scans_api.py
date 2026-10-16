@@ -959,4 +959,21 @@ def test_local_only_policy_allows_local_openai_compat_and_snapshots_it(client, p
         assert scan.llm_provider == "openai_compat"
         assert scan.llm_base_url == "http://127.0.0.1:1234/v1"
         assert scan.llm_data_policy == "local_only"
-        assert scan.fallback_llm_provider == "none"
+        assert scan.fallback_llm_provider == "ollama"
+
+
+def test_trigger_refuses_when_fallback_model_missing(client, project_id, monkeypatch):
+
+    monkeypatch.setattr(settings, "use_mock_engine", False)
+    monkeypatch.setattr(settings, "run_live_sast", True)
+    import io, json
+    from app.services import ollama_check
+    body = json.dumps({"models": [{"name": "phi4-mini:3.8b"}]}).encode()
+    monkeypatch.setattr(ollama_check.urllib.request, "urlopen", lambda *a, **k: io.BytesIO(body))
+    resp = client.post(
+        "/scans",
+        headers=HDR,
+        json={"project_id": project_id, "commit_sha": "ol-1", "force": True},
+    )
+    assert resp.status_code == 400
+    assert "granite-code:3b-instruct" in resp.json()["detail"]

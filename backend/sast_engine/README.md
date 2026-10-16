@@ -299,7 +299,7 @@ dict stored on `Scan.metadata_json`.
 ```
 python sast_scan_agent.py --path /path/to/project
 python sast_scan_agent.py --path /path/to/project --no-llm
-python sast_scan_agent.py --path /path/to/project --llm-provider ollama --llm-model granite-code:3b
+python sast_scan_agent.py --path /path/to/project --llm-provider ollama --llm-model granite-code:3b-instruct
 python sast_scan_agent.py --path /path/to/project --no-joern
 python sast_scan_agent.py --path /path/to/project --sequential   # one stage at a time
 python sast_scan_agent.py --path /path/to/project --llm-provider openai_compat \
