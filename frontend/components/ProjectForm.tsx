@@ -566,7 +566,6 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
 
       <FormSection
         title="Repository"
-        description="The repository comes from the Git provider section above. Leave it unconfirmed for a project used only for DAST scans — those target a URL directly, not a repository."
       >
         <Field label="Default branch" htmlFor="branch">
           <input
