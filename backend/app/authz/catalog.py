@@ -260,3 +260,21 @@ def catalog_entries(keys: Iterable[str] | None = None) -> list[dict]:
         for p in PERMISSIONS
         if wanted is None or p.key in wanted
     ]
+
+
+# Where a user lands after signing in: the first page they can see, in this order.
+LANDING_PAGES: tuple[tuple[str, str], ...] = (
+    ("page.projects", "/projects"),
+    ("page.history", "/scans"),
+    ("page.scan_sast", "/scans/new"),
+    ("page.scan_sca", "/sca"),
+    ("page.scan_sbom", "/sbom"),
+    ("page.dast", "/dast"),
+    ("page.feedback", "/feedback"),
+    ("page.admin_users", "/admin/users"),
+)
+
+
+def landing_path(permissions: Iterable[str]) -> str:
+    held = set(permissions)
+    return next((path for key, path in LANDING_PAGES if key in held), "/account")
