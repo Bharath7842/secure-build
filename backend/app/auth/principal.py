@@ -99,16 +99,21 @@ def get_principal(
     elif scheme.lower() == "session" and credential:
         row = sessions.resolve_session(db, credential)
         if row is not None:
-            user = row.user
-            return Principal(
-                kind="user",
-                permissions=effective_permissions(user.role, user.overrides),
-                user_id=user.id,
-                email=user.email,
-                role=user.role,
-                session_id=row.id,
-            )
+            return principal_for_user(row.user, session_id=row.id)
     raise unauthenticated()
+
+
+def principal_for_user(user, session_id: str | None = None) -> Principal:
+    """The principal `user` acts as. Also used to run work on a user's behalf
+    outside a request (scheduled scans)."""
+    return Principal(
+        kind="user",
+        permissions=effective_permissions(user.role, user.overrides) if user.is_active else frozenset(),
+        user_id=user.id,
+        email=user.email,
+        role=user.role,
+        session_id=session_id,
+    )
 
 
 def require(*keys: str):

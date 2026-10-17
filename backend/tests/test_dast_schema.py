@@ -22,7 +22,9 @@ from app.models import (
 pytestmark = pytest.mark.integration
 
 LEGACY_SQL = Path(__file__).parent / "fixtures" / "pre_dast_schema.sql"
-HDR = {"Authorization": f"Bearer {settings.sast_api_token}"}
+from tests.auth_helpers import ADMIN_HEADERS  # noqa: E402
+
+HDR = ADMIN_HEADERS
 
 NEW_FINDING_COLUMNS = {
     "target", "param", "location", "confidence_label", "remediation_ref",

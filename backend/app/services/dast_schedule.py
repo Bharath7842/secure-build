@@ -33,7 +33,15 @@ def strip_secrets(value):
     return value
 
 
-def save_schedule(db: Session, *, project_id: str, name: str, interval_minutes: int, request: dict) -> DastSchedule:
+def save_schedule(
+    db: Session,
+    *,
+    project_id: str,
+    name: str,
+    interval_minutes: int,
+    request: dict,
+    created_by_user_id: str | None = None,
+) -> DastSchedule:
     from app.schemas import ScanCreate
 
     cleaned = strip_secrets(request)
@@ -44,6 +52,7 @@ def save_schedule(db: Session, *, project_id: str, name: str, interval_minutes: 
         interval_minutes=max(15, int(interval_minutes)),
         request_json=cleaned,
         next_run_at=datetime.now(timezone.utc),
+        created_by_user_id=created_by_user_id,
     )
     db.add(row)
     db.commit()
@@ -110,9 +119,17 @@ def save_profiles(db: Session, profiles: list[dict]) -> list[dict]:
 
 
 def tick(db: Session) -> int:
-    """Start every schedule that is due. Returns how many scans were started."""
+    """Start every schedule that is due, each as the user who created it.
+    Returns how many scans were started. A schedule whose creator is gone,
+    disabled or no longer allowed to start DAST scans is skipped (and
+    audited) rather than run with someone else's rights."""
+    from starlette.requests import Request
+
+    from app.auth.principal import principal_for_user
+    from app.models import User
     from app.routers.scans import trigger_scan
     from app.schemas import ScanCreate
+    from app.services import audit
 
     now = datetime.now(timezone.utc)
     due = (
@@ -122,9 +139,19 @@ def tick(db: Session) -> int:
     )
     started = 0
     for row in due:
+        owner = db.get(User, row.created_by_user_id) if row.created_by_user_id else None
+        principal = principal_for_user(owner) if owner is not None else None
+        if principal is None or not principal.can("scans.create_dast"):
+            reason = "no_owner" if owner is None else ("owner_disabled" if not owner.is_active else "no_permission")
+            logger.warning("scheduled DAST scan %s skipped: %s", row.id, reason)
+            audit.record(db, "schedule.skipped", outcome="denied", actor_label="system",
+                         target_type="dast_schedule", target_id=row.id, details={"reason": reason})
+            row.next_run_at = now + timedelta(minutes=max(15, int(row.interval_minutes or 1440)))
+            continue
         try:
             payload = ScanCreate.model_validate(strip_secrets(row.request_json or {}))
-            out = trigger_scan(payload, db)
+            request = Request({"type": "http", "method": "POST", "path": "/scans", "headers": [], "client": None})
+            out = trigger_scan(payload, request, db, principal)
             row.last_scan_id = out.scan_id
             started += 1
         except Exception:  # noqa: BLE001 - one bad schedule must not stop the others

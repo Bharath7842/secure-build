@@ -91,7 +91,8 @@ PERMISSIONS: tuple[Permission, ...] = (
     ),
     Permission(
         "feedback.manage", "action", "Manage review feedback",
-        "Approve reviews for learning and export the feedback dataset.", user_default=False,
+        "Approve reviews for learning and export the feedback dataset (reviews from all scans).",
+        user_default=False,
         requires=("findings.review",),
     ),
     Permission(
@@ -165,9 +166,18 @@ BY_KEY: dict[str, Permission] = {p.key: p for p in PERMISSIONS}
 ALL_KEYS: frozenset[str] = frozenset(BY_KEY)
 
 # What the CI bearer token (SAST_API_TOKEN) may do: the documented CI flow of
-# create project -> trigger scan -> poll -> read results. Nothing admin.
+# create project -> trigger scan -> poll -> read results, plus DAST scans for
+# the accuracy harness (tools/dast_harness). Nothing admin.
 CI_SERVICE_PERMISSIONS: frozenset[str] = frozenset(
-    {"projects.view", "projects.manage", "scans.view_own", "scans.view_all", "scans.create", "reports.export"}
+    {
+        "projects.view",
+        "projects.manage",
+        "scans.view_own",
+        "scans.view_all",
+        "scans.create",
+        "scans.create_dast",
+        "reports.export",
+    }
 )
 
 

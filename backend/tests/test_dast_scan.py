@@ -5,7 +5,9 @@ from app.config import settings
 from app.db import init_db
 from app.main import app
 
-HDR = {"Authorization": f"Bearer {settings.sast_api_token}"}
+from tests.auth_helpers import ADMIN_HEADERS  # noqa: E402
+
+HDR = ADMIN_HEADERS
 PASSWORD = "s3cr3t-pw-value"
 
 

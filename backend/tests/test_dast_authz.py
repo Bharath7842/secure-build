@@ -365,7 +365,9 @@ from app import db as app_db  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.models import Scan  # noqa: E402
 
-HDR = {"Authorization": f"Bearer {settings.sast_api_token}"}
+from tests.auth_helpers import ADMIN_HEADERS  # noqa: E402
+
+HDR = ADMIN_HEADERS
 
 
 @pytest.fixture()

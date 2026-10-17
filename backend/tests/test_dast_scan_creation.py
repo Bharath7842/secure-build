@@ -18,7 +18,9 @@ from app.services import scan_log, scan_runner
 
 pytestmark = pytest.mark.integration
 
-HDR = {"Authorization": f"Bearer {settings.sast_api_token}"}
+from tests.auth_helpers import ADMIN_HEADERS  # noqa: E402
+
+HDR = ADMIN_HEADERS
 PASSWORD = "Pw-s3cret-Value-1"
 TOKEN = "tok_live_abcdef0123456789"
 COOKIE = "sessioncookie-9f8e7d6c5b4a"

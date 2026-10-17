@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -7,7 +7,8 @@ import re
 import threading
 from pathlib import Path
 
-from app.auth import verify_bearer
+from app.auth.principal import Principal, forbidden, record, require
+from app.authz.scope import authorize_scan, can_see_scan, can_stop_scan, scope_scans
 from app.config import settings
 from app.db import get_db
 from app.dast.domain.curl import to_curl
@@ -100,10 +101,16 @@ def _dast_display_model(routing: dict) -> tuple[str | None, str | None]:
     return provider, model or None
 
 
-def _get_scan_or_404(db: Session, scan_id: str) -> Scan:
-    scan = db.get(Scan, scan_id)
-    if scan is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan not found")
+def _get_scan_or_404(db: Session, scan_id: str, principal: Principal) -> Scan:
+    """The scan, or 404 when it doesn't exist or is outside the caller's scope."""
+    return authorize_scan(db, principal, scan_id)
+
+
+def _get_stoppable_scan(db: Session, scan_id: str, principal: Principal) -> Scan:
+    """A visible scan the caller may cancel, pause or resume."""
+    scan = _get_scan_or_404(db, scan_id, principal)
+    if not can_stop_scan(principal, scan):
+        raise forbidden("You can only stop scans you started.")
     return scan
 
 
@@ -174,19 +181,27 @@ def _find_existing_scan(
 @router.post("", status_code=status.HTTP_202_ACCEPTED, response_model=ScanTriggerOut)
 def trigger_scan(
     payload: ScanCreate,
+    request: Request,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("projects.view", "scans.view_own")),
 ):
-    project = db.get(Project, payload.project_id)
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
-
     scan_type = (payload.scan_type or "sast").strip().lower()
     if scan_type not in _VALID_SCAN_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid scan_type '{scan_type}'; must be one of {_VALID_SCAN_TYPES}.",
         )
+    # DAST sends live traffic to a target, so it has its own permission.
+    if not principal.can("scans.create_dast" if scan_type == "dast" else "scans.create"):
+        raise forbidden(
+            "You don't have permission to start DAST scans."
+            if scan_type == "dast"
+            else "You don't have permission to start scans."
+        )
+
+    project = db.get(Project, payload.project_id)
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     if scan_type == "sca" and not project.enable_sca:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -241,7 +256,8 @@ def trigger_scan(
 
     if not payload.force and not is_dast:
         existing = _find_existing_scan(db, payload.project_id, commit_sha, scan_type)
-        if existing is not None:
+        # Only hand back a scan the caller can open; otherwise run their own.
+        if existing is not None and can_see_scan(principal, existing):
             reused_reason = None
             if resolved_from_git:
                 reused_reason = (
@@ -355,11 +371,16 @@ def trigger_scan(
         fallback_llm_model=fallback_llm_model,
         llm_base_url=llm_base_url,
         llm_data_policy=llm_data_policy,
-        triggered_by=_resolve_triggered_by(metadata),
+        # The CI token is only issued to pipelines, so its scans are CI scans
+        # whatever the metadata says.
+        triggered_by="jenkins" if principal.kind == "service" else _resolve_triggered_by(metadata),
+        created_by_user_id=principal.user_id,
     )
     db.add(scan)
     db.commit()
     db.refresh(scan)
+    record(db, request, "scan.created", principal, target_type="scan", target_id=scan.id,
+           details={"project_id": project.id, "scan_type": scan_type})
 
     if is_dast and prepared.credentials:
         scan_runner.set_dast_credentials(scan.id, prepared.credentials)
@@ -374,9 +395,9 @@ def list_scans(
     project_id: str | None = Query(default=None),
     scan_type: str | None = Query(default=None, description="Filter by sast|sca|sbom|dast"),
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("scans.view_own")),
 ):
-    query = db.query(Scan)
+    query = scope_scans(db.query(Scan), principal)
     if project_id:
         query = query.filter(Scan.project_id == project_id)
     if scan_type:
@@ -427,9 +448,9 @@ def _effective_progress(scan: Scan) -> int:
 def get_scan_status(
     scan_id: str,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("scans.view_own")),
 ):
-    scan = _get_scan_or_404(db, scan_id)
+    scan = _get_scan_or_404(db, scan_id, principal)
     progress = _effective_progress(scan)
     if scan.status == "running" and progress > (scan.progress or 0):
         scan.progress = progress
@@ -452,11 +473,11 @@ def get_scan_logs(
     scan_id: str,
     after: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("scans.view_own")),
 ):
     """Incremental live log tail: pass back `next_after` as `after` on the
     next poll to fetch only lines appended since the last call."""
-    scan = _get_scan_or_404(db, scan_id)
+    scan = _get_scan_or_404(db, scan_id, principal)
     lines, next_after = scan_log.get_logs(scan_id, after)
     return ScanLogsOut(scan_id=scan.id, status=scan.status, lines=lines, next_after=next_after)
 
@@ -465,9 +486,9 @@ def get_scan_logs(
 def get_scan_results(
     scan_id: str,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("scans.view_own")),
 ):
-    scan = _get_scan_or_404(db, scan_id)
+    scan = _get_scan_or_404(db, scan_id, principal)
     meta = scan.metadata_json or {}
     discovery = meta.get("discovery")
 
@@ -495,11 +516,11 @@ def get_scan_results(
 def get_dast_narration(
     scan_id: str,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("scans.view_own")),
 ):
     """Chat-style DAST timeline: per-step status, LLM narration and reasoning
     (template fallback when the model is unreachable). Poll while `pending`."""
-    scan = _get_scan_or_404(db, scan_id)
+    scan = _get_scan_or_404(db, scan_id, principal)
     if (scan.scan_type or "sast") != "dast":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Narration is only available for DAST scans."
@@ -533,9 +554,9 @@ def get_scan_findings(
     role: str | None = Query(default=None, description="DAST only: a role label, or owner:actor for a role pair"),
     check: str | None = Query(default=None, description="DAST only: comma separated check ids"),
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("scans.view_own")),
 ):
-    scan = _get_scan_or_404(db, scan_id)
+    scan = _get_scan_or_404(db, scan_id, principal)
     if (scan.scan_type or "sast") == "dast":
         # Unverified findings are returned unless the caller filters them out explicitly.
         return build_dast_findings(db, scan, severity=severity, verdict=verdict, role=role, check=check)
@@ -578,10 +599,10 @@ def get_scan_request_audit(
     limit: int = Query(default=100, ge=1, le=500),
     allowed: bool | None = Query(default=None, description="true = sent, false = denied; omit for both"),
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("scans.view_own")),
 ):
     """The scan's request audit log, ordered and paginated by sequence number."""
-    scan = _get_scan_or_404(db, scan_id)
+    scan = _get_scan_or_404(db, scan_id, principal)
     query = db.query(DastRequestAudit).filter(DastRequestAudit.scan_id == scan.id, DastRequestAudit.seq > after)
     if allowed is not None:
         query = query.filter(DastRequestAudit.allowed == allowed)
@@ -599,18 +620,18 @@ def get_scan_request_audit(
     )
 
 
-def _require_dast_scan(db: Session, scan_id: str, what: str) -> Scan:
-    scan = _get_scan_or_404(db, scan_id)
+def _require_dast_scan(db: Session, scan_id: str, what: str, principal: Principal) -> Scan:
+    scan = _get_scan_or_404(db, scan_id, principal)
     if (scan.scan_type or "sast") != "dast":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{what} is only available for DAST scans.")
     return scan
 
 
 @router.get("/{scan_id}/authz-matrix", response_model=DastAuthzMatrixOut)
-def get_scan_authz_matrix(scan_id: str, db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def get_scan_authz_matrix(scan_id: str, db: Session = Depends(get_db), principal: Principal = Depends(require("scans.view_own"))):
     """The role-by-role authorization matrix, derived from the scan's replay summaries and findings
     (so it is available while the scan runs and cannot drift from the findings)."""
-    return build_authz_matrix(db, _require_dast_scan(db, scan_id, "The authorization matrix"))
+    return build_authz_matrix(db, _require_dast_scan(db, scan_id, "The authorization matrix", principal))
 
 
 @router.get("/{scan_id}/diff")
@@ -618,17 +639,20 @@ def get_scan_diff(
     scan_id: str,
     against: str | None = Query(default=None, description="Compare with this earlier scan of the project instead of the previous one"),
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("scans.view_own")),
 ):
     """New / still-open / fixed findings against the previous successful scan of the same target."""
-    return build_diff(db, _require_dast_scan(db, scan_id, "The scan comparison"), against)
+    scan = _require_dast_scan(db, scan_id, "The scan comparison", principal)
+    if against:
+        _get_scan_or_404(db, against, principal)
+    return build_diff(db, scan, against)
 
 
 @router.get("/{scan_id}/summary")
-def get_scan_summary(scan_id: str, db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def get_scan_summary(scan_id: str, db: Session = Depends(get_db), principal: Principal = Depends(require("scans.view_own"))):
     """Live counters for a DAST scan (pages, endpoints, requests, tests, findings by severity and verdict,
     skipped checks, model calls and cost). Cheap enough to poll every two seconds."""
-    return build_summary(db, _require_dast_scan(db, scan_id, "The scan summary"))
+    return build_summary(db, _require_dast_scan(db, scan_id, "The scan summary", principal))
 
 
 @router.get("/{scan_id}/report")
@@ -636,16 +660,18 @@ def get_scan_report(
     scan_id: str,
     against: str | None = Query(default=None, description="Compare with this earlier scan instead of the previous one"),
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("scans.view_own")),
 ):
     """The DAST report data: confirmed severity counts, unverified findings apart, evidence and remediation,
     rule packs, skipped/degraded checks and the comparison with the previous scan."""
-    scan = _require_dast_scan(db, scan_id, "The DAST report")
+    scan = _require_dast_scan(db, scan_id, "The DAST report", principal)
+    if against:
+        _get_scan_or_404(db, against, principal)
     return build_dast_report(db, scan, db.get(Project, scan.project_id), against)
 
 
-def _require_finished_scan(db: Session, scan_id: str) -> tuple[Scan, Project]:
-    scan = _get_scan_or_404(db, scan_id)
+def _require_finished_scan(db: Session, scan_id: str, principal: Principal) -> tuple[Scan, Project]:
+    scan = _get_scan_or_404(db, scan_id, principal)
     if scan.status in _IN_PROGRESS:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -661,9 +687,9 @@ def _require_finished_scan(db: Session, scan_id: str) -> tuple[Scan, Project]:
 def export_scan_pdf(
     scan_id: str,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("reports.export")),
 ):
-    scan, project = _require_finished_scan(db, scan_id)
+    scan, project = _require_finished_scan(db, scan_id, principal)
     payload = build_pdf_report(project, scan, group_findings_by_issue(effective_scan_findings(db, scan)))
     filename = export_filenames(project, scan)["pdf"]
     return Response(
@@ -677,9 +703,9 @@ def export_scan_pdf(
 def export_scan_excel(
     scan_id: str,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("reports.export")),
 ):
-    scan, project = _require_finished_scan(db, scan_id)
+    scan, project = _require_finished_scan(db, scan_id, principal)
     payload = build_excel_report(project, scan, group_findings_by_issue(effective_scan_findings(db, scan)))
     filename = export_filenames(project, scan)["xlsx"]
     return Response(
@@ -693,11 +719,11 @@ def export_scan_excel(
 def export_scan_sarif(
     scan_id: str,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("reports.export")),
 ):
     from app.services.sarif_export import sarif_document
 
-    scan, _project = _require_finished_scan(db, scan_id)
+    scan, _project = _require_finished_scan(db, scan_id, principal)
     payload = json.dumps(sarif_document(effective_scan_findings(db, scan)), indent=2).encode()
     return Response(
         content=payload,
@@ -710,11 +736,11 @@ def export_scan_sarif(
 def export_scan_junit(
     scan_id: str,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("reports.export")),
 ):
     from app.services.sarif_export import junit_xml
 
-    scan, project = _require_finished_scan(db, scan_id)
+    scan, project = _require_finished_scan(db, scan_id, principal)
     payload = junit_xml(effective_scan_findings(db, scan), name=project.name or scan_id).encode()
     return Response(
         content=payload,
@@ -744,24 +770,26 @@ def triage_finding(
     finding_id: str,
     body: FindingTriageIn,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("findings.review")),
 ):
     from app.services.dast_triage import TriageError, apply_triage
 
-    _get_scan_or_404(db, scan_id)
+    _get_scan_or_404(db, scan_id, principal)
     finding = db.get(Finding, finding_id)
     if finding is None or finding.scan_id != scan_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found")
     try:
-        updated = apply_triage(db, finding, status=body.status, assignee=body.assignee, note=body.note)
+        updated = apply_triage(
+            db, finding, status=body.status, assignee=body.assignee, note=body.note, actor=principal.label
+        )
     except TriageError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     return FindingOut.model_validate(updated)
 
 
 @router.post("/{scan_id}/pause", response_model=ScanStatusOut)
-def pause_scan(scan_id: str, db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
-    scan = _get_scan_or_404(db, scan_id)
+def pause_scan(scan_id: str, db: Session = Depends(get_db), principal: Principal = Depends(require("scans.view_own"))):
+    scan = _get_stoppable_scan(db, scan_id, principal)
     if scan.status != "running":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Scan is {scan.status}, not running")
     scan_runner.request_pause(scan_id)
@@ -773,8 +801,8 @@ def pause_scan(scan_id: str, db: Session = Depends(get_db), _: None = Depends(ve
 
 
 @router.post("/{scan_id}/resume", response_model=ScanStatusOut)
-def resume_scan(scan_id: str, db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
-    scan = _get_scan_or_404(db, scan_id)
+def resume_scan(scan_id: str, db: Session = Depends(get_db), principal: Principal = Depends(require("scans.view_own"))):
+    scan = _get_stoppable_scan(db, scan_id, principal)
     if scan.status != "paused":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Scan is {scan.status}, not paused")
     scan.status = "running"
@@ -786,10 +814,15 @@ def resume_scan(scan_id: str, db: Session = Depends(get_db), _: None = Depends(v
 
 
 @router.post("/{scan_id}/replay")
-def replay_request(scan_id: str, body: ReplayIn, db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def replay_request(
+    scan_id: str,
+    body: ReplayIn,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require("scans.create_dast")),
+):
     from app.services.dast_replay import ReplayError, replay
 
-    scan = _require_dast_scan(db, scan_id, "Replay")
+    scan = _require_dast_scan(db, scan_id, "Replay", principal)
     if scan.status in _IN_PROGRESS:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Wait until the scan finishes before replaying a request")
     try:
@@ -799,10 +832,15 @@ def replay_request(scan_id: str, body: ReplayIn, db: Session = Depends(get_db), 
 
 
 @router.get("/queue")
-def scan_queue(db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def scan_queue(db: Session = Depends(get_db), principal: Principal = Depends(require("scans.view_own"))):
     from app.services.dast_schedule import queue_view
 
-    return queue_view(db)
+    view = queue_view(db)
+    if not principal.can("scans.view_all"):
+        visible = {s.id for s in scope_scans(db.query(Scan), principal).filter(Scan.id.in_([a["scan_id"] for a in view["active"]]))}
+        view["active"] = [a for a in view["active"] if a["scan_id"] in visible]
+        view["schedules"] = []
+    return view
 
 
 _SCREENSHOT_FILENAME_RE = re.compile(r"\A(?:\d+|login)\.jpg\Z")
@@ -813,12 +851,12 @@ def get_dast_screenshot(
     scan_id: str,
     filename: str,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("scans.view_own")),
 ):
     """One screenshot (`dast_screenshots_dir/{scan_id}/{n|login}.jpg`), referenced from the log
     (`[screenshot: …]`) and `discovery.pages[].screenshot`. The strict filename pattern is the
     path-traversal guard — anything not `login.jpg` or `<digits>.jpg` is rejected before a `Path` join."""
-    _get_scan_or_404(db, scan_id)
+    _get_scan_or_404(db, scan_id, principal)
     if not _SCREENSHOT_FILENAME_RE.match(filename):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     path = Path(settings.dast_screenshots_dir) / scan_id / filename
@@ -830,11 +868,12 @@ def get_dast_screenshot(
 @router.delete("/{scan_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_scan(
     scan_id: str,
+    request: Request,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("scans.delete")),
 ):
     """Remove a scan and its findings. Rejects while the scan is still running."""
-    scan = _get_scan_or_404(db, scan_id)
+    scan = _get_scan_or_404(db, scan_id, principal)
     if scan.status in _IN_PROGRESS:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -843,17 +882,20 @@ def delete_scan(
     db.query(Finding).filter(Finding.scan_id == scan.id).delete(synchronize_session=False)
     db.delete(scan)
     db.commit()
+    record(db, request, "scan.deleted", principal, target_type="scan", target_id=scan_id,
+           details={"project_id": scan.project_id, "scan_type": scan.scan_type or "sast"})
     return None
 
 
 @router.post("/{scan_id}/cancel", response_model=ScanStatusOut)
 def cancel_scan(
     scan_id: str,
+    request: Request,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("scans.view_own")),
 ):
     """Stop a queued or running scan. Marks it cancelled so it can be deleted."""
-    scan = _get_scan_or_404(db, scan_id)
+    scan = _get_stoppable_scan(db, scan_id, principal)
     if scan.status not in _IN_PROGRESS and (scan.scan_type or "sast") == "dast":
         # Cancelling a DAST scan that already ended is a harmless no-op, not an error: a second
         # click, or a cancel that raced the scan's own completion, must not look like a failure.
@@ -873,6 +915,7 @@ def cancel_scan(
     db.commit()
     scan_runner.sync_findings_report_to_metadata(db, scan_id)
     scan_log.log(scan_id, "Cancellation requested from API.")
+    record(db, request, "scan.cancelled", principal, target_type="scan", target_id=scan_id)
     # Fire-and-forget: sweep any findings left `unverified` by the abort,
     # capped since a mid-run cancellation can leave a much larger backlog
     # than a normal end-of-scan residual. Runs off the request thread so
@@ -897,13 +940,13 @@ def stream_dast_narration(
     scan_id: str,
     step: str = Query(..., description="Step ID: connection|auth|discovery|analysis"),
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("scans.view_own")),
 ):
     """Stream thinking + narration for a specific step as Server-Sent Events.
     The frontend opens this stream while the step is running or narration is pending."""
     from fastapi.responses import StreamingResponse
 
-    scan = _get_scan_or_404(db, scan_id)
+    scan = _get_scan_or_404(db, scan_id, principal)
     if (scan.scan_type or "sast") != "dast":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Narration is only available for DAST scans.")
     

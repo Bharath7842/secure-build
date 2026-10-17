@@ -191,8 +191,19 @@ def test_capture_is_off_unless_the_project_opted_in(db):
 
 # ---- restricted, audited access -------------------------------------------------------------------------------------
 
-HDR = {"Authorization": f"Bearer {settings.sast_api_token}"}
-TRAINER = {**HDR, "X-Training-Admin-Token": ADMIN, "X-Training-Reader": "alice"}
+from tests.auth_helpers import ADMIN_HEADERS, make_user  # noqa: E402
+
+ADMIN_READER = "admin@test.local"  # the reader recorded is the signed-in user
+
+
+def trainer(token=ADMIN):
+    """An admin presenting the training admin token."""
+    return {**ADMIN_HEADERS, "X-Training-Admin-Token": token}
+
+
+def mallory(token=ADMIN):
+    """A regular user (no dast.training) who somehow holds the training admin token."""
+    return {**make_user("mallory@test.local")[1], "X-Training-Admin-Token": token}
 
 
 @pytest.fixture()
@@ -215,35 +226,37 @@ def seed_examples(db, n_fail=4, n_pass=2, n_inc=3):
 
 def test_an_unauthorized_read_is_denied_and_audited(client, db):
     seed_examples(db)
-    for headers in (HDR, {**HDR, "X-Training-Reader": "mallory"}, {**HDR, "X-Training-Admin-Token": "wrong", "X-Training-Reader": "mallory"}, {**HDR, "X-Training-Admin-Token": ADMIN}):
+    for headers in (dict(ADMIN_HEADERS), trainer("wrong"), mallory()):
         r = client.get("/dast/training/examples", headers=headers)
         assert r.status_code == 403 and "examples" not in r.text
-    assert client.get("/dast/training/examples").status_code in (401, 403)  # not even the bearer token
-    assert client.get("/dast/training/export.jsonl", headers={**HDR, "X-Training-Reader": "mallory"}).status_code == 403
+    assert client.get("/dast/training/examples").status_code == 401  # not signed in: refused before any audit
+    assert client.get("/dast/training/export.jsonl", headers=mallory()).status_code == 403
     rows = audit_rows(db)
-    assert len(rows) == 5 and not any(allowed for *_, allowed in rows) and ("mallory", "list", False) in rows and ("anonymous", "list", False) in rows
+    assert len(rows) == 4 and not any(allowed for *_, allowed in rows)
+    assert ("mallory@test.local", "list", False) in rows and ("mallory@test.local", "export", False) in rows
+    assert (ADMIN_READER, "list", False) in rows
 
 
 def test_without_a_configured_admin_token_nobody_can_read_or_enable(client, db, monkeypatch):
     monkeypatch.setattr(settings, "dast_training_admin_token", None)
-    assert client.get("/dast/training/examples", headers={**HDR, "X-Training-Admin-Token": "", "X-Training-Reader": "alice"}).status_code == 403
+    assert client.get("/dast/training/examples", headers=trainer("")).status_code == 403
     with db() as session:
         project = Project(name="p", default_git_url="")
         session.add(project)
         session.commit()
         pid = project.id
-    assert client.patch(f"/projects/{pid}/dast-training", json={"enabled": True}, headers={**HDR, "X-Training-Admin-Token": "x", "X-Training-Reader": "alice"}).status_code == 403
+    assert client.patch(f"/projects/{pid}/dast-training", json={"enabled": True}, headers=trainer("x")).status_code == 403
 
 
 def test_an_authorized_read_works_and_is_audited(client, db):
     seed_examples(db)
-    body = client.get("/dast/training/examples", headers=TRAINER, params={"limit": 3}).json()
+    body = client.get("/dast/training/examples", headers=trainer(), params={"limit": 3}).json()
     assert len(body["examples"]) == 3 and body["next_after"] == body["examples"][-1]["id"] and {"id", "task", "label", "input", "output"} <= set(body["examples"][0])
-    more = client.get("/dast/training/examples", headers=TRAINER, params={"limit": 100, "after": body["next_after"]}).json()
+    more = client.get("/dast/training/examples", headers=trainer(), params={"limit": 100, "after": body["next_after"]}).json()
     assert len(more["examples"]) == 6 and more["next_after"] is None
-    assert ("alice", "list", True) in audit_rows(db)
-    log = client.get("/dast/training/audit", headers=TRAINER).json()["entries"]
-    assert log[0]["reader"] == "alice" and log[0]["allowed"] is True and any(e["count"] == 3 for e in log)
+    assert (ADMIN_READER, "list", True) in audit_rows(db)
+    log = client.get("/dast/training/audit", headers=trainer()).json()["entries"]
+    assert log[0]["reader"] == ADMIN_READER and log[0]["allowed"] is True and any(e["count"] == 3 for e in log)
 
 
 def test_enabling_capture_needs_the_admin_token_and_is_audited(client, db):
@@ -252,20 +265,20 @@ def test_enabling_capture_needs_the_admin_token_and_is_audited(client, db):
         session.add(project)
         session.commit()
         pid = project.id
-    denied = client.patch(f"/projects/{pid}/dast-training", json={"enabled": True}, headers={**HDR, "X-Training-Reader": "mallory"})
+    denied = client.patch(f"/projects/{pid}/dast-training", json={"enabled": True}, headers=mallory())
     assert denied.status_code == 403
-    ok = client.patch(f"/projects/{pid}/dast-training", json={"enabled": True}, headers=TRAINER)
+    ok = client.patch(f"/projects/{pid}/dast-training", json={"enabled": True}, headers=trainer())
     assert ok.status_code == 200 and ok.json()["training_capture_enabled"] is True
     with db() as session:
         assert session.get(Project, pid).training_capture_enabled is True
-    assert ("alice", "enable", True) in audit_rows(db) and ("mallory", "enable", False) in audit_rows(db)
-    assert client.patch(f"/projects/{pid}/dast-training", json={"enabled": False}, headers=TRAINER).json()["training_capture_enabled"] is False
-    assert client.patch("/projects/none/dast-training", json={"enabled": True}, headers=TRAINER).status_code == 404
+    assert (ADMIN_READER, "enable", True) in audit_rows(db) and ("mallory@test.local", "enable", False) in audit_rows(db)
+    assert client.patch(f"/projects/{pid}/dast-training", json={"enabled": False}, headers=trainer()).json()["training_capture_enabled"] is False
+    assert client.patch("/projects/none/dast-training", json={"enabled": True}, headers=trainer()).status_code == 404
 
 
 def test_export_is_balanced_jsonl_with_a_recorded_dataset_version(client, db):
     seed_examples(db, n_fail=4, n_pass=2, n_inc=3)
-    r = client.get("/dast/training/export.jsonl", headers=TRAINER)
+    r = client.get("/dast/training/export.jsonl", headers=trainer())
     lines = [json.loads(line) for line in r.text.splitlines()]
     assert r.headers["content-type"].startswith("application/x-ndjson") and len(lines) == 6  # 2 of each label: the smallest class
     verdicts = [line["output"]["verdict"] for line in lines]
@@ -273,8 +286,8 @@ def test_export_is_balanced_jsonl_with_a_recorded_dataset_version(client, db):
     assert all(set(line) == {"task", "input", "output"} for line in lines)
     version = r.headers["x-dataset-version"]
     assert version.count("-") == 2 and r.headers["x-dataset-count"] == "6"
-    assert client.get("/dast/training/export.jsonl", headers=TRAINER).headers["x-dataset-version"] == version  # same data, same version
-    assert any(version in e["detail"] for e in client.get("/dast/training/audit", headers=TRAINER).json()["entries"])
-    full = client.get("/dast/training/export.jsonl", headers=TRAINER, params={"balance": "false"})
+    assert client.get("/dast/training/export.jsonl", headers=trainer()).headers["x-dataset-version"] == version  # same data, same version
+    assert any(version in e["detail"] for e in client.get("/dast/training/audit", headers=trainer()).json()["entries"])
+    full = client.get("/dast/training/export.jsonl", headers=trainer(), params={"balance": "false"})
     assert len(full.text.splitlines()) == 9 and full.headers["x-dataset-version"] != version
-    assert client.get("/dast/training/export.jsonl", headers=TRAINER, params={"task": "bogus"}).status_code == 422
+    assert client.get("/dast/training/export.jsonl", headers=trainer(), params={"task": "bogus"}).status_code == 422

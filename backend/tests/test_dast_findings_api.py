@@ -15,7 +15,9 @@ from app.services.dast_findings import DastFindingsWriter
 
 pytestmark = pytest.mark.integration
 
-HDR = {"Authorization": f"Bearer {settings.sast_api_token}"}
+from tests.auth_helpers import ADMIN_HEADERS  # noqa: E402
+
+HDR = ADMIN_HEADERS
 
 
 @pytest.fixture()

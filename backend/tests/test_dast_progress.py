@@ -21,7 +21,9 @@ from tests.dast_fixtures import FakeModelGateway
 from tests.test_dast_authz import SECRETS, authz_target
 from tests.test_dast_engine import Harness, default_rule_set
 
-HDR = {"Authorization": f"Bearer {settings.sast_api_token}"}
+from tests.auth_helpers import ADMIN_HEADERS  # noqa: E402
+
+HDR = ADMIN_HEADERS
 
 # ---- banners and markers (DAST-12-010) ----------------------------------------------------------------------
 

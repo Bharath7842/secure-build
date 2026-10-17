@@ -30,7 +30,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.auth import verify_bearer
+from app.auth.principal import Principal, require
 from app.config import settings
 from app.db import get_db
 from app.models import Project, utcnow
@@ -105,7 +105,7 @@ def get_authorize_url(
     provider: str,
     project_id: str | None = None,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("projects.manage")),
 ):
     provider = _require_provider(provider)
 
@@ -187,7 +187,7 @@ def handle_callback(
     provider: str,
     payload: CallbackIn,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("projects.manage")),
 ):
     provider = _require_provider(provider)
 
@@ -299,7 +299,7 @@ def lookup_repo(
     connection_id: str | None = None,
     project_id: str | None = None,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("projects.manage")),
 ):
     """Find one repository by its Git URL using the connected account's token.
 
@@ -347,7 +347,7 @@ def lookup_repo(
 def disconnect(
     project_id: str,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("projects.manage")),
 ):
     project = _get_project_or_404(db, project_id)
     project.git_provider = None

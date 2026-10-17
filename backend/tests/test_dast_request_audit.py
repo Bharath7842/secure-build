@@ -18,7 +18,9 @@ from app.services.safety_guard import SafetyGuard
 
 pytestmark = pytest.mark.integration
 
-HDR = {"Authorization": f"Bearer {settings.sast_api_token}"}
+from tests.auth_helpers import ADMIN_HEADERS  # noqa: E402
+
+HDR = ADMIN_HEADERS
 BASE = "http://target.test"
 PASSWORD = "s3cr3t-pw-value"
 

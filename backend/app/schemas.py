@@ -680,7 +680,9 @@ class ReviewIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     decision: Literal["confirmed_issue", "false_positive", "needs_more_info", "resolved", "accept_risk"]
-    reviewer: str = Field(min_length=1, max_length=120)
+    # Ignored: the signed-in user is recorded as the reviewer. Accepted so
+    # older clients that still send it keep working.
+    reviewer: str | None = Field(default=None, max_length=120)
     comment: str | None = Field(default=None, max_length=5000)
     resolution_notes: str | None = Field(default=None, max_length=5000)
 
@@ -749,7 +751,7 @@ class LearningActionIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     review_ids: list[str] = Field(min_length=1, max_length=5000)
-    actor: str = Field(min_length=1, max_length=120)
+    actor: str | None = Field(default=None, max_length=120)  # ignored: the signed-in user is recorded
 
 
 class LearningActionOut(BaseModel):

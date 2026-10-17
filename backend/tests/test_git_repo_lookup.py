@@ -9,7 +9,9 @@ from app.main import app
 from app.routers import git_auth
 from app.routers.git_auth import repo_path_from_url
 
-HDR = {"Authorization": f"Bearer {settings.sast_api_token}"}
+from tests.auth_helpers import ADMIN_HEADERS  # noqa: E402
+
+HDR = ADMIN_HEADERS
 
 
 @pytest.fixture()

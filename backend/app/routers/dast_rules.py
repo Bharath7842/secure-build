@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.auth import verify_bearer
+from app.auth.principal import Principal, require
 from app.dast.domain.ruleset import RuleConfigError, ScanInputs
 from app.db import get_db
 from app.models import DastCustomRule, Project
@@ -61,25 +61,25 @@ def _project_or_404(db: Session, project_id: str) -> Project:
 
 
 @router.get("/dast/catalog")
-def get_catalog(db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def get_catalog(db: Session = Depends(get_db), principal: Principal = Depends(require("projects.view"))):
     return dast_rules.catalog_overview(db)
 
 
 @router.get("/dast/vulnerability-coverage")
-def get_vulnerability_coverage(_: None = Depends(verify_bearer)):
+def get_vulnerability_coverage(principal: Principal = Depends(require("projects.view"))):
     """Coverage of a general web-vulnerability taxonomy against the real check catalog, for the
     settings page's coverage matrix. Read-only; never affects scan behaviour."""
     return default_coverage()
 
 
 @router.get("/dast/rules")
-def get_global_rules(db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def get_global_rules(db: Session = Depends(get_db), principal: Principal = Depends(require("projects.view"))):
     catalog = dast_rules.active_catalog(db)
     return {"config": _config_out(dast_rules.get_global_config(db, catalog)), "catalog_version": catalog_version()}
 
 
 @router.patch("/dast/rules")
-def patch_global_rules(body: RuleConfigIn, db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def patch_global_rules(body: RuleConfigIn, db: Session = Depends(get_db), principal: Principal = Depends(require("settings.manage"))):
     catalog = dast_rules.active_catalog(db)
     try:
         merged = dast_rules.update_config(dast_rules.get_global_config(db, catalog), body.model_dump(exclude_none=True), catalog)
@@ -90,7 +90,7 @@ def patch_global_rules(body: RuleConfigIn, db: Session = Depends(get_db), _: Non
 
 
 @router.get("/projects/{project_id}/dast-rules")
-def get_project_rules(project_id: str, db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def get_project_rules(project_id: str, db: Session = Depends(get_db), principal: Principal = Depends(require("projects.view"))):
     project = _project_or_404(db, project_id)
     catalog = dast_rules.active_catalog(db)
     return {
@@ -101,7 +101,7 @@ def get_project_rules(project_id: str, db: Session = Depends(get_db), _: None = 
 
 @router.patch("/projects/{project_id}/dast-rules")
 def patch_project_rules(
-    project_id: str, body: RuleConfigIn, db: Session = Depends(get_db), _: None = Depends(verify_bearer)
+    project_id: str, body: RuleConfigIn, db: Session = Depends(get_db), principal: Principal = Depends(require("projects.manage"))
 ):
     project = _project_or_404(db, project_id)
     catalog = dast_rules.active_catalog(db)
@@ -114,7 +114,7 @@ def patch_project_rules(
 
 
 @router.delete("/projects/{project_id}/dast-rules", status_code=status.HTTP_204_NO_CONTENT)
-def reset_project_rules(project_id: str, db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def reset_project_rules(project_id: str, db: Session = Depends(get_db), principal: Principal = Depends(require("projects.manage"))):
     """Drop the project's overrides so it inherits the global defaults again."""
     project = _project_or_404(db, project_id)
     project.dast_rules_config = None
@@ -123,7 +123,7 @@ def reset_project_rules(project_id: str, db: Session = Depends(get_db), _: None 
 
 
 @router.get("/dast/rule-settings")
-def get_rule_settings(project_id: str | None = Query(default=None), db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def get_rule_settings(project_id: str | None = Query(default=None), db: Session = Depends(get_db), principal: Principal = Depends(require("projects.view"))):
     """Packs and checks for the settings pages: the effective value of each setting at this level
     (global, or project) and where it comes from (default, global, project)."""
     project = _project_or_404(db, project_id) if project_id else None
@@ -137,7 +137,7 @@ def preview_effective_rule_set(
     second_identity: bool = Query(default=False),
     oast: bool | None = Query(default=None, description="Defaults to whether DAST_OAST_CALLBACK_URL is set"),
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("projects.view")),
 ):
     """What a scan would run with right now (global -> project), without creating one."""
     from app.config import settings
@@ -159,20 +159,20 @@ def preview_effective_rule_set(
 
 
 @router.post("/dast/custom-rules/validate")
-def validate_custom_rule(body: CustomRuleIn, db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def validate_custom_rule(body: CustomRuleIn, db: Session = Depends(get_db), principal: Principal = Depends(require("settings.manage"))):
     """Validate a rule without saving it: every error with its field and reason, and the notes that
     say it can only surface as assist-only or unverified."""
     return dast_rules.validate_custom_yaml(db, body.yaml)
 
 
 @router.get("/dast/custom-rules")
-def list_custom_rules(db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def list_custom_rules(db: Session = Depends(get_db), principal: Principal = Depends(require("projects.view"))):
     rows = db.query(DastCustomRule).order_by(DastCustomRule.check_id).all()
     return {"rules": [_custom_out(r) for r in rows]}
 
 
 @router.post("/dast/custom-rules", status_code=status.HTTP_201_CREATED)
-def create_custom_rule(body: CustomRuleIn, db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def create_custom_rule(body: CustomRuleIn, db: Session = Depends(get_db), principal: Principal = Depends(require("settings.manage"))):
     try:
         return _custom_out(dast_rules.create_custom_rule(db, body.yaml))
     except dast_rules.CustomRuleError as exc:
@@ -180,7 +180,7 @@ def create_custom_rule(body: CustomRuleIn, db: Session = Depends(get_db), _: Non
 
 
 @router.get("/dast/custom-rules/{check_id}")
-def get_custom_rule(check_id: str, db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def get_custom_rule(check_id: str, db: Session = Depends(get_db), principal: Principal = Depends(require("projects.view"))):
     row = db.query(DastCustomRule).filter(DastCustomRule.check_id == check_id).first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Custom rule not found")
@@ -188,7 +188,7 @@ def get_custom_rule(check_id: str, db: Session = Depends(get_db), _: None = Depe
 
 
 @router.put("/dast/custom-rules/{check_id}")
-def update_custom_rule(check_id: str, body: CustomRuleIn, db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def update_custom_rule(check_id: str, body: CustomRuleIn, db: Session = Depends(get_db), principal: Principal = Depends(require("settings.manage"))):
     try:
         row = dast_rules.update_custom_rule(db, check_id, body.yaml)
     except dast_rules.CustomRuleError as exc:
@@ -199,7 +199,7 @@ def update_custom_rule(check_id: str, body: CustomRuleIn, db: Session = Depends(
 
 
 @router.delete("/dast/custom-rules/{check_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_custom_rule(check_id: str, db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def delete_custom_rule(check_id: str, db: Session = Depends(get_db), principal: Principal = Depends(require("settings.manage"))):
     if not dast_rules.delete_custom_rule(db, check_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Custom rule not found")
     return None

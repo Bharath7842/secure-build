@@ -16,7 +16,9 @@ from app.models import DastEvidence, Finding, Scan
 
 pytestmark = pytest.mark.integration
 
-HDR = {"Authorization": f"Bearer {settings.sast_api_token}"}
+from tests.auth_helpers import ADMIN_HEADERS  # noqa: E402
+
+HDR = ADMIN_HEADERS
 TARGET = {"target_url": "http://localhost:3000", "authorized": True}
 
 

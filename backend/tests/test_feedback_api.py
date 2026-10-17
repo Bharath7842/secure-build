@@ -5,7 +5,9 @@ from app.config import settings
 from app.db import init_db
 from app.main import app
 
-HDR = {"Authorization": f"Bearer {settings.sast_api_token}"}
+from tests.auth_helpers import ADMIN_HEADERS, make_user  # noqa: E402
+
+HDR = ADMIN_HEADERS
 
 
 @pytest.fixture()
@@ -74,9 +76,11 @@ def _finish(scan_id):
         db.close()
 
 
-def _review(client, scan_id, finding_id, **body):
-    body.setdefault("reviewer", "alice")
-    return client.post(f"/scans/{scan_id}/findings/{finding_id}/review", headers=HDR, json=body)
+def _review(client, scan_id, finding_id, reviewer="alice", **body):
+    """Review as the signed-in user `<reviewer>@test.local`; that user, not a
+    name in the body, is what gets recorded."""
+    headers = make_user(f"{reviewer}@test.local", role="admin")[1]
+    return client.post(f"/scans/{scan_id}/findings/{finding_id}/review", headers=headers, json=body)
 
 
 def _findings(client, scan_id, **params):
@@ -106,9 +110,13 @@ def test_agreeing_with_llm_needs_no_comment_but_is_not_closed(client, scan):
     assert body["is_closed"] is False and body["issue_status"] == "open"
 
 
-def test_reviewer_name_required(client, scan):
+def test_the_signed_in_user_is_the_reviewer_whatever_the_body_says(client, scan):
     scan_id, ids = scan
-    assert _review(client, scan_id, ids["sqli"], decision="confirmed_issue", reviewer="  ").status_code == 422
+    headers = make_user("carol@test.local", role="admin")[1]
+    r = client.post(f"/scans/{scan_id}/findings/{ids['sqli']}/review", headers=headers,
+                    json={"decision": "confirmed_issue", "reviewer": "mallory"})
+    assert r.status_code == 200, r.text
+    assert r.json()["reviewer"] == "carol@test.local"
 
 
 def test_original_llm_result_is_preserved(client, scan):
@@ -162,7 +170,7 @@ def test_resolve_and_accept_risk_need_confirmation_and_notes(client, scan):
 
     body = _review(client, scan_id, ids["sqli"], decision="resolved", resolution_notes="Parameterised in #123").json()
     assert body["is_closed"] is True and body["issue_status"] == "resolved"
-    assert body["resolution_notes"] == "Parameterised in #123" and body["resolved_by"] == "alice"
+    assert body["resolution_notes"] == "Parameterised in #123" and body["resolved_by"] == "alice@test.local"
     assert body["resolved_at"] is not None
 
 
@@ -263,7 +271,7 @@ def test_feedback_list_filters(client, scan):
     assert {r["rule_id"] for r in listing(severity="high")["items"]} == {"sqli"}
     assert {r["rule_id"] for r in listing(rule_id="weak-hash")["items"]} == {"weak-hash"}
     assert {r["rule_id"] for r in listing(cwe="CWE-502")["items"]} == {"svuid"}
-    assert {r["rule_id"] for r in listing(reviewer="bob")["items"]} == {"weak-hash"}
+    assert {r["rule_id"] for r in listing(reviewer="bob@test.local")["items"]} == {"weak-hash"}
     assert {r["rule_id"] for r in listing(closed=True)["items"]} == {"sqli"}
     assert listing(resolution_status="resolved")["total"] == 0
     assert listing(learning_status="pending_learning")["total"] == 2
@@ -306,8 +314,8 @@ def test_learning_lifecycle_and_export(client, scan):
     csv_text = client.get("/feedback/export", headers=HDR, params={"format": "csv"}).text
     assert csv_text.splitlines()[0].startswith("review_id,") and len(csv_text.splitlines()) == 3
 
-    assert client.get("/feedback/export", headers=HDR, params={"mark_processed": True}).status_code == 422
-    client.get("/feedback/export", headers=HDR, params={"mark_processed": True, "actor": "pipeline"})
+    # The signed-in user is recorded as the actor; no name needs to be passed.
+    client.get("/feedback/export", headers=HDR, params={"mark_processed": True})
     done = client.get(f"/feedback/{r1['review_id']}", headers=HDR).json()
     assert done["learning_status"] == "processed" and done["learning_processed_at"] is not None
     # The other item was never approved, so it stays pending.

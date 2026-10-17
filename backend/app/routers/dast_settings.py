@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt
 from sqlalchemy.orm import Session
 
-from app.auth import verify_bearer
+from app.auth.principal import Principal, require
 from app.db import get_db
 from app.services import dast_settings
 
@@ -53,12 +53,12 @@ def _raise(exc: dast_settings.SettingsError) -> None:
 
 
 @router.get("/settings")
-def get_settings(db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def get_settings(db: Session = Depends(get_db), principal: Principal = Depends(require("projects.view"))):
     return dast_settings.settings_view(db)
 
 
 @router.patch("/settings")
-def patch_settings(body: SettingsPatch, db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def patch_settings(body: SettingsPatch, db: Session = Depends(get_db), principal: Principal = Depends(require("settings.manage"))):
     patch: dict[str, Any] = body.model_dump(exclude_none=True, exclude={"confirm_unsafe"})
     try:
         dast_settings.update_settings(db, patch, confirm_unsafe=body.confirm_unsafe)
@@ -68,12 +68,12 @@ def patch_settings(body: SettingsPatch, db: Session = Depends(get_db), _: None =
 
 
 @router.get("/model-routing")
-def get_model_routing(db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def get_model_routing(db: Session = Depends(get_db), principal: Principal = Depends(require("projects.view"))):
     return dast_settings.routing_view(db)
 
 
 @router.put("/model-routing")
-def put_model_routing(routes: list[RouteIn], db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def put_model_routing(routes: list[RouteIn], db: Session = Depends(get_db), principal: Principal = Depends(require("settings.manage"))):
     try:
         dast_settings.update_routing(db, [r.model_dump() for r in routes])
     except dast_settings.SettingsError as exc:
@@ -82,12 +82,12 @@ def put_model_routing(routes: list[RouteIn], db: Session = Depends(get_db), _: N
 
 
 @router.post("/model-routing/test")
-def test_model_route(route: RouteIn, db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def test_model_route(route: RouteIn, db: Session = Depends(get_db), principal: Principal = Depends(require("settings.manage"))):
     return dast_settings.test_route(db, route.model_dump())
 
 
 @router.get("/compliance")
-def get_compliance(_: None = Depends(verify_bearer)):
+def get_compliance(principal: Principal = Depends(require("projects.view"))):
     """PCI, ISO 27001 and SOC 2 requirements mapped onto catalog checks. Read-only."""
     from app.services.dast_compliance import compliance_view
 
@@ -111,14 +111,14 @@ class ScheduleIn(BaseModel):
 
 
 @router.get("/profiles")
-def get_profiles(db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def get_profiles(db: Session = Depends(get_db), principal: Principal = Depends(require("projects.view"))):
     from app.services.dast_schedule import list_profiles
 
     return {"profiles": list_profiles(db)}
 
 
 @router.put("/profiles")
-def put_profiles(profiles: list[ProfileIn], db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def put_profiles(profiles: list[ProfileIn], db: Session = Depends(get_db), principal: Principal = Depends(require("settings.manage"))):
     from app.services.dast_schedule import save_profiles
 
     saved = save_profiles(db, [p.model_dump() for p in profiles])
@@ -126,7 +126,7 @@ def put_profiles(profiles: list[ProfileIn], db: Session = Depends(get_db), _: No
 
 
 @router.post("/schedules", status_code=201)
-def create_schedule(body: ScheduleIn, db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def create_schedule(body: ScheduleIn, db: Session = Depends(get_db), principal: Principal = Depends(require("scans.create_dast"))):
     from app.services.dast_schedule import save_schedule
 
     try:
@@ -136,6 +136,7 @@ def create_schedule(body: ScheduleIn, db: Session = Depends(get_db), _: None = D
             name=body.name,
             interval_minutes=body.interval_minutes,
             request=body.request,
+            created_by_user_id=principal.user_id,
         )
     except Exception as exc:
         from pydantic import ValidationError
@@ -147,7 +148,7 @@ def create_schedule(body: ScheduleIn, db: Session = Depends(get_db), _: None = D
 
 
 @router.get("/providers")
-def get_provider_status(_: None = Depends(verify_bearer)):
+def get_provider_status(principal: Principal = Depends(require("projects.view"))):
     """Whether each provider has credentials configured in the environment. Read-only: no key is
     ever accepted or returned by this API (see the decision in `app.services.dast_settings`)."""
     return {

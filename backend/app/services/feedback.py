@@ -18,6 +18,7 @@ import hashlib
 import io
 import json
 from datetime import date, datetime, time, timezone
+from collections.abc import Collection
 from typing import Any, Iterable
 
 from sqlalchemy.orm import Session
@@ -483,11 +484,13 @@ def list_feedback(
     filters: dict[str, Any] | None = None,
     limit: int = 50,
     offset: int = 0,
+    visible_scan_ids: Collection[str] | None = None,
 ) -> dict[str, Any]:
     """Grouped issues joined with their reviews.
 
     With `scan_id`: every issue group of that scan, reviewed or not. Without it: only
-    reviewed items (across scans, optionally one project). Both pass the same filter."""
+    reviewed items (across scans, optionally one project). Both pass the same filter.
+    `visible_scan_ids` (None = all) limits the cross-scan list to scans the caller may see."""
     f = dict(filters or {})
     f["reviewed_from"] = _parse_bound(f.get("reviewed_from"), end=False)
     f["reviewed_to"] = _parse_bound(f.get("reviewed_to"), end=True)
@@ -512,6 +515,8 @@ def list_feedback(
         query = db.query(FindingReview)
         if project_id:
             query = query.filter(FindingReview.project_id == project_id)
+        if visible_scan_ids is not None:
+            query = query.filter(FindingReview.scan_id.in_(list(visible_scan_ids)))
         rows = [_row_from_review(r) for r in query.all()]
 
     rows = [r for r in rows if _matches(r, f)]

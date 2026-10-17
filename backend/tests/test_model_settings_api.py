@@ -9,7 +9,9 @@ from app.defaults.dast_models import DAST_MODEL_OPTIONS
 from app.defaults.llm_presets import LLM_PRESETS
 from app.main import app
 
-HDR = {"Authorization": f"Bearer {settings.sast_api_token}"}
+from tests.auth_helpers import ADMIN_HEADERS  # noqa: E402
+
+HDR = ADMIN_HEADERS
 
 
 @pytest.fixture()

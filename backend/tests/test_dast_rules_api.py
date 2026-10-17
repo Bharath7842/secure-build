@@ -15,7 +15,9 @@ from app.dast.domain.ruleset import ScanInputs, evaluate_dependencies
 
 pytestmark = pytest.mark.integration
 
-HDR = {"Authorization": f"Bearer {settings.sast_api_token}"}
+from tests.auth_helpers import ADMIN_HEADERS  # noqa: E402
+
+HDR = ADMIN_HEADERS
 
 
 @pytest.fixture()

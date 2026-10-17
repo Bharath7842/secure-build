@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from pydantic import BaseModel
 
-from app.auth import verify_bearer
+from app.auth.principal import Principal, require
 from app.config import settings
 from app.db import get_db
 from app.defaults.reference_sources import normalize_sources, sync_legacy_fields
@@ -68,7 +68,7 @@ def _apply_reference_sources(data: dict) -> None:
 def create_project(
     payload: ProjectCreate,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("projects.manage")),
 ):
     data = payload.model_dump()
     data["scan_mode"] = "full"
@@ -92,7 +92,7 @@ def create_project(
 @router.get("", response_model=list[ProjectOut])
 def list_projects(
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("projects.view")),
 ):
     return db.query(Project).order_by(Project.created_at.desc()).all()
 
@@ -101,7 +101,7 @@ def list_projects(
 def get_project(
     project_id: str,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("projects.view")),
 ):
     return _get_project_or_404(db, project_id)
 
@@ -111,7 +111,7 @@ def update_project(
     project_id: str,
     payload: ProjectUpdate,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("projects.manage")),
 ):
     project = _get_project_or_404(db, project_id)
     updates = payload.model_dump(exclude_unset=True)
@@ -132,7 +132,7 @@ def update_project(
 def delete_project(
     project_id: str,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("projects.manage")),
 ):
     """Delete a project and everything scoped to it: its scans + findings,
     its on-disk git workspace, its cached file snapshots, and (if connected)
@@ -193,7 +193,7 @@ def update_project_limitations(
     project_id: str,
     payload: UpdateLimitationsPayload,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_bearer),
+    principal: Principal = Depends(require("projects.manage")),
 ):
     """Update which scan limitations are enabled for a project."""
     project = _get_project_or_404(db, project_id)

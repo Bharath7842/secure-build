@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
-from app.auth import verify_bearer
+from app.auth.principal import Principal, require
 from app.db import get_db
 from app.services import model_visibility
 
@@ -20,13 +20,13 @@ class ModelSettingsPatch(BaseModel):
 
 
 @router.get("")
-def get_model_settings(db: Session = Depends(get_db), _: None = Depends(verify_bearer)):
+def get_model_settings(db: Session = Depends(get_db), principal: Principal = Depends(require("projects.view"))):
     return model_visibility.build_catalog(db)
 
 
 @router.patch("")
 def patch_model_settings(
-    body: ModelSettingsPatch, db: Session = Depends(get_db), _: None = Depends(verify_bearer)
+    body: ModelSettingsPatch, db: Session = Depends(get_db), principal: Principal = Depends(require("settings.manage"))
 ):
     try:
         model_visibility.save_hidden(db, body.hidden)
