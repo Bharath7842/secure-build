@@ -422,7 +422,7 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
                 htmlFor="repo-url"
                 hint={`Paste the repository's full Git URL. It is checked against your ${
                   GIT_PROVIDER_LABELS[gitProvider ?? ""] ?? "Git"
-                } account, then fills in the Git URL and default branch below.`}
+                } account, then fills in the default branch below.`}
               >
                 <div className="flex gap-2">
                   <input
