@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 import json
 import re
 import threading
@@ -402,7 +402,8 @@ def list_scans(
         query = query.filter(Scan.project_id == project_id)
     if scan_type:
         query = query.filter(Scan.scan_type == scan_type)
-    scans = query.order_by(Scan.created_at.desc()).all()
+    # Load every scan's creator in one query (the list shows who started each).
+    scans = query.options(selectinload(Scan.created_by)).order_by(Scan.created_at.desc()).all()
     for scan in scans:
         _backfill_llm_from_log(db, scan)
     _attach_dast_counts(db, scans)

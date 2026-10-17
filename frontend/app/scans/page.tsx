@@ -9,7 +9,7 @@ import ScanStatusBadge from "@/components/ScanStatusBadge";
 import { ApiError, api } from "@/lib/api";
 import type { Project, Scan } from "@/lib/types";
 import { useAuth, useCan } from "@/components/auth/AuthProvider";
-import { canStopScan } from "@/lib/access";
+import { canStopScan, startedByLabel } from "@/lib/access";
 
 function formatDate(value: string): string {
   try {
@@ -39,12 +39,6 @@ function llmLabel(scan: Scan): string {
   return model ?? "—";
 }
 
-function triggerLabel(scan: Scan): string {
-  if (scan.triggered_by === "jenkins") return "Jenkins";
-  if (scan.triggered_by === "app") return "App";
-  return "App";
-}
-
 export default function ScanHistoryPage() {
   const can = useCan();
   const me = useAuth();
@@ -57,6 +51,9 @@ export default function ScanHistoryPage() {
   /** Empty set = show all projects. Otherwise only checked project IDs. */
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
   const [selectedScanIds, setSelectedScanIds] = useState<Set<string>>(new Set());
+  /** "" = everyone. Only offered to people who can see other users' scans. */
+  const [startedBy, setStartedBy] = useState("");
+  const seesAll = can("scans.view_all");
   const [deleting, setDeleting] = useState(false);
   const [stopping, setStopping] = useState<string | null>(null);
   const { confirm, dialog } = useConfirmDialog();
@@ -93,15 +90,22 @@ export default function ScanHistoryPage() {
     [projects]
   );
 
+  // Everyone who started one of the loaded scans, for the "Started by" filter.
+  const starters = useMemo(() => {
+    const labels = new Set(scans.map((scan) => startedByLabel(scan, me)));
+    return [...labels].sort((a, b) => (a === "You" ? -1 : b === "You" ? 1 : a.localeCompare(b)));
+  }, [scans, me]);
+
   const filteredScans = useMemo(() => {
-    const list =
-      selectedProjectIds.size === 0
-        ? scans
-        : scans.filter((scan) => selectedProjectIds.has(scan.project_id));
+    const list = scans.filter(
+      (scan) =>
+        (selectedProjectIds.size === 0 || selectedProjectIds.has(scan.project_id)) &&
+        (!startedBy || startedByLabel(scan, me) === startedBy),
+    );
     return [...list].sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
-  }, [scans, selectedProjectIds]);
+  }, [scans, selectedProjectIds, startedBy, me]);
 
   const allFilteredSelected =
     filteredScans.length > 0 && filteredScans.every((scan) => selectedScanIds.has(scan.id));
@@ -192,15 +196,19 @@ export default function ScanHistoryPage() {
           <div>
             <h1 className="font-display text-3xl text-[var(--ink)]">Scan History</h1>
             <p className="mt-2 text-sm text-[var(--muted)]">
-              All scans triggered across every project.
+              {seesAll
+                ? "Every scan across all projects, and who started it."
+                : "Scans you started. Only you and admins can see them."}
             </p>
           </div>
-          <Link
-            href="/scans/new"
-            className="shrink-0 rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
-          >
-            SAST SCAN
-          </Link>
+          {can("scans.create") && (
+            <Link
+              href="/scans/new"
+              className="shrink-0 rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+            >
+              SAST SCAN
+            </Link>
+          )}
         </div>
 
         {error && (
@@ -244,6 +252,26 @@ export default function ScanHistoryPage() {
                 </label>
               ))}
             </div>
+            {seesAll && starters.length > 1 && (
+              <label className="mt-4 flex items-center gap-3 text-sm text-[var(--ink)]">
+                <span className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Started by</span>
+                <select
+                  value={startedBy}
+                  onChange={(e) => {
+                    setStartedBy(e.target.value);
+                    setSelectedScanIds(new Set());
+                  }}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm"
+                >
+                  <option value="">Everyone</option>
+                  {starters.map((label) => (
+                    <option key={label} value={label}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
         )}
 
@@ -252,9 +280,13 @@ export default function ScanHistoryPage() {
         ) : !error && filteredScans.length === 0 ? (
           <div className="mt-10 rounded-md border border-slate-200 bg-white/60 px-6 py-10 text-center">
             <p className="text-sm text-[var(--muted)]">
-              {scans.length === 0 ? "No scans yet." : "No scans for the selected projects."}
+              {scans.length > 0
+                ? "No scans match these filters."
+                : seesAll
+                  ? "No scans yet."
+                  : "You haven't started any scans yet. Scans you start appear here; only you and admins can see them."}
             </p>
-            {scans.length === 0 && (
+            {scans.length === 0 && can("scans.create") && (
               <Link href="/scans/new" className="mt-2 inline-block text-sm font-medium text-[var(--accent)]">
                 Trigger your first scan →
               </Link>
@@ -297,7 +329,7 @@ export default function ScanHistoryPage() {
                   <th className="py-2 font-medium">Scan ID</th>
                   <th className="py-2 font-medium">Version</th>
                   <th className="py-2 font-medium">LLM</th>
-                  <th className="py-2 font-medium">Source</th>
+                  <th className="py-2 font-medium">Started by</th>
                   <th className="py-2 font-medium">Status</th>
                   <th className="py-2 font-medium">Started</th>
                   <th className="py-2 font-medium"></th>
@@ -331,7 +363,9 @@ export default function ScanHistoryPage() {
                       <td className="py-3 text-[var(--muted)]">
                         {llmLabel(scan)}
                       </td>
-                      <td className="py-3 text-[var(--muted)]">{triggerLabel(scan)}</td>
+                      <td className="py-3 text-[var(--muted)]" title={scan.created_by_email ?? undefined}>
+                        {startedByLabel(scan, me)}
+                      </td>
                       <td className="py-3">
                         <ScanStatusBadge status={scan.status} />
                       </td>

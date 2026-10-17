@@ -109,6 +109,9 @@ export interface Scan {
   project_id: string;
   /** Who started it; null for CI scans and scans from before accounts existed. */
   created_by_user_id?: string | null;
+  /** The starter's display name (else email) and email; null when created_by_user_id is. */
+  created_by_name?: string | null;
+  created_by_email?: string | null;
   git_url: string;
   branch: string;
   commit_sha: string | null;

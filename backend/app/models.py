@@ -138,6 +138,7 @@ class Scan(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     project: Mapped["Project"] = relationship(back_populates="scans")
+    created_by: Mapped["User | None"] = relationship(foreign_keys=[created_by_user_id])
     findings: Mapped[list["Finding"]] = relationship(back_populates="scan")
 
 

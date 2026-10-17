@@ -396,6 +396,10 @@ class ScanOut(BaseModel):
     # DAST scans only (from `GET /scans`): confirmed findings by severity plus the unverified count, so a
     # list needs no per-scan request. None for every other scan type and for single-scan responses.
     dast_counts: dict[str, int] | None = None
+    # Who started the scan: None for CI scans and scans from before accounts existed.
+    created_by_user_id: str | None = None
+    created_by_name: str | None = None  # display name, else email
+    created_by_email: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -405,6 +409,7 @@ class ScanOut(BaseModel):
         if isinstance(data, dict):
             return data
         meta = getattr(data, "metadata_json", None) or {}
+        creator = getattr(data, "created_by", None)
         repo_path = meta.get("repo_path")
         root = Path(settings.workspaces_dir) / data.project_id
         if repo_path:
@@ -428,6 +433,9 @@ class ScanOut(BaseModel):
             "repo_path": repo_path,
             "local_root_path": str(root),
             "dast_counts": getattr(data, "_dast_counts", None),
+            "created_by_user_id": getattr(data, "created_by_user_id", None),
+            "created_by_name": (creator.display_name or creator.email) if creator else None,
+            "created_by_email": creator.email if creator else None,
             "created_at": data.created_at,
             "updated_at": data.updated_at,
         }

@@ -8,7 +8,8 @@ import PageContainer from "@/components/PageContainer";
 import ScanStatusBadge from "@/components/ScanStatusBadge";
 import { ApiError, api } from "@/lib/api";
 import type { Project, Scan } from "@/lib/types";
-import { useCan } from "@/components/auth/AuthProvider";
+import { useAuth, useCan } from "@/components/auth/AuthProvider";
+import { startedByLabel } from "@/lib/access";
 
 function formatDate(value: string): string {
   try {
@@ -20,6 +21,8 @@ function formatDate(value: string): string {
 
 export default function ScaDashboardPage() {
   const can = useCan();
+  const me = useAuth();
+  const seesAll = can("scans.view_all");
   const [scans, setScans] = useState<Scan[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -120,12 +123,14 @@ export default function ScaDashboardPage() {
               declared version against known vulnerabilities via OSV.dev.
             </p>
           </div>
-          <Link
-            href="/scans/new?type=sca"
-            className="shrink-0 rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
-          >
-            New SCA scan
-          </Link>
+          {can("scans.create") && (
+            <Link
+              href="/scans/new?type=sca"
+              className="shrink-0 rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+            >
+              New SCA scan
+            </Link>
+          )}
         </div>
 
         {error && (
@@ -190,10 +195,12 @@ export default function ScaDashboardPage() {
           <div className="mt-10 rounded-md border border-slate-200 bg-white/60 px-6 py-10 text-center">
             <p className="text-sm text-[var(--muted)]">
               {scans.length === 0
-                ? "No SCA scans yet."
+                ? seesAll
+                  ? "No SCA scans yet."
+                  : "You haven't started any SCA scans yet. Only you and admins can see the ones you start."
                 : "No SCA scans for the selected projects."}
             </p>
-            {scans.length === 0 && projects.length > 0 && (
+            {scans.length === 0 && projects.length > 0 && can("scans.create") && (
               <Link
                 href="/scans/new?type=sca"
                 className="mt-2 inline-block text-sm font-medium text-[var(--accent)]"
@@ -216,6 +223,7 @@ export default function ScaDashboardPage() {
                 <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-[var(--muted)]">
                   <th className="w-12 py-2 font-medium">#</th>
                   <th className="py-2 font-medium">Project</th>
+                  {seesAll && <th className="py-2 font-medium">Started by</th>}
                   <th className="py-2 font-medium">Scan ID</th>
                   <th className="py-2 font-medium">Version</th>
                   <th className="py-2 font-medium">Branch</th>
@@ -234,6 +242,11 @@ export default function ScaDashboardPage() {
                       <td className="py-3 text-[var(--ink)]">
                         {projectNames.get(scan.project_id) ?? "Unknown project"}
                       </td>
+                      {seesAll && (
+                        <td className="py-3 text-[var(--muted)]" title={scan.created_by_email ?? undefined}>
+                          {startedByLabel(scan, me)}
+                        </td>
+                      )}
                       <td className="py-3 font-mono text-xs text-[var(--muted)]" title={scan.id}>
                         {scan.id.slice(0, 8)}
                       </td>

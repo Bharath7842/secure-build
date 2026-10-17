@@ -290,3 +290,21 @@ def test_scheduled_scans_run_as_their_creator_or_not_at_all(client, project_id):
         assert dast_schedule.tick(db) == 0
         reasons = sorted(e.details["reason"] for e in db.query(AuditEvent).filter(AuditEvent.action == "schedule.skipped"))
     assert reasons == ["no_owner", "owner_disabled"]
+
+
+def test_scan_list_says_who_started_each_scan(client, project_id):
+    ada_id, ada = make_user("ada@test.local")
+    with app_db.SessionLocal() as db:
+        db.get(User, ada_id).display_name = "Ada"
+        db.commit()
+    ada_scan = _start(client, ada, project_id, "a1")
+    ci_scan = _start(client, CI_HEADERS, project_id, "c1")
+
+    by_id = {s["id"]: s for s in client.get("/scans", headers=ADMIN_HEADERS).json()}
+    assert by_id[ada_scan]["created_by_user_id"] == ada_id
+    assert by_id[ada_scan]["created_by_name"] == "Ada"
+    assert by_id[ada_scan]["created_by_email"] == "ada@test.local"
+    assert by_id[ci_scan]["created_by_user_id"] is None and by_id[ci_scan]["triggered_by"] == "jenkins"
+    # The owner sees the same on their own list.
+    own = client.get("/scans", headers=ada).json()
+    assert [s["created_by_user_id"] for s in own] == [ada_id]

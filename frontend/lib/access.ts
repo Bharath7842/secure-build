@@ -135,3 +135,17 @@ export type SessionInfo = {
 };
 
 export type Page<T> = { items: T[]; next_cursor: number | null };
+
+/** Who started a scan, as the scan lists show it: "You" for your own,
+ *  the person's name, "CI (Jenkins)" for pipeline scans, or "Before
+ *  accounts" for scans from before sign-in existed. */
+export function startedByLabel(
+  scan: { created_by_user_id?: string | null; created_by_name?: string | null; triggered_by?: string | null },
+  me: Me | null,
+): string {
+  if (scan.created_by_user_id) {
+    if (me && scan.created_by_user_id === me.user.id) return "You";
+    return scan.created_by_name || "Unknown user";
+  }
+  return scan.triggered_by === "jenkins" ? "CI (Jenkins)" : "Before accounts";
+}

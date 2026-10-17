@@ -10,7 +10,8 @@ import ScanStatusBadge from "@/components/ScanStatusBadge";
 import { ApiError, api } from "@/lib/api";
 import { RISK_DOT, RISK_STYLES } from "@/lib/findingStyles";
 import type { DastCounts, Project, Scan } from "@/lib/types";
-import { useCan } from "@/components/auth/AuthProvider";
+import { useAuth, useCan } from "@/components/auth/AuthProvider";
+import { startedByLabel } from "@/lib/access";
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"] as const;
 
@@ -51,6 +52,8 @@ function formatDate(value: string): string {
 
 export default function DastDashboardPage() {
   const can = useCan();
+  const me = useAuth();
+  const seesAll = can("scans.view_all");
   const router = useRouter();
   const [scans, setScans] = useState<Scan[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -157,12 +160,14 @@ export default function DastDashboardPage() {
                 DAST settings
               </Link>
             )}
-            <Link
-              href="/scans/new?type=dast"
-              className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
-            >
-              New DAST scan
-            </Link>
+            {can("scans.create_dast") && (
+              <Link
+                href="/scans/new?type=dast"
+                className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+              >
+                New DAST scan
+              </Link>
+            )}
           </div>
         </div>
 
@@ -230,10 +235,12 @@ export default function DastDashboardPage() {
           <div className="mt-10 rounded-md border border-slate-200 bg-white/60 px-6 py-10 text-center">
             <p className="text-sm text-[var(--muted)]">
               {scans.length === 0
-                ? "No DAST scans yet."
+                ? seesAll
+                  ? "No DAST scans yet."
+                  : "You haven't started any DAST scans yet. Only you and admins can see the ones you start."
                 : "No DAST scans for the selected projects."}
             </p>
-            {scans.length === 0 && projects.length > 0 && (
+            {scans.length === 0 && projects.length > 0 && can("scans.create_dast") && (
               <Link
                 href="/scans/new?type=dast"
                 className="mt-2 inline-block text-sm font-medium text-[var(--accent)]"
@@ -257,6 +264,7 @@ export default function DastDashboardPage() {
                 <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-[var(--muted)]">
                   <th scope="col" className="w-12 py-2 font-medium">#</th>
                   <th scope="col" className="py-2 font-medium">Project</th>
+                  {seesAll && <th scope="col" className="py-2 font-medium">Started by</th>}
                   <th scope="col" className="py-2 font-medium">Target</th>
                   <th scope="col" className="py-2 font-medium">Version</th>
                   <th scope="col" className="py-2 font-medium">Status</th>
@@ -283,6 +291,11 @@ export default function DastDashboardPage() {
                       <td className="py-3 text-[var(--ink)]">
                         {projectNames.get(scan.project_id) ?? "Unknown project"}
                       </td>
+                      {seesAll && (
+                        <td className="py-3 text-[var(--muted)]" title={scan.created_by_email ?? undefined}>
+                          {startedByLabel(scan, me)}
+                        </td>
+                      )}
                       <td className="max-w-[16rem] truncate py-3 text-[var(--ink)]" title={scan.git_url}>
                         <Link href={`/scans/${scan.id}`} className="hover:underline">
                           {scan.git_url}
