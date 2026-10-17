@@ -107,6 +107,8 @@ export type ProjectUpdateInput = Partial<ProjectCreateInput>;
 export interface Scan {
   id: string;
   project_id: string;
+  /** Who started it; null for CI scans and scans from before accounts existed. */
+  created_by_user_id?: string | null;
   git_url: string;
   branch: string;
   commit_sha: string | null;
@@ -168,6 +170,8 @@ export interface ScanStatus {
   scan_type: "sast" | "sca" | "sbom" | "dast" | string;
   progress: number;
   message: string | null;
+  /** Who started it; null for CI scans and scans from before accounts existed. */
+  created_by_user_id?: string | null;
 }
 
 export interface ScanLogLine {
@@ -1478,7 +1482,6 @@ export interface ReviewEvent {
 
 export interface ReviewInput {
   decision: ReviewDecision;
-  reviewer: string;
   comment?: string;
   resolution_notes?: string;
 }

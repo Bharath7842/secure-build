@@ -1,4 +1,16 @@
 import type {
+  AppRole,
+  AppUser,
+  AuditEvent,
+  OneTimeLink,
+  Override,
+  Page,
+  PermissionEntry,
+  SessionInfo,
+  UserAccess,
+  UserDetail,
+} from "@/lib/access";
+import type {
   DastAuthzMatrix,
   DastCatalog,
   DastCustomRule,
@@ -82,8 +94,27 @@ class ApiError extends Error {
   }
 }
 
+/** Where to sign in again when the session has ended, coming back here after. */
+export function signInAgainUrl(): string {
+  const here = `${window.location.pathname}${window.location.search}`;
+  return `/login?${new URLSearchParams({ next: here, reason: "expired" }).toString()}`;
+}
+
+/**
+ * fetch for this app's /api routes. A 401 means the session expired or was
+ * revoked (signed out elsewhere, password changed, account disabled): go to
+ * sign-in rather than show a broken page. 403 is left to the caller.
+ */
+export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const res = await fetch(path, init);
+  if (res.status === 401 && typeof window !== "undefined") {
+    window.location.assign(signInAgainUrl());
+  }
+  return res;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const res = await apiFetch(path, {
     ...init,
     cache: "no-store",
     headers: {
@@ -100,6 +131,63 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  /** The signed-in user's own account. */
+  account: {
+    changePassword: (currentPassword: string, newPassword: string): Promise<{ ok: true }> =>
+      request("/api/auth/password", {
+        method: "POST",
+        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+      }),
+    sessions: (): Promise<SessionInfo[]> => request("/api/auth/sessions"),
+    revokeOtherSessions: (): Promise<{ revoked: number }> =>
+      request("/api/auth/sessions/revoke-others", { method: "POST" }),
+  },
+  /** User management and the audit log (admins). */
+  admin: {
+    catalog: (): Promise<{ permissions: PermissionEntry[]; roles: AppRole[] }> =>
+      request("/api/admin/permissions/catalog"),
+    users: (filter: { q?: string; role?: string; status?: string; cursor?: number } = {}): Promise<Page<AppUser>> => {
+      const params = new URLSearchParams();
+      for (const [key, value] of Object.entries(filter)) {
+        if (value !== undefined && value !== "") params.set(key, String(value));
+      }
+      const search = params.toString();
+      return request(`/api/admin/users${search ? `?${search}` : ""}`);
+    },
+    createUser: (input: {
+      email: string;
+      display_name: string;
+      role: AppRole;
+      overrides?: Record<string, Override>;
+    }): Promise<UserAccess & { user: AppUser; invite_url: string; invite_expires_at: string; added_dependencies: string[] }> =>
+      request("/api/admin/users", { method: "POST", body: JSON.stringify(input) }),
+    user: (id: string): Promise<UserDetail> => request(`/api/admin/users/${encodeURIComponent(id)}`),
+    updateUser: (
+      id: string,
+      patch: { display_name?: string; role?: AppRole; is_active?: boolean },
+    ): Promise<UserAccess & { user: AppUser }> =>
+      request(`/api/admin/users/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+    setPermissions: (
+      id: string,
+      overrides: Record<string, Override>,
+    ): Promise<UserAccess & { added_dependencies: string[] }> =>
+      request(`/api/admin/users/${encodeURIComponent(id)}/permissions`, {
+        method: "PUT",
+        body: JSON.stringify({ overrides }),
+      }),
+    inviteLink: (id: string): Promise<OneTimeLink> =>
+      request(`/api/admin/users/${encodeURIComponent(id)}/invite-link`, { method: "POST" }),
+    resetLink: (id: string): Promise<OneTimeLink> =>
+      request(`/api/admin/users/${encodeURIComponent(id)}/reset-link`, { method: "POST" }),
+    audit: (filter: Record<string, string | number | undefined> = {}): Promise<Page<AuditEvent>> => {
+      const params = new URLSearchParams();
+      for (const [key, value] of Object.entries(filter)) {
+        if (value !== undefined && value !== "") params.set(key, String(value));
+      }
+      const search = params.toString();
+      return request(`/api/admin/audit${search ? `?${search}` : ""}`);
+    },
+  },
   projects: {
     list: (): Promise<Project[]> => request("/api/projects"),
     create: (input: ProjectCreateInput): Promise<Project> =>
@@ -171,7 +259,7 @@ export const api = {
       request(`/api/scans/${id}/logs?after=${after}`),
     narration: (id: string): Promise<DastNarration> => request(`/api/scans/${id}/narration`),
     narrationStream: async (id: string, step: string): Promise<ReadableStreamDefaultReader> => {
-      const res = await fetch(`/api/scans/${id}/narration/stream?step=${encodeURIComponent(step)}`);
+      const res = await apiFetch(`/api/scans/${id}/narration/stream?step=${encodeURIComponent(step)}`);
       if (!res.ok) throw new Error(`${res.status}`);
       return res.body!.getReader();
     },
@@ -203,7 +291,7 @@ export const api = {
       return request(`/api/scans/${id}/requests?${params.toString()}`);
     },
     delete: async (id: string): Promise<void> => {
-      const res = await fetch(`/api/scans/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/scans/${id}`, { method: "DELETE" });
       if (!res.ok) {
         const body = await res.json().catch(() => undefined);
         throw new ApiError(res.status, body);
@@ -230,15 +318,16 @@ export const api = {
         method: "POST",
         body: JSON.stringify(input),
       }),
-    approveForLearning: (reviewIds: string[], actor: string): Promise<{ updated: number; skipped: number }> =>
+    // The signed-in user is recorded as the actor.
+    approveForLearning: (reviewIds: string[]): Promise<{ updated: number; skipped: number }> =>
       request("/api/feedback/learning/approve", {
         method: "POST",
-        body: JSON.stringify({ review_ids: reviewIds, actor }),
+        body: JSON.stringify({ review_ids: reviewIds }),
       }),
-    markProcessed: (reviewIds: string[], actor: string): Promise<{ updated: number; skipped: number }> =>
+    markProcessed: (reviewIds: string[]): Promise<{ updated: number; skipped: number }> =>
       request("/api/feedback/learning/mark-processed", {
         method: "POST",
-        body: JSON.stringify({ review_ids: reviewIds, actor }),
+        body: JSON.stringify({ review_ids: reviewIds }),
       }),
   },
   config: {
@@ -280,7 +369,7 @@ export const api = {
       updateProject: (projectId: string, patch: DastRuleConfigPatch): Promise<unknown> =>
         request(`/api/projects/${projectId}/dast-rules`, { method: "PATCH", body: JSON.stringify(patch) }),
       resetProject: async (projectId: string): Promise<void> => {
-        const res = await fetch(`/api/projects/${projectId}/dast-rules`, { method: "DELETE" });
+        const res = await apiFetch(`/api/projects/${projectId}/dast-rules`, { method: "DELETE" });
         if (!res.ok) {
           const body = await res.json().catch(() => undefined);
           throw new ApiError(res.status, body);
@@ -307,7 +396,7 @@ export const api = {
       update: (checkId: string, yaml: string): Promise<DastCustomRule> =>
         request(`/api/dast/custom-rules/${encodeURIComponent(checkId)}`, { method: "PUT", body: JSON.stringify({ yaml }) }),
       delete: async (checkId: string): Promise<void> => {
-        const res = await fetch(`/api/dast/custom-rules/${encodeURIComponent(checkId)}`, { method: "DELETE" });
+        const res = await apiFetch(`/api/dast/custom-rules/${encodeURIComponent(checkId)}`, { method: "DELETE" });
         if (!res.ok) {
           const body = await res.json().catch(() => undefined);
           throw new ApiError(res.status, body);

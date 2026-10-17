@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { useAuth } from "@/components/auth/AuthProvider";
 import { ApiError, api } from "@/lib/api";
 import { inputClass, selectClass } from "@/lib/formStyles";
 import {
@@ -14,7 +15,6 @@ import {
   describeEvent,
   formatWhen,
   llmVerdictLabel,
-  useReviewerName,
 } from "@/lib/review";
 import type { FeedbackRow, ReviewDecision } from "@/lib/types";
 
@@ -41,7 +41,9 @@ export default function FindingReviewForm({ scanId, findingId, llmVerdict, hasRe
   const [review, setReview] = useState<FeedbackRow | null>(null);
   const [decision, setDecision] = useState<ReviewDecision>("confirmed_issue");
   const [comment, setComment] = useState("");
-  const [reviewer, setReviewer] = useReviewerName();
+  const me = useAuth();
+  // Display only: the backend refuses a review without findings.review.
+  const canReview = !!me?.permissions.includes("findings.review");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -75,7 +77,7 @@ export default function FindingReviewForm({ scanId, findingId, llmVerdict, hasRe
           : "Reason";
 
   const canSubmit =
-    !busy && reviewer.trim() !== "" && (!reasonRequired || comment.trim() !== "") && (!isClosingDecision || confirmed);
+    !busy && (!reasonRequired || comment.trim() !== "") && (!isClosingDecision || confirmed);
 
   async function submit() {
     setBusy(true);
@@ -83,7 +85,6 @@ export default function FindingReviewForm({ scanId, findingId, llmVerdict, hasRe
     try {
       const saved = await api.feedback.submit(scanId, findingId, {
         decision,
-        reviewer: reviewer.trim(),
         ...(isClosingDecision ? { resolution_notes: comment.trim() } : { comment: comment.trim() }),
       });
       setReview(saved);
@@ -140,63 +141,63 @@ export default function FindingReviewForm({ scanId, findingId, llmVerdict, hasRe
         </dl>
       ) : null}
 
-      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        <label className="block">
-          <span className="text-[var(--muted)]">Decision</span>
-          <select
-            className={`${selectClass} !py-1.5 !text-xs`}
-            value={decision}
-            onChange={(e) => setDecision(e.target.value as ReviewDecision)}
-          >
-            {ALL_DECISIONS.map((value) => (
-              <option key={value} value={value} disabled={(value === "resolved" || value === "accept_risk") && !confirmed}>
-                {DECISION_LABEL[value]}
-                {(value === "resolved" || value === "accept_risk") && !confirmed ? " (confirm the issue first)" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block">
-          <span className="text-[var(--muted)]">Your name</span>
-          <input
-            className={`${inputClass} !py-1.5 !text-xs`}
-            value={reviewer}
-            onChange={(e) => setReviewer(e.target.value)}
-            placeholder="Reviewer name"
-            maxLength={120}
+      {canReview && (
+        <>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <label className="block">
+            <span className="text-[var(--muted)]">Decision</span>
+            <select
+              className={`${selectClass} !py-1.5 !text-xs`}
+              value={decision}
+              onChange={(e) => setDecision(e.target.value as ReviewDecision)}
+            >
+              {ALL_DECISIONS.map((value) => (
+                <option key={value} value={value} disabled={(value === "resolved" || value === "accept_risk") && !confirmed}>
+                  {DECISION_LABEL[value]}
+                  {(value === "resolved" || value === "accept_risk") && !confirmed ? " (confirm the issue first)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="block">
+            <span className="text-[var(--muted)]">Recorded as</span>
+            <p className="mt-1.5 truncate py-1.5 text-[var(--ink)]" title={me?.user.email}>
+              {me?.user.display_name || me?.user.email}
+            </p>
+          </div>
+        </div>
+        <label className="mt-2 block">
+          <span className="text-[var(--muted)]">
+            {reasonLabel}
+            {reasonRequired ? " (required)" : " (optional)"}
+          </span>
+          <textarea
+            className={`${inputClass} !text-xs`}
+            rows={2}
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
           />
         </label>
-      </div>
-      <label className="mt-2 block">
-        <span className="text-[var(--muted)]">
-          {reasonLabel}
-          {reasonRequired ? " (required)" : " (optional)"}
-        </span>
-        <textarea
-          className={`${inputClass} !text-xs`}
-          rows={2}
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-        />
-      </label>
-      {overrides ? (
-        <p className="mt-1 text-violet-700">This overrides the LLM verdict; both are kept.</p>
-      ) : null}
-      {error ? (
-        <p role="alert" className="mt-2 text-red-700">
-          {error}
-        </p>
-      ) : null}
-      <div className="mt-2 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={submit}
-          disabled={!canSubmit}
-          className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {busy ? "Saving…" : "Save decision"}
-        </button>
-      </div>
+        {overrides ? (
+          <p className="mt-1 text-violet-700">This overrides the LLM verdict; both are kept.</p>
+        ) : null}
+        {error ? (
+          <p role="alert" className="mt-2 text-red-700">
+            {error}
+          </p>
+        ) : null}
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={submit}
+            disabled={!canSubmit}
+            className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy ? "Saving…" : "Save decision"}
+          </button>
+        </div>
+        </>
+      )}
 
       {review && review.events.length > 0 ? (
         <details className="mt-3">

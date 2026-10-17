@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 
+import { useCan } from "@/components/auth/AuthProvider";
+import { apiFetch } from "@/lib/api";
+
 type ExportFormat = "pdf" | "xlsx";
 
 interface ScanExportButtonsProps {
@@ -12,7 +15,7 @@ interface ScanExportButtonsProps {
 }
 
 async function downloadExport(scanId: string, format: ExportFormat): Promise<void> {
-  const res = await fetch(`/api/scans/${scanId}/export/${format}`, { cache: "no-store" });
+  const res = await apiFetch(`/api/scans/${scanId}/export/${format}`, { cache: "no-store" });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     const detail =
@@ -63,6 +66,7 @@ export default function ScanExportButtons({
 }: ScanExportButtonsProps) {
   const [busy, setBusy] = useState<ExportFormat | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const can = useCan();
 
   async function handleExport(format: ExportFormat) {
     setBusy(format);
@@ -107,6 +111,8 @@ export default function ScanExportButtons({
       </div>
     );
   }
+
+  if (!can("reports.export")) return null;
 
   return (
     <div className="flex flex-col items-stretch gap-2 sm:items-end">

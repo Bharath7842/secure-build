@@ -9,6 +9,7 @@ import PageContainer from "@/components/PageContainer";
 import ProjectForm from "@/components/ProjectForm";
 import { ApiError, api } from "@/lib/api";
 import type { Project, ProjectCreateInput, Scan } from "@/lib/types";
+import { useCan } from "@/components/auth/AuthProvider";
 
 const SCAN_STATUS_LABELS: Record<string, string> = {
   queued: "Queued",
@@ -26,6 +27,7 @@ function formatDate(value: string): string {
 }
 
 export default function ProjectDetailPage() {
+  const can = useCan();
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const id = params.id;
@@ -114,25 +116,31 @@ export default function ProjectDetailPage() {
             )}
           </div>
           <div className="flex shrink-0 flex-col gap-2">
-            <Link
-              href={`/scans/new?project_id=${project.id}`}
-              className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
-            >
-              New Scan
-            </Link>
-            <Link
-              href={`/projects/${project.id}/settings`}
-              className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
-            >
-              Settings
-            </Link>
-            <button
-              type="button"
-              onClick={() => setShowDeleteModal(true)}
-              className="rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-100"
-            >
-              Delete project
-            </button>
+            {can("scans.create") && (
+              <Link
+                href={`/scans/new?project_id=${project.id}`}
+                className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+              >
+                New Scan
+              </Link>
+            )}
+            {can("projects.manage") && (
+              <Link
+                href={`/projects/${project.id}/settings`}
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                Settings
+              </Link>
+            )}
+            {can("projects.manage") && (
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(true)}
+                className="rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-100"
+              >
+                Delete project
+              </button>
+            )}
           </div>
         </div>
 

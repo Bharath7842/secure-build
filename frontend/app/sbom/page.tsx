@@ -8,6 +8,7 @@ import PageContainer from "@/components/PageContainer";
 import ScanStatusBadge from "@/components/ScanStatusBadge";
 import { ApiError, api } from "@/lib/api";
 import type { Project, Scan } from "@/lib/types";
+import { useCan } from "@/components/auth/AuthProvider";
 
 function formatDate(value: string): string {
   try {
@@ -18,6 +19,7 @@ function formatDate(value: string): string {
 }
 
 export default function SbomDashboardPage() {
+  const can = useCan();
   const [scans, setScans] = useState<Scan[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -241,15 +243,17 @@ export default function SbomDashboardPage() {
                           <Link href={`/scans/${scan.id}`} className="font-medium text-[var(--accent)]">
                             View →
                           </Link>
-                          <button
-                            type="button"
-                            disabled={deleting === scan.id || isActive}
-                            onClick={() => deleteScan(scan.id)}
-                            title={isActive ? "Stop the scan first, then delete" : "Delete scan"}
-                            className="font-medium text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-40 disabled:no-underline"
-                          >
-                            {deleting === scan.id ? "Deleting…" : "Delete"}
-                          </button>
+                          {can("scans.delete") && (
+                            <button
+                              type="button"
+                              disabled={deleting === scan.id || isActive}
+                              onClick={() => deleteScan(scan.id)}
+                              title={isActive ? "Stop the scan first, then delete" : "Delete scan"}
+                              className="font-medium text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-40 disabled:no-underline"
+                            >
+                              {deleting === scan.id ? "Deleting…" : "Delete"}
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

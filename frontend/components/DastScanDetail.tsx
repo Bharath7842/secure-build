@@ -17,6 +17,8 @@ import ScanStatusBadge from "@/components/ScanStatusBadge";
 import { ApiError, api } from "@/lib/api";
 import { dastRoutingLabel, formatDastModel } from "@/lib/dastModels";
 import type { DastDiscovery, DastNarration, DastSummary, Project, Scan, ScanStatus } from "@/lib/types";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { canStopScan } from "@/lib/access";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -424,6 +426,7 @@ interface DastScanDetailProps {
 /** Detail view for scan_type=dast — same shape as the SAST page: the live
  * engine log on the left, discovery results in a resizable side panel. */
 export default function DastScanDetail({ scanId }: DastScanDetailProps) {
+  const me = useAuth();
   const [status, setStatus] = useState<ScanStatus | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [project, setProject] = useState<Project | null>(null);
@@ -761,7 +764,7 @@ export default function DastScanDetail({ scanId }: DastScanDetailProps) {
                   }
                 />
               </div>
-              {!terminal && (
+              {!terminal && canStopScan(me, status) && (
                 <div className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200 px-6 py-3">
                   <p className="text-xs text-[var(--muted)]">Scan in progress · {status.progress}%</p>
                   <button

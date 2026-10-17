@@ -1,7 +1,5 @@
 /** Wording, styling and small helpers shared by every reviewer-feedback view. */
 
-import { useCallback, useState } from "react";
-
 import type {
   IssueStatus,
   LearningStatus,
@@ -102,29 +100,4 @@ export function describeEvent(event: ReviewEvent): string {
     default:
       return `${event.actor} — ${event.action}`;
   }
-}
-
-const REVIEWER_KEY = "reviewer-name";
-
-function readReviewer(): string {
-  try {
-    return window.localStorage.getItem(REVIEWER_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-/** The reviewer's self-entered name, remembered in this browser. There is no login, so the
- *  backend records it as given. */
-export function useReviewerName(): [string, (name: string) => void] {
-  const [name, setName] = useState<string>(() => (typeof window === "undefined" ? "" : readReviewer()));
-  const update = useCallback((next: string) => {
-    setName(next);
-    try {
-      window.localStorage.setItem(REVIEWER_KEY, next);
-    } catch {
-      // storage can be blocked; the name still works for this session
-    }
-  }, []);
-  return [name, update];
 }

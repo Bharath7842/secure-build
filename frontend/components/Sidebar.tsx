@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createContext, useContext, useEffect, useState } from "react";
 
+import { useAuth } from "@/components/auth/AuthProvider";
+
 const STORAGE_KEY = "sidebar-collapsed";
 
 type NavItem = {
@@ -14,6 +16,8 @@ type NavItem = {
   /** Extra paths that should highlight this nav item */
   matchPaths?: string[];
   isActive?: (pathname: string) => boolean;
+  /** Page key (lib/access.ts) the user needs for this link to show. */
+  page?: string;
   icon?:
     | "folder"
     | "plus"
@@ -27,7 +31,11 @@ type NavItem = {
     | "package"
     | "layers"
     | "shield"
-    | "target";
+    | "target"
+    | "users"
+    | "audit"
+    | "user"
+    | "logout";
 };
 
 function NavIcon({ name }: { name: NonNullable<NavItem["icon"]> }) {
@@ -130,6 +138,34 @@ function NavIcon({ name }: { name: NonNullable<NavItem["icon"]> }) {
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
         </svg>
       );
+    case "users":
+      return (
+        <svg {...props}>
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+      );
+    case "audit":
+      return (
+        <svg {...props}>
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <path d="M14 2v6h6M8 13h8M8 17h5" />
+        </svg>
+      );
+    case "user":
+      return (
+        <svg {...props}>
+          <circle cx="12" cy="8" r="4" />
+          <path d="M4 21v-1a7 7 0 0 1 14 0v1" />
+        </svg>
+      );
+    case "logout":
+      return (
+        <svg {...props}>
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
+        </svg>
+      );
     case "target":
       return (
         <svg {...props}>
@@ -142,19 +178,20 @@ function NavIcon({ name }: { name: NonNullable<NavItem["icon"]> }) {
 }
 
 const SAST_LINKS: NavItem[] = [
-  { href: "/scans/new", label: "SAST", short: "AS", exact: true, icon: "play" },
+  { href: "/scans/new", label: "SAST", short: "AS", exact: true, icon: "play", page: "page.scan_sast" },
   // Static / build-time analysis of source and artifacts — grouped with SAST.
   { href: "/iac-security", label: "IaC Security", short: "IaC", exact: true, icon: "cloud" },
-  { href: "/sca", label: "SCA", short: "SCA", exact: true, icon: "package" },
-  { href: "/sbom", label: "SBOM", short: "SB", exact: true, icon: "layers" },
-  { href: "/dast", label: "DAST", short: "DA", exact: true, icon: "target" },
-  { href: "/feedback", label: "Feedback & Review", short: "FR", exact: true, icon: "findings" },
+  { href: "/sca", label: "SCA", short: "SCA", exact: true, icon: "package", page: "page.scan_sca" },
+  { href: "/sbom", label: "SBOM", short: "SB", exact: true, icon: "layers", page: "page.scan_sbom" },
+  { href: "/dast", label: "DAST", short: "DA", exact: true, icon: "target", page: "page.dast" },
+  { href: "/feedback", label: "Feedback & Review", short: "FR", exact: true, icon: "findings", page: "page.feedback" },
   {
     href: "/scans",
     label: "History",
     short: "Hi",
     exact: true,
     icon: "clock",
+    page: "page.history",
     // Exact history list + scan detail pages; do not steal /scans/new
     isActive: (p) => p === "/scans" || (p.startsWith("/scans/") && !p.startsWith("/scans/new")),
   },
@@ -164,11 +201,17 @@ const SAST_LINKS: NavItem[] = [
     short: "Pr",
     exact: true,
     icon: "folder",
+    page: "page.projects",
     // Exact list + project detail pages; do not steal /projects/new
     isActive: (p) => p === "/projects" || (p.startsWith("/projects/") && !p.startsWith("/projects/new")),
   },
-  { href: "/projects/new", label: "New Project", short: "NP", exact: true, icon: "plus" },
-  { href: "/settings", label: "Settings", short: "Se", exact: true, icon: "settings" },
+  { href: "/projects/new", label: "New Project", short: "NP", exact: true, icon: "plus", page: "page.project_new" },
+  { href: "/settings", label: "Settings", short: "Se", exact: true, icon: "settings", page: "page.settings" },
+];
+
+const ADMIN_LINKS: NavItem[] = [
+  { href: "/admin/users", label: "Users", short: "Us", icon: "users", page: "page.admin_users" },
+  { href: "/admin/audit", label: "Audit log", short: "Au", icon: "audit", page: "page.admin_audit" },
 ];
 
 const SidebarContext = createContext(false);
@@ -216,6 +259,51 @@ function NavLink({ href, label, short, exact, matchPaths, isActive, icon }: NavI
   );
 }
 
+/** Who is signed in, a link to their account, and sign out. */
+function UserMenu() {
+  const me = useAuth();
+  const collapsed = useContext(SidebarContext);
+  const [signingOut, setSigningOut] = useState(false);
+  if (!me) return null;
+  const name = me.user.display_name || me.user.email;
+
+  async function signOut() {
+    setSigningOut(true);
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      // Full navigation: nothing from the signed-in session stays in memory.
+      window.location.assign("/login");
+    }
+  }
+
+  return (
+    <div className="mt-4 border-t border-white/10 pt-4">
+      {!collapsed && (
+        <div className="mb-2 px-3">
+          <p className="truncate text-sm font-medium text-white" title={me.user.email}>
+            {name}
+          </p>
+          <p className="text-xs text-slate-400">{me.user.role === "admin" ? "Admin" : "User"}</p>
+        </div>
+      )}
+      <NavLink href="/account" label="Account" short="Ac" icon="user" exact />
+      <button
+        type="button"
+        onClick={signOut}
+        disabled={signingOut}
+        title={collapsed ? "Sign out" : undefined}
+        className={`flex w-full items-center gap-2.5 rounded-md py-2 text-sm text-slate-300 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-60 ${
+          collapsed ? "justify-center px-2" : "px-3"
+        }`}
+      >
+        <NavIcon name="logout" />
+        {!collapsed && (signingOut ? "Signing out…" : "Sign out")}
+      </button>
+    </div>
+  );
+}
+
 function ToggleIcon({ collapsed }: { collapsed: boolean }) {
   return (
     <svg
@@ -236,6 +324,9 @@ function ToggleIcon({ collapsed }: { collapsed: boolean }) {
 }
 
 export default function Sidebar() {
+  const me = useAuth();
+  const visible = (item: NavItem) => !item.page || !!me?.pages.includes(item.page);
+  const adminLinks = ADMIN_LINKS.filter(visible);
   const [collapsed, setCollapsed] = useState(false);
   const [mounted, setMounted] = useState(false);
 
@@ -269,7 +360,7 @@ export default function Sidebar() {
       >
         <div className={`flex items-center ${collapsed ? "flex-col gap-3" : "justify-between gap-2"}`}>
           <Link
-            href="/projects"
+            href={me?.landing ?? "/"}
             className={`whitespace-nowrap font-display tracking-wide text-white transition-all ${
               collapsed ? "text-lg" : "text-2xl"
             }`}
@@ -289,10 +380,22 @@ export default function Sidebar() {
         </div>
 
         <nav className="mt-8 flex flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden">
-          {SAST_LINKS.map((link) => (
+          {SAST_LINKS.filter(visible).map((link) => (
             <NavLink key={link.href} {...link} />
           ))}
+          {adminLinks.length > 0 && (
+            <>
+              {!collapsed && (
+                <p className="mt-6 mb-1 px-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Admin</p>
+              )}
+              {collapsed && <div className="my-3 border-t border-white/10" aria-hidden />}
+              {adminLinks.map((link) => (
+                <NavLink key={link.href} {...link} />
+              ))}
+            </>
+          )}
         </nav>
+        <UserMenu />
       </aside>
     </SidebarContext.Provider>
   );

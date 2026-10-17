@@ -8,6 +8,8 @@ import PageContainer from "@/components/PageContainer";
 import ScanStatusBadge from "@/components/ScanStatusBadge";
 import { ApiError, api } from "@/lib/api";
 import type { Project, Scan } from "@/lib/types";
+import { useAuth, useCan } from "@/components/auth/AuthProvider";
+import { canStopScan } from "@/lib/access";
 
 function formatDate(value: string): string {
   try {
@@ -44,6 +46,8 @@ function triggerLabel(scan: Scan): string {
 }
 
 export default function ScanHistoryPage() {
+  const can = useCan();
+  const me = useAuth();
   const [scans, setScans] = useState<Scan[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -264,14 +268,16 @@ export default function ScanHistoryPage() {
                 {selectedProjectIds.size > 0 ? ` of ${scans.length}` : ""} scan
                 {filteredScans.length === 1 ? "" : "s"}
               </p>
-              <button
-                type="button"
-                disabled={deleting || selectedScanIds.size === 0}
-                onClick={() => deleteScans([...selectedScanIds])}
-                className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 transition-opacity hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {deleting ? "Deleting…" : `Delete selected (${selectedScanIds.size})`}
-              </button>
+              {can("scans.delete") && (
+                <button
+                  type="button"
+                  disabled={deleting || selectedScanIds.size === 0}
+                  onClick={() => deleteScans([...selectedScanIds])}
+                  className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 transition-opacity hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {deleting ? "Deleting…" : `Delete selected (${selectedScanIds.size})`}
+                </button>
+              )}
             </div>
 
             <table className="mt-4 w-full text-left text-sm">
@@ -335,7 +341,7 @@ export default function ScanHistoryPage() {
                           <Link href={`/scans/${scan.id}`} className="font-medium text-[var(--accent)]">
                             View →
                           </Link>
-                          {isActive && (
+                          {isActive && canStopScan(me, scan) && (
                             <button
                               type="button"
                               disabled={stopping === scan.id}

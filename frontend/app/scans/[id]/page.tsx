@@ -27,6 +27,8 @@ import { hasUsageData } from "@/lib/formatUsage";
 import { DEEP_SCAN_SECTION_RE, TRIAGE_SECTION_RE, extractProjectStructureTree } from "@/lib/parseScanLog";
 import { DESKTOP_SPLIT_QUERY, useMediaQuery } from "@/lib/useMediaQuery";
 import type { Project, Scan, ScanDiscovery, ScanLogLine, ScanResults, ScanStatus } from "@/lib/types";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { canStopScan } from "@/lib/access";
 
 const POLL_INTERVAL_MS = 2000;
 const RESULTS_RETRY_MS = 2000;
@@ -40,6 +42,7 @@ function isActiveStatus(status: string): boolean {
 }
 
 export default function ScanDetailPage() {
+  const me = useAuth();
   const params = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const id = params.id;
@@ -654,7 +657,7 @@ export default function ScanDetailPage() {
               scanStatus={status.status}
               progress={status.progress}
               failureMessage={terminal && status.status === "failed" ? status.message : null}
-              showStop={isActiveStatus(status.status)}
+              showStop={isActiveStatus(status.status) && canStopScan(me, status)}
               stopping={stopping}
               onStop={stopScan}
               structureOpen={sidePanel === "structure"}

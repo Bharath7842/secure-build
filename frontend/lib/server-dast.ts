@@ -3,13 +3,13 @@ import { NextResponse } from "next/server";
 import { sastFetch } from "@/lib/server-sast";
 
 /**
- * Proxy helper for the DAST routes. Server-only (it pulls in the bearer token
- * through `sastFetch`): never import this module from a client component.
+ * JSON passthrough to the backend, as the signed-in user (via `sastFetch`).
+ * Server-only: never import this module from a client component.
  *
  * Status mapping the UI relies on:
- *  - backend answered: its status and JSON body pass through (a wrong token is a 401);
+ *  - backend answered: its status and JSON body pass through (no or an expired session is a 401);
  *  - backend unreachable or answered with non-JSON: 502;
- *  - this server is missing SAST_API_URL / SAST_API_TOKEN: 500 naming the variable.
+ *  - this server is missing SAST_API_URL: 500 naming the variable.
  */
 /** Map a thrown proxy error to the status the UI relies on: a missing server-side env var is a
  *  500 naming the variable; anything else (backend down, bad response) is a 502. */

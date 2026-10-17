@@ -4,6 +4,8 @@ Generic bash script for any CI pipeline. Secure Build exposes a REST API behind 
 
 **Base URL:** set `SAST_API_URL` (e.g. `https://sast.example.com`) and `SAST_API_TOKEN` in your CI environment.
 
+**Token scope:** `SAST_API_TOKEN` is the CI credential. It can create projects, start scans (including DAST), poll them and read results and exports; it cannot manage users, change settings or delete scans. People use their own accounts in the web app. Scans started with it show as CI scans with no owner, so in the web app only admins (and users allowed *View all scans*) see them.
+
 **Prerequisite:** [`jq`](https://jqlang.github.io/jq/) must be installed for JSON parsing (`apt install jq`, `brew install jq`, etc.).
 
 ## One-time project setup

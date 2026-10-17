@@ -1,5 +1,8 @@
 import { redirect } from "next/navigation";
 
-export default function Home() {
-  redirect("/projects");
+import { getSession } from "@/lib/server-session";
+
+export default async function Home() {
+  const me = await getSession();
+  redirect(me ? me.landing : "/login");
 }

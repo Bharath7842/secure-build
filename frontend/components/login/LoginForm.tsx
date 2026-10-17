@@ -1,7 +1,11 @@
 "use client";
 
-import { useRef, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
+
+import auth from "@/components/auth/auth.module.css";
 
 import styles from "./login.module.css";
 
@@ -18,15 +22,12 @@ function validatePassword(value: string): string | null {
   return value ? null : "Enter your password.";
 }
 
-/** Only follow same-origin relative redirects. */
-function safeNextPath(): string {
+function searchParam(name: string): string | null {
   try {
-    const next = new URLSearchParams(window.location.search).get("next");
-    if (next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/login")) return next;
+    return new URLSearchParams(window.location.search).get(name);
   } catch {
-    /* ignore */
+    return null;
   }
-  return "/projects";
 }
 
 function Icon({ children, size = 20 }: { children: ReactNode; size?: number }) {
@@ -68,12 +69,24 @@ export default function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [remember, setRemember] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
   const [touched, setTouched] = useState({ email: false, password: false });
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
+
+  const expired = useSearchParams().get("reason") === "expired";
+
+  useEffect(() => {
+    // A brand-new install has no accounts yet: point at first-admin setup.
+    fetch("/api/setup/status", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => setSetupOpen(Boolean(body?.open)))
+      .catch(() => {});
+  }, []);
 
   const emailError = touched.email ? validateEmail(email) : null;
   const passwordError = touched.password ? validatePassword(password) : null;
@@ -99,18 +112,21 @@ export default function LoginForm() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), password }),
+        // The server decides where to go: `next` if it's safe and allowed, else the start page.
+        body: JSON.stringify({ email: email.trim(), password, remember, next: searchParam("next") }),
       });
 
       if (res.ok) {
+        const { redirect } = (await res.json()) as { redirect: string };
         // Full navigation so the new session is picked up by every server route.
-        window.location.assign(safeNextPath());
+        window.location.assign(redirect);
         return;
       }
       if (res.status === 400 || res.status === 401) {
         setFormError("The email or password is incorrect. Check your details and try again.");
-      } else if (res.status === 501) {
-        setFormError("Sign-in is not available yet. Contact your administrator for access.");
+      } else if (res.status === 429) {
+        const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+        setFormError(body?.detail ?? "Too many attempts. Wait a few minutes and try again.");
       } else {
         setFormError("We couldn’t sign you in right now. Please try again in a moment.");
       }
@@ -123,6 +139,16 @@ export default function LoginForm() {
   return (
     <>
       <form onSubmit={onSubmit} noValidate aria-busy={submitting} className={styles.form}>
+        {expired && (
+          <div role="status" className={auth.notice}>
+            <Icon size={18}>
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 6v6l4 2" />
+            </Icon>
+            <span>Your session ended. Sign in again to continue where you left off.</span>
+          </div>
+        )}
+
         <div>
           <label htmlFor="email" className={styles.label}>
             Work email
@@ -180,6 +206,11 @@ export default function LoginForm() {
           <FieldError id="password-error" message={passwordError} />
         </div>
 
+        <label className={auth.checkRow}>
+          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+          Keep me signed in on this device
+        </label>
+
         {formError && (
           <div role="alert" className={styles.formError}>
             <Icon size={18}>
@@ -215,6 +246,19 @@ export default function LoginForm() {
           {submitting ? "Signing in…" : "Sign in"}
         </button>
       </form>
+      <p className={auth.aside}>
+        Forgot your password? Ask your administrator for a reset link.
+        {setupOpen && (
+          <>
+            {" "}
+            First time here?{" "}
+            <Link href="/setup" className={auth.link}>
+              Set up the first admin account
+            </Link>
+            .
+          </>
+        )}
+      </p>
       <p role="status" aria-live="polite" aria-atomic="true" className="sr-only">
         {submitting ? "Signing in. Please wait." : ""}
       </p>

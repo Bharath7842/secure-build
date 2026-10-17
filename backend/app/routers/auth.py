@@ -46,12 +46,14 @@ def start_session(db: Session, request: Request, user: User, remember: bool) -> 
     token, row = sessions.create_session(
         db, user, remember=remember, ip=client_ip(request), user_agent=user_agent(request)
     )
+    held = effective_permissions(user.role, user.overrides)
     return SessionOut(
         token=token,
-        expires_at=row.absolute_expires_at,
+        expires_at=sessions.as_utc(row.absolute_expires_at),
         remember=remember,
         user=UserOut.model_validate(user),
-        landing=landing_path(effective_permissions(user.role, user.overrides)),
+        landing=landing_path(held),
+        pages=sorted(k for k in held if BY_KEY[k].kind == "page"),
     )
 
 
@@ -134,9 +136,10 @@ def change_password(
     set_password(db, user, body.new_password)
     db.commit()
     sessions.revoke_user_sessions(db, user.id, "password_changed", except_session_id=principal.session_id)
-    token = sessions.rotate_session(db, db.get(UserSession, principal.session_id))
+    row = db.get(UserSession, principal.session_id)
+    token = sessions.rotate_session(db, row)
     record(db, request, "user.password.changed", principal, target_type="user", target_id=user.id)
-    return {"token": token}
+    return {"token": token, "remember": row.remember, "expires_at": sessions.as_utc(row.absolute_expires_at)}
 
 
 @router.post("/setup", dependencies=[Depends(public)])
@@ -175,8 +178,8 @@ def list_sessions(principal: Principal = Depends(require_user), db: Session = De
     return [
         {
             "id": r.id,
-            "created_at": r.created_at,
-            "last_seen_at": r.last_seen_at,
+            "created_at": sessions.as_utc(r.created_at),
+            "last_seen_at": sessions.as_utc(r.last_seen_at),
             "ip": r.ip,
             "user_agent": r.user_agent,
             "remember": r.remember,

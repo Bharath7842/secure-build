@@ -379,6 +379,8 @@ class ScanOut(BaseModel):
     version: int
     progress: int
     message: str | None = None
+    # Who started it; None for CI scans and scans from before accounts existed.
+    created_by_user_id: str | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
     fallback_llm_provider: str | None = None
@@ -438,6 +440,7 @@ class ScanStatusOut(BaseModel):
     scan_type: str = "sast"
     progress: int
     message: str | None = None
+    created_by_user_id: str | None = None
 
 
 class ScanLogLine(BaseModel):

@@ -141,7 +141,7 @@ def create_user(
         **_access(user),
         "added_dependencies": added,
         "invite_url": _link(token),
-        "invite_expires_at": row.expires_at,
+        "invite_expires_at": sessions.as_utc(row.expires_at),
     }
 
 
@@ -260,7 +260,7 @@ def new_invite_link(user_id: str, request: Request, principal: Principal = Depen
         raise ApiError(409, "not_invited", "This user has already set a password. Send a reset link instead.")
     token, row = sessions.issue_user_token(db, user, "invite", created_by_user_id=principal.user_id)
     record(db, request, "user.invite.issued", principal, target_type="user", target_id=user.id)
-    return OneTimeLinkOut(url=_link(token), expires_at=row.expires_at)
+    return OneTimeLinkOut(url=_link(token), expires_at=sessions.as_utc(row.expires_at))
 
 
 @router.post("/users/{user_id}/reset-link", response_model=OneTimeLinkOut)
@@ -271,7 +271,7 @@ def new_reset_link(user_id: str, request: Request, principal: Principal = Depend
         raise ApiError(409, "not_active", "Only active users with a password can be sent a reset link.")
     token, row = sessions.issue_user_token(db, user, "reset", created_by_user_id=principal.user_id)
     record(db, request, "user.reset.issued", principal, target_type="user", target_id=user.id)
-    return OneTimeLinkOut(url=_link(token), expires_at=row.expires_at)
+    return OneTimeLinkOut(url=_link(token), expires_at=sessions.as_utc(row.expires_at))
 
 
 def event_out(e: AuditEvent) -> dict:

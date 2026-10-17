@@ -15,6 +15,8 @@ import type {
   SbomCostClassification,
   SbomDiscovery,
 } from "@/lib/types";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { canStopScan } from "@/lib/access";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -88,6 +90,7 @@ interface SbomScanDetailProps {
  * dedicated component-inventory layout for scan_type=sbom (see
  * `scan_export.py`); there is no separate CycloneDX/SPDX download surface. */
 export default function SbomScanDetail({ scanId }: SbomScanDetailProps) {
+  const me = useAuth();
   const [status, setStatus] = useState<ScanStatus | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [project, setProject] = useState<Project | null>(null);
@@ -285,14 +288,16 @@ export default function SbomScanDetail({ scanId }: SbomScanDetailProps) {
               : "Scanning dependency manifests and classifying licenses…"}{" "}
             ({status.progress}%)
           </p>
-          <button
-            type="button"
-            disabled={stopping}
-            onClick={stopScan}
-            className="rounded-md border border-blue-300 bg-white px-3 py-1 text-xs font-medium text-blue-800 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {stopping ? "Stopping…" : "Stop scan"}
-          </button>
+          {canStopScan(me, status) && (
+            <button
+              type="button"
+              disabled={stopping}
+              onClick={stopScan}
+              className="rounded-md border border-blue-300 bg-white px-3 py-1 text-xs font-medium text-blue-800 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {stopping ? "Stopping…" : "Stop scan"}
+            </button>
+          )}
         </div>
       )}
 

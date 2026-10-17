@@ -14,17 +14,18 @@ Secure Build is an application-security platform with a **FastAPI** backend and 
 
 1. [Features](#features)
 2. [Architecture](#architecture)
-3. [Repository layout](#repository-layout)
-4. [Quick start (macOS / Windows)](#quick-start-macos--windows)
-5. [Running on Linux](#running-on-linux)
-6. [Configuration](#configuration)
-7. [Using the app](#using-the-app)
-8. [How a SAST scan works](#how-a-sast-scan-works)
-9. [API overview](#api-overview)
-10. [CI integration](#ci-integration)
-11. [Testing](#testing)
-12. [Troubleshooting](#troubleshooting)
-13. [Further documentation](#further-documentation)
+3. [Accounts and access](#accounts-and-access)
+4. [Repository layout](#repository-layout)
+5. [Quick start (macOS / Windows)](#quick-start-macos--windows)
+6. [Running on Linux](#running-on-linux)
+7. [Configuration](#configuration)
+8. [Using the app](#using-the-app)
+9. [How a SAST scan works](#how-a-sast-scan-works)
+10. [API overview](#api-overview)
+11. [CI integration](#ci-integration)
+12. [Testing](#testing)
+13. [Troubleshooting](#troubleshooting)
+14. [Further documentation](#further-documentation)
 
 ---
 
@@ -60,7 +61,7 @@ Secure Build is an application-security platform with a **FastAPI** backend and 
 
 ```
  Browser ──► Next.js frontend (:3000)
-               │  app/api/**/route.ts  (server-side proxy, attaches the bearer token)
+               │  app/api/**/route.ts  (server-side proxy, forwards the user's session)
                ▼
             FastAPI backend (:8000)  ◄── CI systems (Bearer token)
                │
@@ -73,9 +74,33 @@ Secure Build is an application-security platform with a **FastAPI** backend and 
                └──── LLM providers: Bedrock · OpenAI-compatible · Ollama
 ```
 
-- The browser never talks to the backend directly and never sees `SAST_API_TOKEN`. The frontend's server-side routes add it.
-- Every backend endpoint except `/health` requires `Authorization: Bearer <SAST_API_TOKEN>`.
+- People sign in with their own accounts. The session lives in an HttpOnly cookie; the frontend's server-side routes forward it to the backend as `Authorization: Session <token>`. The browser never talks to the backend directly.
+- The backend checks a permission on every endpoint except `/health`, `/setup` and sign-in. Admins have full access; regular users see only the pages and actions an admin allows, and by default only their own scans. See [Accounts and access](#accounts-and-access).
+- `SAST_API_TOKEN` is now the **CI** credential only (`Authorization: Bearer <SAST_API_TOKEN>`): it can create projects, start scans and read results, nothing admin.
 - The SAST engine is a LangGraph agent that is loaded **by path** (`SAST_FRAMEWORK_PATH`, default `backend/sast_engine`). With `USE_MOCK_ENGINE=true` it is never imported, so the mock/test setup needs no `boto3`, `langgraph` or tree-sitter.
+
+---
+
+## Accounts and access
+
+- **First admin.** Set `SETUP_TOKEN` (32+ characters) in the root `.env`, restart the backend and open `/setup`. It works only while there are no accounts and closes for good after the first one. There are no default passwords.
+- **Adding people.** Admins create users under **Admin → Users** and get a one-time invite link (72 h) to send them directly; the person sets their own password. Nothing is emailed. Password resets work the same way: a 24 h link from the user's page.
+- **Roles.** *Admin*: everything, including users, settings and the audit log. *User*: by default Projects, SAST/SCA/SBOM scans, History and exports, and only **their own** scans. Admins can allow or deny individual pages and actions per user (deny wins); changes apply on the user's next click.
+- **Sessions.** 8 h idle and 12 h maximum, or 14 days with "Keep me signed in". Disabling a user, a password reset or removing admin signs them out everywhere.
+- **Audit log.** Sign-ins (including failures), account and permission changes, and scan starts, stops and deletions, under **Admin → Audit log**. Passwords, tokens and links are never recorded.
+- **Existing scans** from before accounts existed, and CI scans, have no owner: admins (and users allowed *View all scans*) see them.
+- **CI** keeps using `SAST_API_TOKEN` as before (see `docs/ci/`).
+
+| Setting (root `.env`) | Default | Purpose |
+|---|---|---|
+| `SETUP_TOKEN` | unset | Needed once, to create the first admin on `/setup` |
+| `SESSION_IDLE_MINUTES` / `SESSION_ABSOLUTE_HOURS` / `SESSION_REMEMBER_DAYS` | 480 / 12 / 14 | Session lifetimes |
+| `INVITE_TTL_HOURS` / `RESET_TTL_HOURS` | 72 / 24 | One-time link lifetimes |
+| `PUBLIC_APP_URL` | `http://localhost:3000` | Base of invite and reset links |
+| `FRONTEND_PROXY_SECRET` | unset | Same value in `frontend/.env.local`; lets sign-in rate limits see each browser's address |
+| `AUDIT_RETENTION_DAYS` | 365 | Older audit events are deleted at startup |
+
+Frontend (`frontend/.env.local`): `SAST_API_URL`, and optionally `FRONTEND_PROXY_SECRET`, `APP_ORIGIN` (public origin behind a reverse proxy) and `SESSION_COOKIE_SECURE=false` (only to run a production build over plain http).
 
 ---
 
@@ -117,8 +142,9 @@ pip install -r requirements.txt
 Create `.env` in the **repository root** (see [Configuration](#configuration) for all options):
 
 ```bash
-cat > ../.env <<'EOF'
+cat > ../.env <<EOF
 SAST_API_TOKEN=change-me-to-a-long-random-string
+SETUP_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
 USE_MOCK_ENGINE=true
 EOF
 ```
@@ -138,12 +164,11 @@ cd frontend
 npm install
 cat > .env.local <<'EOF'
 SAST_API_URL=http://localhost:8000
-SAST_API_TOKEN=change-me-to-a-long-random-string
 EOF
 npm run dev
 ```
 
-`SAST_API_TOKEN` here **must equal** the backend's. Open http://localhost:3000.
+Open http://localhost:3000/setup and create the first admin with the `SETUP_TOKEN` from the root `.env` (setup closes once an account exists). Then add people from **Admin → Users**.
 
 ### 3. Go live (real scans)
 
@@ -200,16 +225,16 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Create the root `.env`. Generate a strong token and reuse it in the frontend:
+Create the root `.env`. `SAST_API_TOKEN` is for CI; `SETUP_TOKEN` creates the first admin:
 
 ```bash
 cd ..
-TOKEN="$(openssl rand -hex 32)"
 cat > .env <<EOF
-SAST_API_TOKEN=${TOKEN}
+SAST_API_TOKEN=$(openssl rand -hex 32)
+SETUP_TOKEN=$(openssl rand -hex 32)
 USE_MOCK_ENGINE=true
 EOF
-echo "Your API token: ${TOKEN}"
+grep SETUP_TOKEN .env      # you'll paste this on /setup
 ```
 
 Run the API:
@@ -228,7 +253,6 @@ cd frontend
 npm install
 cat > .env.local <<EOF
 SAST_API_URL=http://127.0.0.1:8000
-SAST_API_TOKEN=${TOKEN}
 EOF
 npm run dev                 # development, http://localhost:3000
 ```
@@ -321,7 +345,7 @@ sudo systemctl enable --now secure-build-api secure-build-web
 journalctl -u secure-build-api -f
 ```
 
-Put a reverse proxy (nginx or Caddy) with TLS in front of port 3000 if the app is reachable beyond localhost. Do not expose the API port publicly without TLS, because the bearer token is the only credential.
+Put a reverse proxy (nginx or Caddy) with TLS in front of port 3000 if the app is reachable beyond localhost. Keep the API port off the public internet: only the frontend and CI need it. Session cookies are Secure (HTTPS-only) in production builds.
 
 ### 8. Linux notes
 
@@ -340,7 +364,8 @@ The backend reads the **root** `.env` file (`secure-build/.env`) via `app/config
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SAST_API_TOKEN` | `changeme-token` | Bearer token required by every API call. **Change it.** The frontend must use the same value. |
+| `SAST_API_TOKEN` | `changeme-token` | CI bearer token (create projects, start scans, read results). **Change it.** The frontend no longer uses it. |
+| `SETUP_TOKEN` | unset | Creates the first admin on `/setup`; see [Accounts and access](#accounts-and-access) for the other account settings. |
 | `SAST_API_URL` | - | Used by the frontend (`frontend/.env.local`) to reach the backend, e.g. `http://localhost:8000`. |
 | `DATABASE_URL` | SQLite at `data/secure_build.db` | Any SQLAlchemy URL, e.g. `postgresql+psycopg://user:pass@host/db`. |
 | `USE_MOCK_ENGINE` | `false` (tests: true) | `true` returns deterministic fake results with no I/O. |
@@ -441,7 +466,7 @@ For depth, see [docs/how-scan-works.md](docs/how-scan-works.md), [backend/sast_e
 
 ## API overview
 
-All routes need `Authorization: Bearer <SAST_API_TOKEN>` except `GET /health`. FastAPI's Swagger UI is served at `/docs` (the page itself is not token-protected, but its API calls are).
+Every route except `GET /health`, `/setup` and `POST /auth/login` needs either a user session (`Authorization: Session <token>`, what the web app sends) or the CI token (`Authorization: Bearer <SAST_API_TOKEN>`), and each route checks a permission. New: `/auth/*` (sign-in, account), `/admin/users*` and `/admin/audit` (admins). FastAPI's Swagger UI is served at `/docs` (the page itself is not token-protected, but its API calls are).
 
 | Area | Endpoints |
 |---|---|
@@ -512,7 +537,8 @@ There is no frontend test runner. Use lint and the Next.js build.
 
 | Symptom | Fix |
 |---|---|
-| Frontend shows 401/403 or empty data | `SAST_API_TOKEN` in `frontend/.env.local` does not match the backend's `.env`. Restart both after editing. |
+| Every page sends you to sign-in | No account yet: open `/setup` (needs `SETUP_TOKEN` in the root `.env`). Otherwise the session expired or the account was disabled. |
+| A page says "You don't have access" | Your account doesn't include that page; an admin can allow it under **Admin → Users**. |
 | Frontend cannot reach the API | Check `SAST_API_URL`, and confirm `curl $SAST_API_URL/health` works from the machine running Next.js. |
 | `address already in use` on 8000 or 3000 | Find the process with `ss -ltnp \| grep -E ':(8000\|3000)'` (Linux) or `lsof -iTCP -sTCP:LISTEN -nP` (macOS), then stop it. |
 | Scans return mock-looking results | `USE_MOCK_ENGINE` is still `true`. Set it to `false`, set `RUN_LIVE_SAST=1`, and restart the backend. |

@@ -4,7 +4,8 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 import FindingReviewForm from "@/components/FindingReviewForm";
 import PageContainer from "@/components/PageContainer";
-import { ApiError, api } from "@/lib/api";
+import { useCan } from "@/components/auth/AuthProvider";
+import { ApiError, api, apiFetch } from "@/lib/api";
 import { RISK_LEVELS, RISK_STYLES, normalizeSeverity } from "@/lib/findingStyles";
 import {
   ISSUE_STATUS_CHIP,
@@ -15,7 +16,6 @@ import {
   REVIEWER_VERDICT_LABEL,
   formatWhen,
   llmVerdictLabel,
-  useReviewerName,
 } from "@/lib/review";
 import type { FeedbackFilter, FeedbackRow, Project, Scan } from "@/lib/types";
 
@@ -80,7 +80,7 @@ export default function FeedbackPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const [reviewer] = useReviewerName();
+  const can = useCan();
   const [reload, setReload] = useState(0);
 
   useEffect(() => {
@@ -167,8 +167,8 @@ export default function FeedbackPage() {
     try {
       const result =
         kind === "approve"
-          ? await api.feedback.approveForLearning(ids, reviewer.trim())
-          : await api.feedback.markProcessed(ids, reviewer.trim());
+          ? await api.feedback.approveForLearning(ids)
+          : await api.feedback.markProcessed(ids);
       setNotice(
         `${result.updated} updated${result.skipped ? `, ${result.skipped} skipped (not in the required state)` : ""}.`,
       );
@@ -186,7 +186,7 @@ export default function FeedbackPage() {
       const params = new URLSearchParams({ format });
       if (filters.learning_status) params.set("learning_status", filters.learning_status);
       if (projectId) params.set("project_id", projectId);
-      const res = await fetch(`/api/feedback/export?${params.toString()}`);
+      const res = await apiFetch(`/api/feedback/export?${params.toString()}`);
       if (!res.ok) {
         const body = await res.json().catch(() => undefined);
         throw new ApiError(res.status, body);
@@ -204,7 +204,6 @@ export default function FeedbackPage() {
     }
   }
 
-  const needsName = reviewer.trim() === "";
 
   return (
     <PageContainer>
@@ -316,12 +315,13 @@ export default function FeedbackPage() {
         </div>
       </section>
 
+      {can("feedback.manage") && (
       <section className="mt-4 flex flex-wrap items-center gap-2 text-xs" aria-label="Learning data">
         <span className="text-[var(--muted)]">Selected: {selected.size}</span>
-        <button type="button" disabled={selected.size === 0 || needsName} onClick={() => learningAction("approve")} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 font-medium disabled:opacity-50" title={needsName ? "Enter your name on any finding's review form first" : undefined}>
+        <button type="button" disabled={selected.size === 0} onClick={() => learningAction("approve")} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 font-medium disabled:opacity-50">
           Approve for learning
         </button>
-        <button type="button" disabled={selected.size === 0 || needsName} onClick={() => learningAction("processed")} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 font-medium disabled:opacity-50">
+        <button type="button" disabled={selected.size === 0} onClick={() => learningAction("processed")} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 font-medium disabled:opacity-50">
           Mark processed
         </button>
         <span className="ml-auto flex gap-2">
@@ -333,9 +333,7 @@ export default function FeedbackPage() {
           </button>
         </span>
       </section>
-      {needsName ? (
-        <p className="mt-1 text-xs text-[var(--muted)]">Learning actions are recorded under your name; open a finding below and enter it once.</p>
-      ) : null}
+      )}
 
       {error ? <div role="alert" className="mt-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
       {notice ? <div role="status" className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</div> : null}

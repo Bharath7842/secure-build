@@ -10,6 +10,7 @@ import ScanStatusBadge from "@/components/ScanStatusBadge";
 import { ApiError, api } from "@/lib/api";
 import { RISK_DOT, RISK_STYLES } from "@/lib/findingStyles";
 import type { DastCounts, Project, Scan } from "@/lib/types";
+import { useCan } from "@/components/auth/AuthProvider";
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"] as const;
 
@@ -49,6 +50,7 @@ function formatDate(value: string): string {
 }
 
 export default function DastDashboardPage() {
+  const can = useCan();
   const router = useRouter();
   const [scans, setScans] = useState<Scan[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -150,9 +152,11 @@ export default function DastDashboardPage() {
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-3">
-            <Link href="/dast/settings" className="text-sm font-medium text-[var(--accent)] hover:underline">
-              DAST settings
-            </Link>
+            {can("page.settings") && (
+              <Link href="/dast/settings" className="text-sm font-medium text-[var(--accent)] hover:underline">
+                DAST settings
+              </Link>
+            )}
             <Link
               href="/scans/new?type=dast"
               className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
@@ -177,9 +181,11 @@ export default function DastDashboardPage() {
           <div className="mt-8 rounded-md border border-dashed border-slate-300 bg-white/60 px-6 py-10 text-center">
             <p className="text-sm text-[var(--muted)]">
               No projects yet.{" "}
-              <Link href="/projects/new" className="font-medium text-[var(--accent)] hover:underline">
-                Create one
-              </Link>{" "}
+              {can("page.project_new") && (
+                <Link href="/projects/new" className="font-medium text-[var(--accent)] hover:underline">
+                  Create one
+                </Link>
+              )}{" "}
               to attach DAST scans to.
             </p>
           </div>
@@ -295,16 +301,18 @@ export default function DastDashboardPage() {
                           <Link href={`/scans/${scan.id}`} className="font-medium text-[var(--accent)]">
                             View →
                           </Link>
-                          <button
-                            type="button"
-                            disabled={deleting === scan.id || isActive}
-                            onClick={() => deleteScan(scan.id)}
-                            title={isActive ? "Stop the scan first, then delete" : "Delete scan"}
-                            aria-label={`Delete scan v${scan.version} of ${projectNames.get(scan.project_id) ?? "project"}`}
-                            className="font-medium text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-40 disabled:no-underline"
-                          >
-                            {deleting === scan.id ? "Deleting…" : "Delete"}
-                          </button>
+                          {can("scans.delete") && (
+                            <button
+                              type="button"
+                              disabled={deleting === scan.id || isActive}
+                              onClick={() => deleteScan(scan.id)}
+                              title={isActive ? "Stop the scan first, then delete" : "Delete scan"}
+                              aria-label={`Delete scan v${scan.version} of ${projectNames.get(scan.project_id) ?? "project"}`}
+                              className="font-medium text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-40 disabled:no-underline"
+                            >
+                              {deleting === scan.id ? "Deleting…" : "Delete"}
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

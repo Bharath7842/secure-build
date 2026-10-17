@@ -375,3 +375,13 @@ def test_audit_log_filters_and_never_holds_secrets(client):
     with _db() as db:
         dumped = repr([(e.details, e.actor_label) for e in db.query(AuditEvent).all()])
     assert PW not in dumped and "#t=" not in dumped and SETUP_TOKEN not in dumped
+
+
+def test_link_expiry_is_sent_as_utc(client):
+    """A naive timestamp would be read as local time by the browser and show
+    the wrong expiry (e.g. 66 instead of 72 hours at UTC+5:30)."""
+    admin = _setup_admin(client)
+    created = client.post("/admin/users", headers=admin, json={"email": "tz@example.com"}).json()
+    assert created["invite_expires_at"].endswith(("Z", "+00:00"))
+    link = client.post(f"/admin/users/{created['user']['id']}/invite-link", headers=admin).json()
+    assert link["expires_at"].endswith(("Z", "+00:00"))

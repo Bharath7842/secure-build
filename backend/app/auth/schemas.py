@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -31,6 +31,12 @@ class UserOut(BaseModel):
     last_login_at: datetime | None = None
     created_at: datetime | None = None
 
+    @field_validator("last_login_at", "created_at")
+    @classmethod
+    def _utc(cls, value: datetime | None) -> datetime | None:
+        # SQLite returns these naive; they were stored as UTC.
+        return value.replace(tzinfo=timezone.utc) if value is not None and value.tzinfo is None else value
+
 
 class LoginIn(BaseModel):
     email: str = Field(max_length=254)
@@ -46,6 +52,7 @@ class SessionOut(BaseModel):
     remember: bool
     user: UserOut
     landing: str
+    pages: list[str]
 
 
 class SetupIn(BaseModel):

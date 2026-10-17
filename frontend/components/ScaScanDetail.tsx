@@ -8,6 +8,8 @@ import ScanExportButtons from "@/components/ScanExportButtons";
 import ScanStatusBadge from "@/components/ScanStatusBadge";
 import { ApiError, api } from "@/lib/api";
 import type { Finding, Project, ScaDiscovery, Scan, ScanStatus } from "@/lib/types";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { canStopScan } from "@/lib/access";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -75,6 +77,7 @@ interface ScaScanDetailProps {
  * the same `GET /scans/{id}/findings` + `/results` endpoints — `Finding`
  * rows with kind="sca" need no backend changes to show up here. */
 export default function ScaScanDetail({ scanId }: ScaScanDetailProps) {
+  const me = useAuth();
   const [status, setStatus] = useState<ScanStatus | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [project, setProject] = useState<Project | null>(null);
@@ -300,14 +303,16 @@ export default function ScaScanDetail({ scanId }: ScaScanDetailProps) {
             {status.status === "queued" ? "Queued…" : "Scanning dependency manifests…"} (
             {status.progress}%)
           </p>
-          <button
-            type="button"
-            disabled={stopping}
-            onClick={stopScan}
-            className="rounded-md border border-blue-300 bg-white px-3 py-1 text-xs font-medium text-blue-800 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {stopping ? "Stopping…" : "Stop scan"}
-          </button>
+          {canStopScan(me, status) && (
+            <button
+              type="button"
+              disabled={stopping}
+              onClick={stopScan}
+              className="rounded-md border border-blue-300 bg-white px-3 py-1 text-xs font-medium text-blue-800 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {stopping ? "Stopping…" : "Stop scan"}
+            </button>
+          )}
         </div>
       )}
 

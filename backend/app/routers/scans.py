@@ -460,6 +460,7 @@ def get_scan_status(
             db.rollback()
     return ScanStatusOut(
         scan_id=scan.id,
+        created_by_user_id=scan.created_by_user_id,
         project_id=scan.project_id,
         status=scan.status,
         scan_type=scan.scan_type or "sast",
@@ -797,7 +798,7 @@ def pause_scan(scan_id: str, db: Session = Depends(get_db), principal: Principal
     scan.message = "Paused"
     db.commit()
     scan_log.log(scan_id, "Pause requested from API.")
-    return ScanStatusOut(scan_id=scan.id, project_id=scan.project_id, status=scan.status, progress=scan.progress, message=scan.message)
+    return ScanStatusOut(created_by_user_id=scan.created_by_user_id, scan_id=scan.id, project_id=scan.project_id, status=scan.status, progress=scan.progress, message=scan.message)
 
 
 @router.post("/{scan_id}/resume", response_model=ScanStatusOut)
@@ -810,7 +811,7 @@ def resume_scan(scan_id: str, db: Session = Depends(get_db), principal: Principa
     db.commit()
     scan_runner.request_resume(scan_id)
     scan_log.log(scan_id, "Resumed from API.")
-    return ScanStatusOut(scan_id=scan.id, project_id=scan.project_id, status=scan.status, progress=scan.progress, message=scan.message)
+    return ScanStatusOut(created_by_user_id=scan.created_by_user_id, scan_id=scan.id, project_id=scan.project_id, status=scan.status, progress=scan.progress, message=scan.message)
 
 
 @router.post("/{scan_id}/replay")
@@ -900,7 +901,8 @@ def cancel_scan(
         # Cancelling a DAST scan that already ended is a harmless no-op, not an error: a second
         # click, or a cancel that raced the scan's own completion, must not look like a failure.
         return ScanStatusOut(
-            scan_id=scan.id, project_id=scan.project_id, status=scan.status, scan_type="dast",
+            scan_id=scan.id,
+            created_by_user_id=scan.created_by_user_id, project_id=scan.project_id, status=scan.status, scan_type="dast",
             progress=scan.progress, message=f"Nothing to cancel: the scan is already {scan.status}.",
         )
     if scan.status not in _IN_PROGRESS:
@@ -928,6 +930,7 @@ def cancel_scan(
     ).start()
     return ScanStatusOut(
         scan_id=scan.id,
+        created_by_user_id=scan.created_by_user_id,
         project_id=scan.project_id,
         status=scan.status,
         progress=scan.progress,

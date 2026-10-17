@@ -7,8 +7,10 @@ import DeleteProjectModal from "@/components/DeleteProjectModal";
 import PageContainer from "@/components/PageContainer";
 import { ApiError, api } from "@/lib/api";
 import type { Project } from "@/lib/types";
+import { useCan } from "@/components/auth/AuthProvider";
 
 export default function ProjectsPage() {
+  const can = useCan();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -48,12 +50,14 @@ export default function ProjectsPage() {
               Repositories configured for automated security scanning.
             </p>
           </div>
-          <Link
-            href="/projects/new"
-            className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
-          >
-            New project
-          </Link>
+          {can("projects.manage") && (
+            <Link
+              href="/projects/new"
+              className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+            >
+              New project
+            </Link>
+          )}
         </div>
 
         {error && (
@@ -67,9 +71,11 @@ export default function ProjectsPage() {
         ) : !error && projects.length === 0 ? (
           <div className="mt-10 rounded-md border border-slate-200 bg-white/60 px-6 py-10 text-center">
             <p className="text-sm text-[var(--muted)]">No projects yet.</p>
-            <Link href="/projects/new" className="mt-2 inline-block text-sm font-medium text-[var(--accent)]">
-              Create your first project →
-            </Link>
+            {can("projects.manage") && (
+              <Link href="/projects/new" className="mt-2 inline-block text-sm font-medium text-[var(--accent)]">
+                Create your first project →
+              </Link>
+            )}
           </div>
         ) : projects.length > 0 ? (
           <table className="mt-10 w-full text-left text-sm">
@@ -100,19 +106,23 @@ export default function ProjectsPage() {
                       >
                         Edit
                       </Link>
-                      <Link
-                        href={`/scans/new?project_id=${project.id}`}
-                        className="font-medium text-[var(--accent)]"
-                      >
-                        New Scan →
-                      </Link>
-                      <button
-                        type="button"
-                        onClick={() => setDeleteTarget(project)}
-                        className="font-medium text-red-600 hover:text-red-700"
-                      >
-                        Delete
-                      </button>
+                      {can("scans.create") && (
+                        <Link
+                          href={`/scans/new?project_id=${project.id}`}
+                          className="font-medium text-[var(--accent)]"
+                        >
+                          New Scan →
+                        </Link>
+                      )}
+                      {can("projects.manage") && (
+                        <button
+                          type="button"
+                          onClick={() => setDeleteTarget(project)}
+                          className="font-medium text-red-600 hover:text-red-700"
+                        >
+                          Delete
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
