@@ -2,8 +2,6 @@
 export type SastLlmProvider = "bedrock" | "openai_compat" | "ollama";
 /** "none": stop LLM work at the cost cutoff instead of switching providers. */
 export type SastFallbackProvider = SastLlmProvider | "none";
-/** "local_only" refuses any provider that would send code off localhost/private networks. */
-export type LlmDataPolicy = "allow_external" | "local_only";
 
 export interface Project {
   id: string;
@@ -27,7 +25,6 @@ export interface Project {
   llm_model: string;
   /** openai_compat endpoint; null = the server's default. */
   llm_base_url?: string | null;
-  llm_data_policy?: LlmDataPolicy;
   /** The API key itself is write-only and never returned. */
   llm_api_key_set?: boolean;
   fallback_llm_provider?: SastFallbackProvider | string | null;
@@ -79,7 +76,6 @@ export interface ProjectCreateInput {
   llm_provider?: SastLlmProvider;
   llm_model?: string;
   llm_base_url?: string | null;
-  llm_data_policy?: LlmDataPolicy;
   /** Write-only. Omit to keep the stored key; "" clears it. */
   llm_api_key?: string;
   fallback_llm_provider?: SastFallbackProvider;
@@ -102,6 +98,12 @@ export interface GitRepo {
   private: boolean;
 }
 
+/** A repository confirmed with an access token (POST /git-auth/{provider}/token). */
+export interface TokenRepo extends GitRepo {
+  /** Set on the new-project form: send as git_connection_id when creating. */
+  connection_id?: string | null;
+}
+
 export type ProjectUpdateInput = Partial<ProjectCreateInput>;
 
 export interface Scan {
@@ -112,6 +114,7 @@ export interface Scan {
   /** The starter's display name (else email) and email; null when created_by_user_id is. */
   created_by_name?: string | null;
   created_by_email?: string | null;
+  created_by_deleted?: boolean;
   git_url: string;
   branch: string;
   commit_sha: string | null;

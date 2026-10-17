@@ -5,24 +5,26 @@ import { Suspense } from "react";
 
 import PageContainer from "@/components/PageContainer";
 import ProjectForm from "@/components/ProjectForm";
+import { useActiveProject } from "@/components/project/ActiveProjectProvider";
 import { api } from "@/lib/api";
 import type { ProjectCreateInput } from "@/lib/types";
 
 export default function NewProjectPage() {
   const router = useRouter();
+  const { refresh, setActiveProjectId } = useActiveProject();
 
   async function handleSubmit(input: ProjectCreateInput) {
     const project = await api.projects.create(input);
+    // The new project becomes the one the scan menus are about.
+    await refresh();
+    setActiveProjectId(project.id);
     router.push(`/projects/${project.id}`);
   }
 
   return (
     <PageContainer>
       <div className="max-w-3xl">
-        <h1 className="font-display text-3xl text-[var(--ink)]">New Project</h1>
-        <p className="mt-2 text-sm text-[var(--muted)]">
-          Configure the repository, scan defaults, and compliance settings for a new project.
-        </p>
+        <h1 className="font-display text-3xl text-[var(--ink)]">Create New Project</h1>
         <div className="mt-8">
           {/* ProjectForm reads useSearchParams() for the "Connect GitHub"/
               "Connect GitLab" redirect back from app/git-auth/[provider]/callback —

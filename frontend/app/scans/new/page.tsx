@@ -4,9 +4,9 @@ import PageContainer from "@/components/PageContainer";
 export default async function NewScanPage({
   searchParams,
 }: {
-  searchParams: Promise<{ project_id?: string; type?: string }>;
+  searchParams: Promise<{ type?: string }>;
 }) {
-  const { project_id: projectId, type } = await searchParams;
+  const { type } = await searchParams;
   const scanType =
     type === "sca" ? "sca" : type === "sbom" ? "sbom" : type === "dast" ? "dast" : "sast";
   const isSca = scanType === "sca";
@@ -35,7 +35,7 @@ export default async function NewScanPage({
                 : "Trigger a security scan for a project's repository. Choose whether to use an LLM for this run, and pick the model when enabled."}
         </p>
         <div className="mt-8">
-          <NewScanForm projectId={projectId} scanType={scanType} />
+          <NewScanForm scanType={scanType} />
         </div>
       </div>
     </PageContainer>

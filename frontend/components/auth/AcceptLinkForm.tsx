@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 
 import styles from "@/components/login/login.module.css";
@@ -23,6 +23,31 @@ export default function AcceptLinkForm() {
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [doneFor, setDoneFor] = useState<string | null>(null);
+  /** Who the link is for; stays empty if the preview fails (the submit still reports a bad link). */
+  const [email, setEmail] = useState("");
+
+  useEffect(() => {
+    const token = tokenFromUrl();
+    if (!token) return;
+    let active = true;
+    fetch("/api/auth/setup/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    })
+      .then(async (res) => {
+        const body = (await res.json().catch(() => ({}))) as { email?: string; detail?: string; code?: string };
+        if (!active) return;
+        if (res.ok && body.email) setEmail(body.email);
+        // Only a link the server rejected is worth saying so up front; any other
+        // failure just leaves the email out, and submitting reports what's wrong.
+        else if (body.code === "invalid_or_expired_token") setFormError(body.detail ?? null);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -77,6 +102,22 @@ export default function AcceptLinkForm() {
 
   return (
     <form onSubmit={onSubmit} noValidate aria-busy={submitting} className={styles.form}>
+      {email && (
+        <div>
+          <label htmlFor="link-email" className={styles.label}>
+            Email
+          </label>
+          {/* Read-only, and named as the username so a password manager saves it with the password. */}
+          <input
+            id="link-email"
+            type="email"
+            value={email}
+            readOnly
+            autoComplete="username"
+            className={`${styles.input} cursor-default bg-slate-50 text-[var(--muted)]`}
+          />
+        </div>
+      )}
       <NewPasswordFields
         idPrefix="link"
         password={password}

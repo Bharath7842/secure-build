@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { createContext, useContext, useEffect, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { Suspense, createContext, useContext, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
+import { useActiveProject, withProject } from "@/components/project/ActiveProjectProvider";
+import type { Project } from "@/lib/types";
 
 const STORAGE_KEY = "sidebar-collapsed";
 
@@ -177,24 +179,81 @@ function NavIcon({ name }: { name: NonNullable<NavItem["icon"]> }) {
   }
 }
 
-const SAST_LINKS: NavItem[] = [
-  { href: "/scans/new", label: "SAST", short: "AS", exact: true, icon: "play", page: "page.scan_sast" },
-  // Static / build-time analysis of source and artifacts — grouped with SAST.
-  { href: "/iac-security", label: "IaC Security", short: "IaC", exact: true, icon: "cloud" },
-  { href: "/sca", label: "SCA", short: "SCA", exact: true, icon: "package", page: "page.scan_sca" },
-  { href: "/sbom", label: "SBOM", short: "SB", exact: true, icon: "layers", page: "page.scan_sbom" },
-  { href: "/dast", label: "DAST", short: "DA", exact: true, icon: "target", page: "page.dast" },
-  { href: "/feedback", label: "Feedback & Review", short: "FR", exact: true, icon: "findings", page: "page.feedback" },
+/** A scan type's dropdown: one entry to start a scan, one for that type's own history. */
+type NavGroup = {
+  id: string;
+  label: string;
+  short: string;
+  icon: NonNullable<NavItem["icon"]>;
+  /** Children the user may not see are dropped; a group with none left is hidden. */
+  children: NavItem[];
+  /** Why this type can't start a scan for the project, or null when it can. */
+  blocker: (project: Project) => string | null;
+};
+
+const NEEDS_REPO = "Add a repository in the project's details";
+const hasRepo = (p: Project) => !!p.default_git_url?.trim();
+
+const SCAN_GROUPS: NavGroup[] = [
   {
-    href: "/scans",
-    label: "History",
-    short: "Hi",
-    exact: true,
-    icon: "clock",
-    page: "page.history",
-    // Exact history list + scan detail pages; do not steal /scans/new
-    isActive: (p) => p === "/scans" || (p.startsWith("/scans/") && !p.startsWith("/scans/new")),
+    id: "sast",
+    label: "SAST",
+    short: "AS",
+    icon: "play",
+    blocker: (p) => (!hasRepo(p) ? NEEDS_REPO : !p.enable_sast ? "SAST is turned off in project settings" : null),
+    children: [
+      { href: "/scans/new", label: "New scan", short: "N", icon: "plus", page: "page.scan_sast" },
+      {
+        href: "/scans",
+        label: "Scan history",
+        short: "H",
+        icon: "clock",
+        page: "page.history",
+        // Exact, so /scans/new (a sibling) does not light it up; isActive adds the detail pages.
+        exact: true,
+        // The list and the scan detail pages; not /scans/new.
+        isActive: (p) => p === "/scans" || (p.startsWith("/scans/") && !p.startsWith("/scans/new")),
+      },
+    ],
   },
+  {
+    id: "sca",
+    label: "SCA",
+    short: "SCA",
+    icon: "package",
+    blocker: (p) => (!hasRepo(p) ? NEEDS_REPO : !p.enable_sca ? "SCA is turned off in project settings" : null),
+    children: [
+      { href: "/scans/new?type=sca", label: "New scan", short: "N", icon: "plus", page: "page.scan_sast" },
+      { href: "/sca", label: "Scan history", short: "H", icon: "clock", page: "page.scan_sca" },
+    ],
+  },
+  {
+    id: "sbom",
+    label: "SBOM",
+    short: "SB",
+    icon: "layers",
+    blocker: (p) => (!hasRepo(p) ? NEEDS_REPO : !p.enable_sbom ? "SBOM is turned off in project settings" : null),
+    children: [
+      { href: "/scans/new?type=sbom", label: "New scan", short: "N", icon: "plus", page: "page.scan_sast" },
+      { href: "/sbom", label: "Scan history", short: "H", icon: "clock", page: "page.scan_sbom" },
+    ],
+  },
+  {
+    id: "dast",
+    label: "DAST",
+    short: "DA",
+    icon: "target",
+    // DAST scans a URL entered per scan, so the project needs no repository.
+    blocker: () => null,
+    children: [
+      { href: "/scans/new?type=dast", label: "New scan", short: "N", icon: "plus", page: "page.scan_sast" },
+      { href: "/dast", label: "Scan history", short: "H", icon: "clock", page: "page.dast" },
+    ],
+  },
+];
+
+const SAST_LINKS: NavItem[] = [
+  { href: "/feedback", label: "Feedback & Review", short: "FR", exact: true, icon: "findings", page: "page.feedback" },
   {
     href: "/projects",
     label: "Projects",
@@ -226,17 +285,27 @@ function itemIsActive(pathname: string, item: NavItem): boolean {
   );
 }
 
-function NavLink({ href, label, short, exact, matchPaths, isActive, icon }: NavItem) {
+function NavLink({
+  href,
+  label,
+  short,
+  exact,
+  matchPaths,
+  isActive,
+  icon,
+  active: activeOverride,
+  indent,
+}: NavItem & { active?: boolean; indent?: boolean }) {
   const pathname = usePathname();
   const collapsed = useContext(SidebarContext);
-  const active = itemIsActive(pathname, { href, label, short, exact, matchPaths, isActive });
+  const active = activeOverride ?? itemIsActive(pathname, { href, label, short, exact, matchPaths, isActive });
 
   return (
     <Link
       href={href}
       title={collapsed ? label : undefined}
       className={`flex items-center gap-2.5 rounded-md py-2 text-sm transition-colors ${
-        collapsed ? "justify-center px-2" : "px-3"
+        collapsed ? "justify-center px-2" : indent ? "pl-9 pr-3" : "px-3"
       } ${
         active
           ? "bg-white/15 font-medium text-white"
@@ -259,47 +328,121 @@ function NavLink({ href, label, short, exact, matchPaths, isActive, icon }: NavI
   );
 }
 
-/** Who is signed in, a link to their account, and sign out. */
-function UserMenu() {
+/** The four "New scan" links share /scans/new, so the scan type in `?type=` tells them apart. */
+function childIsActive(
+  pathname: string,
+  params: URLSearchParams,
+  item: NavItem,
+  groupId: string,
+  viewedScanType: string | null,
+): boolean {
+  // A scan's detail page belongs to the menu of that scan's type.
+  if (pathname.startsWith("/scans/") && !pathname.startsWith("/scans/new")) {
+    return !item.href.startsWith("/scans/new") && groupId === (viewedScanType ?? "sast");
+  }
+  if (item.href.startsWith("/scans/new")) {
+    const itemType = new URLSearchParams(item.href.split("?")[1] ?? "").get("type") ?? "sast";
+    return pathname === "/scans/new" && (params.get("type") ?? "sast") === itemType;
+  }
+  return itemIsActive(pathname, item);
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className={`ml-auto shrink-0 opacity-70 transition-transform ${open ? "rotate-90" : ""}`}
+    >
+      <path d="M9 18l6-6-6-6" />
+    </svg>
+  );
+}
+
+function NavGroupItem({
+  group,
+  items,
+  project,
+  open,
+  onToggle,
+}: {
+  group: NavGroup;
+  items: NavItem[];
+  project: Project;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const pathname = usePathname();
+  const params = useSearchParams();
   const me = useAuth();
   const collapsed = useContext(SidebarContext);
-  const [signingOut, setSigningOut] = useState(false);
-  if (!me) return null;
-  const name = me.user.display_name || me.user.email;
+  const { viewedScanType } = useActiveProject();
+  const anyActive = items.some((item) => childIsActive(pathname, params, item, group.id, viewedScanType));
+  const blocked = group.blocker(project);
+  // The repository URL is edited on the project page.
+  const settingsHref = me?.permissions.includes("projects.manage") ? `/projects/${project.id}` : null;
 
-  async function signOut() {
-    setSigningOut(true);
-    try {
-      await fetch("/api/auth/logout", { method: "POST" });
-    } finally {
-      // Full navigation: nothing from the signed-in session stays in memory.
-      window.location.assign("/login");
-    }
+  const scoped = items.map((item) => ({ ...item, href: withProject(item.href, project.id) }));
+
+  // No room for a submenu in the icon rail: the icon goes to the type's history.
+  if (collapsed) {
+    const target = scoped[scoped.length - 1];
+    return (
+      <NavLink href={target.href} label={group.label} short={group.short} icon={group.icon} active={anyActive} />
+    );
   }
 
+  const panelId = `nav-group-${group.id}`;
   return (
-    <div className="mt-4 border-t border-white/10 pt-4">
-      {!collapsed && (
-        <div className="mb-2 px-3">
-          <p className="truncate text-sm font-medium text-white" title={me.user.email}>
-            {name}
-          </p>
-          <p className="text-xs text-slate-400">{me.user.role === "admin" ? "Admin" : "User"}</p>
-        </div>
-      )}
-      <NavLink href="/account" label="Account" short="Ac" icon="user" exact />
+    <div>
       <button
         type="button"
-        onClick={signOut}
-        disabled={signingOut}
-        title={collapsed ? "Sign out" : undefined}
-        className={`flex w-full items-center gap-2.5 rounded-md py-2 text-sm text-slate-300 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-60 ${
-          collapsed ? "justify-center px-2" : "px-3"
-        }`}
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls={panelId}
+        className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
       >
-        <NavIcon name="logout" />
-        {!collapsed && (signingOut ? "Signing out…" : "Sign out")}
+        <NavIcon name={group.icon} />
+        {group.label}
+        <Chevron open={open} />
       </button>
+      {open && (
+        <div id={panelId} className="mt-1 flex flex-col gap-1">
+          {scoped.map((item, i) => {
+            const isNew = items[i].href.startsWith("/scans/new");
+            if (isNew && blocked) {
+              const cls = "flex items-center rounded-md py-2 pl-9 pr-3 text-sm text-slate-500";
+              return settingsHref ? (
+                <Link key={item.href} href={settingsHref} title={blocked} className={`${cls} hover:text-slate-300`}>
+                  {item.label}
+                  <span className="ml-auto text-[10px] uppercase tracking-wide">Set up</span>
+                </Link>
+              ) : (
+                <span key={item.href} title={blocked} aria-disabled className={`${cls} cursor-not-allowed`}>
+                  {item.label}
+                </span>
+              );
+            }
+            return (
+              <NavLink
+                key={item.href}
+                {...item}
+                icon={undefined}
+                indent
+                active={childIsActive(pathname, params, items[i], group.id, viewedScanType)}
+              />
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -325,8 +468,24 @@ function ToggleIcon({ collapsed }: { collapsed: boolean }) {
 
 export default function Sidebar() {
   const me = useAuth();
+  const { activeProject, loading: loadingProjects, viewedScanType } = useActiveProject();
+  const pathname = usePathname();
+  const params = useSearchParams();
   const visible = (item: NavItem) => !item.page || !!me?.pages.includes(item.page);
   const adminLinks = ADMIN_LINKS.filter(visible);
+
+  // One menu open at a time: opening a menu closes the previous one, and
+  // landing on a page opens the menu it belongs to.
+  const activeGroupId =
+    SCAN_GROUPS.find((g) =>
+      g.children.filter(visible).some((item) => childIsActive(pathname, params, item, g.id, viewedScanType)),
+    )?.id ?? null;
+  const [openGroup, setOpenGroup] = useState<string | null>(activeGroupId);
+  const [lastActiveGroup, setLastActiveGroup] = useState<string | null>(activeGroupId);
+  if (activeGroupId !== lastActiveGroup) {
+    setLastActiveGroup(activeGroupId);
+    if (activeGroupId) setOpenGroup(activeGroupId);
+  }
   const [collapsed, setCollapsed] = useState(false);
   const [mounted, setMounted] = useState(false);
 
@@ -379,7 +538,31 @@ export default function Sidebar() {
           </button>
         </div>
 
-        <nav className="mt-8 flex flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden">
+        <nav className="sidebar-scroll mt-8 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden">
+          <Suspense fallback={null}>
+            {activeProject ? (
+              SCAN_GROUPS.map((group) => {
+                const items = group.children.filter(visible);
+                return items.length > 0 ? (
+                  <NavGroupItem
+                    key={group.id}
+                    group={group}
+                    items={items}
+                    project={activeProject}
+                    open={openGroup === group.id}
+                    onToggle={() => setOpenGroup((cur) => (cur === group.id ? null : group.id))}
+                  />
+                ) : null;
+              })
+            ) : (
+              !loadingProjects &&
+              !collapsed && (
+                <p className="px-3 py-2 text-xs leading-relaxed text-slate-400">
+                  Select or create a project to start scanning.
+                </p>
+              )
+            )}
+          </Suspense>
           {SAST_LINKS.filter(visible).map((link) => (
             <NavLink key={link.href} {...link} />
           ))}
@@ -395,7 +578,6 @@ export default function Sidebar() {
             </>
           )}
         </nav>
-        <UserMenu />
       </aside>
     </SidebarContext.Provider>
   );

@@ -9,8 +9,9 @@ import PageContainer from "@/components/PageContainer";
 import ScanStatusBadge from "@/components/ScanStatusBadge";
 import { ApiError, api } from "@/lib/api";
 import { RISK_DOT, RISK_STYLES } from "@/lib/findingStyles";
-import type { DastCounts, Project, Scan } from "@/lib/types";
+import type { DastCounts, Scan } from "@/lib/types";
 import { useAuth, useCan } from "@/components/auth/AuthProvider";
+import { useActiveProject } from "@/components/project/ActiveProjectProvider";
 import { startedByLabel } from "@/lib/access";
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"] as const;
@@ -52,17 +53,17 @@ function formatDate(value: string): string {
 
 export default function DastDashboardPage() {
   const can = useCan();
+  const { activeProject, loading: projectLoading } = useActiveProject();
+  const activeProjectId = activeProject?.id;
   const me = useAuth();
   const seesAll = can("scans.view_all");
   const router = useRouter();
   const [scans, setScans] = useState<Scan[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const projects = useMemo(() => (activeProject ? [activeProject] : []), [activeProject]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  /** Empty set = show all projects. */
-  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState<string | null>(null);
   const { confirm, dialog } = useConfirmDialog();
 
@@ -70,17 +71,16 @@ export default function DastDashboardPage() {
     let active = true;
 
     async function load() {
+      if (!activeProjectId) {
+        setScans([]);
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setError(null);
       try {
-        const [scanList, projectList] = await Promise.all([
-          api.scans.list(undefined, "dast"),
-          api.projects.list(),
-        ]);
-        if (active) {
-          setScans(scanList);
-          setProjects(projectList);
-        }
+        const scanList = await api.scans.list(activeProjectId, "dast");
+        if (active) setScans(scanList);
       } catch (err) {
         if (active) {
           setError(err instanceof ApiError ? err.message : "Failed to load DAST scan history.");
@@ -94,7 +94,7 @@ export default function DastDashboardPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [activeProjectId]);
 
   const projectNames = useMemo(
     () => new Map(projects.map((project) => [project.id, project.name])),
@@ -103,22 +103,11 @@ export default function DastDashboardPage() {
 
   const filteredScans = useMemo(() => {
     const list =
-      selectedProjectIds.size === 0
-        ? scans
-        : scans.filter((scan) => selectedProjectIds.has(scan.project_id));
+      scans;
     return [...list].sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
-  }, [scans, selectedProjectIds]);
-
-  function toggleProject(projectId: string) {
-    setSelectedProjectIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(projectId)) next.delete(projectId);
-      else next.add(projectId);
-      return next;
-    });
-  }
+  }, [scans]);
 
   async function deleteScan(id: string) {
     if (
@@ -132,7 +121,7 @@ export default function DastDashboardPage() {
     setActionError(null);
     try {
       await api.scans.delete(id);
-      setScans(await api.scans.list(undefined, "dast"));
+      setScans(await api.scans.list(activeProjectId, "dast"));
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : "Could not delete scan.");
     } finally {
@@ -149,6 +138,9 @@ export default function DastDashboardPage() {
         <div className="flex items-baseline justify-between gap-4">
           <div>
             <h1 className="font-display text-3xl text-[var(--ink)]">DAST</h1>
+            {activeProject && (
+              <p className="mt-1 text-sm font-medium text-[var(--ink)]">Project: {activeProject.name}</p>
+            )}
             <p className="mt-2 max-w-2xl text-sm text-[var(--muted)]">
               Dynamic Application Security Testing — crawls a running web application (signing in as each
               identity you give it), tests what it finds, and checks who can reach what.
@@ -182,54 +174,20 @@ export default function DastDashboardPage() {
           </div>
         )}
 
-        {!loading && !error && projects.length === 0 && (
+
+
+        {!projectLoading && !activeProject && (
           <div className="mt-8 rounded-md border border-dashed border-slate-300 bg-white/60 px-6 py-10 text-center">
             <p className="text-sm text-[var(--muted)]">
-              No projects yet.{" "}
-              {can("page.project_new") && (
-                <Link href="/projects/new" className="font-medium text-[var(--accent)] hover:underline">
-                  Create one
-                </Link>
-              )}{" "}
-              to attach DAST scans to.
+              Select a project in the sidebar to see its DAST scans.{" "}
+              <Link href="/projects" className="font-medium text-[var(--accent)] hover:underline">
+                Choose a project
+              </Link>
             </p>
           </div>
         )}
 
-        {!loading && !error && projects.length > 0 && (
-          <div className="mt-8">
-            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-              Filter by project
-            </p>
-            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--ink)]">
-                <input
-                  type="checkbox"
-                  checked={selectedProjectIds.size === 0}
-                  onChange={() => setSelectedProjectIds(new Set())}
-                  className="h-4 w-4 rounded border-slate-300 text-[var(--accent)] focus:ring-[var(--accent)]/30"
-                />
-                All projects
-              </label>
-              {projects.map((project) => (
-                <label
-                  key={project.id}
-                  className="flex cursor-pointer items-center gap-2 text-sm text-[var(--ink)]"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedProjectIds.has(project.id)}
-                    onChange={() => toggleProject(project.id)}
-                    className="h-4 w-4 rounded border-slate-300 text-[var(--accent)] focus:ring-[var(--accent)]/30"
-                  />
-                  {project.name}
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {loading ? (
+        {!activeProject ? null : loading ? (
           <p className="mt-10 text-sm text-[var(--muted)]">Loading scans…</p>
         ) : !error && filteredScans.length === 0 ? (
           <div className="mt-10 rounded-md border border-slate-200 bg-white/60 px-6 py-10 text-center">
@@ -253,7 +211,7 @@ export default function DastDashboardPage() {
           <>
             <p className="mt-6 text-sm text-[var(--muted)]">
               Showing {filteredScans.length}
-              {selectedProjectIds.size > 0 ? ` of ${scans.length}` : ""} scan
+               scan
               {filteredScans.length === 1 ? "" : "s"}
               {totalCompleted > 0 ? ` · ${totalCompleted} completed` : ""}
             </p>

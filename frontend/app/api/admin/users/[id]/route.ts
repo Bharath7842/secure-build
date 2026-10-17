@@ -15,3 +15,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   const { id } = await params;
   return dastProxy(`/admin/users/${encodeURIComponent(id)}`, { method: "PATCH", body: await request.text() });
 }
+
+export async function DELETE(_request: NextRequest, { params }: Params) {
+  const { id } = await params;
+  return dastProxy(`/admin/users/${encodeURIComponent(id)}`, { method: "DELETE" });
+}

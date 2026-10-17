@@ -9,7 +9,8 @@ import type { Project, ScanCreateInput } from "@/lib/types";
 import { useModelCatalog } from "@/lib/useModelCatalog";
 
 interface ScanFormProps {
-  projectId?: string;
+  /** The active project (chosen in the sidebar). */
+  project: Project;
   /** "sast" (default) | "sca" | "sbom" — "sca"/"sbom" hide the LLM fields
    * (unused by either deterministic engine) and skip them in the submitted
    * payload. */
@@ -17,15 +18,10 @@ interface ScanFormProps {
   onSubmit: (input: ScanCreateInput) => Promise<void>;
 }
 
-export default function ScanForm({ projectId, scanType = "sast", onSubmit }: ScanFormProps) {
+export default function ScanForm({ project, scanType = "sast", onSubmit }: ScanFormProps) {
   const isSca = scanType === "sca";
   const isSbom = scanType === "sbom";
   const isLlmFree = isSca || isSbom;
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loadingProjects, setLoadingProjects] = useState(true);
-  const [projectsError, setProjectsError] = useState<string | null>(null);
-
-  const [selectedProjectId, setSelectedProjectId] = useState("");
   const [gitUrl, setGitUrl] = useState("");
   const [repoPath, setRepoPath] = useState("");
   const [branch, setBranch] = useState("");
@@ -39,63 +35,19 @@ export default function ScanForm({ projectId, scanType = "sast", onSubmit }: Sca
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? null;
-  const projectSelectValue = projects.some((p) => p.id === selectedProjectId)
-    ? selectedProjectId
-    : "";
+  const selectedProject = project;
+  const selectedProjectId = project.id;
 
   useEffect(() => {
-    let active = true;
-
-    async function load() {
-      setLoadingProjects(true);
-      setProjectsError(null);
-      try {
-        const allProjects = await api.projects.list();
-        const data = isSca
-          ? allProjects.filter((p) => p.enable_sca)
-          : isSbom
-            ? allProjects.filter((p) => p.enable_sbom)
-            : allProjects;
-        if (active) {
-          setProjects(data);
-          const fromUrl =
-            projectId && data.some((p) => p.id === projectId) ? projectId : null;
-          setSelectedProjectId((current) => {
-            if (current && data.some((p) => p.id === current)) return current;
-            return fromUrl ?? data[0]?.id ?? "";
-          });
-        }
-      } catch (err) {
-        if (active) {
-          setProjectsError(err instanceof ApiError ? err.message : "Failed to load projects.");
-        }
-      } finally {
-        if (active) setLoadingProjects(false);
-      }
-    }
-
-    load();
-    return () => {
-      active = false;
-    };
-  }, [projectId, isSca, isSbom]);
-
-  useEffect(() => {
-    if (!selectedProject) return;
-    setLlmPreset(llmPresetForProviderModel(selectedProject.llm_provider, selectedProject.llm_model));
-    setGitUrl(selectedProject.default_git_url || "");
-    setRepoPath(selectedProject.monorepo_path || "");
-    setBranch((current) => current || selectedProject.default_branch || "");
-  }, [selectedProject]);
+    setLlmPreset(llmPresetForProviderModel(project.llm_provider, project.llm_model));
+    setGitUrl(project.default_git_url || "");
+    setRepoPath(project.monorepo_path || "");
+    setBranch(project.default_branch || "");
+  }, [project]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
 
-    if (!selectedProjectId) {
-      setError("Select a project to scan.");
-      return;
-    }
     if (!gitUrl.trim()) {
       setError("Repository URL is required.");
       return;
@@ -148,42 +100,10 @@ export default function ScanForm({ projectId, scanType = "sast", onSubmit }: Sca
           {error}
         </div>
       )}
-      {projectsError && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {projectsError}
-        </div>
-      )}
-
       <div>
-        <label htmlFor="scan-project" className="block text-sm font-medium text-[var(--ink)]">
-          Project
-        </label>
-        <select
-          id="scan-project"
-          value={projectSelectValue}
-          onChange={(event) => setSelectedProjectId(event.target.value)}
-          className={selectClass}
-          disabled={loadingProjects || projects.length === 0}
-          required
-        >
-          <option value="" disabled>
-            {loadingProjects ? "Loading projects…" : "Select a project"}
-          </option>
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-            </option>
-          ))}
-        </select>
-        {!loadingProjects && projects.length === 0 && !projectsError && (
-          <p className="mt-1 text-xs text-[var(--muted)]">
-            {isSca
-              ? "No projects have SCA enabled yet. Enable it in a project's settings first."
-              : isSbom
-                ? "No projects have SBOM enabled yet. Enable it in a project's settings first."
-                : "No projects yet. Create one first."}
-          </p>
-        )}
+        <p className="block text-sm font-medium text-[var(--ink)]">Project</p>
+        <p className="mt-1 text-sm text-[var(--ink)]">{project.name}</p>
+        <p className="mt-1 text-xs text-[var(--muted)]">Change the project from the selector in the sidebar.</p>
       </div>
 
       <div>

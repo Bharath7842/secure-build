@@ -9,7 +9,7 @@ from app.main import app
 from app.routers import git_auth
 from app.routers.git_auth import repo_path_from_url
 
-from tests.auth_helpers import ADMIN_HEADERS  # noqa: E402
+from tests.auth_helpers import ADMIN_HEADERS, make_user  # noqa: E402
 
 HDR = ADMIN_HEADERS
 
@@ -116,4 +116,72 @@ def test_requires_auth_and_a_connection(client):
     assert client.get("/git-auth/gitlab/repo", params={"url": "https://gitlab.com/a/b"}).status_code in {401, 403}
     r = client.get("/git-auth/gitlab/repo", headers=HDR, params={
         "url": "https://gitlab.com/a/b", "connection_id": "missing"})
+    assert r.status_code == 404
+
+
+REPO = {
+    "name": "repo", "path_with_namespace": "group/repo",
+    "http_url_to_repo": "https://gitlab.com/group/repo.git",
+    "default_branch": "main", "visibility": "private",
+}
+
+
+def test_token_check_keeps_the_token_as_a_pending_connection_for_a_new_project(client, monkeypatch):
+    monkeypatch.setattr(git_auth.httpx, "get", lambda url, **kw: _Resp(200, REPO))
+    r = client.post("/git-auth/gitlab/token", headers=HDR, json={
+        "url": "https://gitlab.com/group/repo.git", "access_token": "pat-1",
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["full_name"] == "group/repo" and body["clone_url"] == "https://gitlab.com/group/repo.git"
+    assert body["connection_id"]
+    assert "pat-1" not in r.text  # the token itself never comes back
+    assert git_auth.consume_pending_connection(body["connection_id"])["access_token"] == "pat-1"
+
+
+def test_token_check_saves_the_token_on_an_existing_project(client, monkeypatch):
+    from app.db import SessionLocal
+    from app.models import Project
+
+    monkeypatch.setattr(git_auth.httpx, "get", lambda url, **kw: _Resp(200, REPO))
+    project = client.post("/projects", headers=HDR, json={"name": "tokproj", "default_git_url": ""}).json()
+    r = client.post("/git-auth/gitlab/token", headers=HDR, json={
+        "url": "https://gitlab.com/group/repo.git", "access_token": "pat-2", "project_id": project["id"],
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["connection_id"] is None
+    with SessionLocal() as db:
+        row = db.get(Project, project["id"])
+        assert row.git_provider == "gitlab" and row.git_access_token == "pat-2"
+        assert row.git_refresh_token is None and row.git_token_expires_at is None
+    assert client.get(f"/projects/{project['id']}", headers=HDR).json()["git_connected"] is True
+
+
+def test_token_check_refuses_a_repo_the_token_cannot_see(client, monkeypatch):
+    monkeypatch.setattr(git_auth.httpx, "get", lambda url, **kw: _Resp(404))
+    r = client.post("/git-auth/gitlab/token", headers=HDR, json={
+        "url": "https://gitlab.com/group/repo.git", "access_token": "bad",
+    })
+    assert r.status_code == 404
+    assert all(v["access_token"] != "bad" for v in git_auth._pending_connections.values())
+
+
+def test_token_check_rejects_a_foreign_url_before_calling_the_provider(client, monkeypatch):
+    def boom(url, **kw):
+        raise AssertionError("must not call the provider for a foreign host")
+
+    monkeypatch.setattr(git_auth.httpx, "get", boom)
+    r = client.post("/git-auth/gitlab/token", headers=HDR, json={
+        "url": "https://evil.example/group/repo.git", "access_token": "pat",
+    })
+    assert r.status_code == 400
+
+
+def test_token_check_cannot_attach_a_token_to_someone_elses_project(client, monkeypatch):
+    monkeypatch.setattr(git_auth.httpx, "get", lambda url, **kw: _Resp(200, REPO))
+    project = client.post("/projects", headers=HDR, json={"name": "not-yours", "default_git_url": ""}).json()
+    _, bob = make_user("bob@test.local")
+    r = client.post("/git-auth/gitlab/token", headers=bob, json={
+        "url": "https://gitlab.com/group/repo.git", "access_token": "pat-x", "project_id": project["id"],
+    })
     assert r.status_code == 404

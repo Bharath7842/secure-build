@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import passwords, ratelimit, sessions
 from app.auth.principal import ApiError, Principal, client_ip, public, record, require_user, user_agent
-from app.auth.schemas import ChangePasswordIn, LoginIn, SessionOut, TokenPasswordIn, UserOut
+from app.auth.schemas import ChangePasswordIn, LoginIn, SessionOut, TokenIn, TokenPasswordIn, UserOut
 from app.authz.catalog import BY_KEY, effective_permissions, landing_path
 from app.db import get_db
 from app.models import User, UserSession
@@ -140,6 +140,18 @@ def change_password(
     token = sessions.rotate_session(db, row)
     record(db, request, "user.password.changed", principal, target_type="user", target_id=user.id)
     return {"token": token, "remember": row.remember, "expires_at": sessions.as_utc(row.absolute_expires_at)}
+
+
+@router.post("/setup/preview", dependencies=[Depends(public)])
+def preview_link(body: TokenIn, request: Request, db: Session = Depends(get_db)):
+    """Whose account an invite or reset link is for, without using the link up.
+    The token is the credential: only its holder learns the email."""
+    check_ip_limit(request)
+    row = sessions.peek_user_token(db, body.token)
+    user = db.get(User, row.user_id) if row else None
+    if row is None or user is None or not user.is_active:
+        raise ApiError(400, "invalid_or_expired_token", "This link is invalid or has expired. Ask your administrator for a new one.")
+    return {"email": user.email, "purpose": row.purpose}
 
 
 @router.post("/setup", dependencies=[Depends(public)])

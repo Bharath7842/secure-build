@@ -7,8 +7,9 @@ import { useConfirmDialog } from "@/components/ConfirmDialog";
 import PageContainer from "@/components/PageContainer";
 import ScanStatusBadge from "@/components/ScanStatusBadge";
 import { ApiError, api } from "@/lib/api";
-import type { Project, Scan } from "@/lib/types";
+import type { Scan } from "@/lib/types";
 import { useAuth, useCan } from "@/components/auth/AuthProvider";
+import { useActiveProject } from "@/components/project/ActiveProjectProvider";
 import { canStopScan, startedByLabel } from "@/lib/access";
 
 function formatDate(value: string): string {
@@ -41,15 +42,15 @@ function llmLabel(scan: Scan): string {
 
 export default function ScanHistoryPage() {
   const can = useCan();
+  const { activeProject, loading: projectLoading } = useActiveProject();
+  const activeProjectId = activeProject?.id;
   const me = useAuth();
   const [scans, setScans] = useState<Scan[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const projects = useMemo(() => (activeProject ? [activeProject] : []), [activeProject]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  /** Empty set = show all projects. Otherwise only checked project IDs. */
-  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
   const [selectedScanIds, setSelectedScanIds] = useState<Set<string>>(new Set());
   /** "" = everyone. Only offered to people who can see other users' scans. */
   const [startedBy, setStartedBy] = useState("");
@@ -62,14 +63,16 @@ export default function ScanHistoryPage() {
     let active = true;
 
     async function load() {
+      if (!activeProjectId) {
+        setScans([]);
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setError(null);
       try {
-        const [scanList, projectList] = await Promise.all([api.scans.list(), api.projects.list()]);
-        if (active) {
-          setScans(scanList);
-          setProjects(projectList);
-        }
+        const scanList = await api.scans.list(activeProjectId, "sast");
+        if (active) setScans(scanList);
       } catch (err) {
         if (active) {
           setError(err instanceof ApiError ? err.message : "Failed to load scan history.");
@@ -83,7 +86,7 @@ export default function ScanHistoryPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [activeProjectId]);
 
   const projectNames = useMemo(
     () => new Map(projects.map((project) => [project.id, project.name])),
@@ -99,31 +102,15 @@ export default function ScanHistoryPage() {
   const filteredScans = useMemo(() => {
     const list = scans.filter(
       (scan) =>
-        (selectedProjectIds.size === 0 || selectedProjectIds.has(scan.project_id)) &&
-        (!startedBy || startedByLabel(scan, me) === startedBy),
+                (!startedBy || startedByLabel(scan, me) === startedBy),
     );
     return [...list].sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
-  }, [scans, selectedProjectIds, startedBy, me]);
+  }, [scans, startedBy, me]);
 
   const allFilteredSelected =
     filteredScans.length > 0 && filteredScans.every((scan) => selectedScanIds.has(scan.id));
-
-  function toggleProject(projectId: string) {
-    setSelectedProjectIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(projectId)) next.delete(projectId);
-      else next.add(projectId);
-      return next;
-    });
-    setSelectedScanIds(new Set());
-  }
-
-  function selectAllProjects() {
-    setSelectedProjectIds(new Set());
-    setSelectedScanIds(new Set());
-  }
 
   function toggleScan(scanId: string) {
     setSelectedScanIds((prev) => {
@@ -162,7 +149,7 @@ export default function ScanHistoryPage() {
     }
 
     try {
-      setScans(await api.scans.list());
+      setScans(await api.scans.list(activeProjectId, "sast"));
     } catch {
       setScans((prev) => prev.filter((scan) => !ids.includes(scan.id)));
     }
@@ -180,7 +167,7 @@ export default function ScanHistoryPage() {
     setActionError(null);
     try {
       await api.scans.cancel(scanId);
-      setScans(await api.scans.list());
+      setScans(await api.scans.list(activeProjectId, "sast"));
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : "Could not stop scan.");
     } finally {
@@ -194,11 +181,14 @@ export default function ScanHistoryPage() {
       <div>
         <div className="flex items-baseline justify-between gap-4">
           <div>
-            <h1 className="font-display text-3xl text-[var(--ink)]">Scan History</h1>
+            <h1 className="font-display text-3xl text-[var(--ink)]">SAST Scan History</h1>
+            {activeProject && (
+              <p className="mt-1 text-sm font-medium text-[var(--ink)]">Project: {activeProject.name}</p>
+            )}
             <p className="mt-2 text-sm text-[var(--muted)]">
               {seesAll
-                ? "Every scan across all projects, and who started it."
-                : "Scans you started. Only you and admins can see them."}
+                ? "Every SAST scan across all projects, and who started it."
+                : "SAST scans you started. Only you and admins can see them."}
             </p>
           </div>
           {can("scans.create") && (
@@ -206,7 +196,7 @@ export default function ScanHistoryPage() {
               href="/scans/new"
               className="shrink-0 rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
             >
-              SAST SCAN
+              New SAST scan
             </Link>
           )}
         </div>
@@ -222,60 +212,40 @@ export default function ScanHistoryPage() {
           </div>
         )}
 
-        {!loading && !error && projects.length > 0 && (
-          <div className="mt-8">
-            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-              Filter by project
+
+        {!projectLoading && !activeProject && (
+          <div className="mt-8 rounded-md border border-dashed border-slate-300 bg-white/60 px-6 py-10 text-center">
+            <p className="text-sm text-[var(--muted)]">
+              Select a project in the sidebar to see its SAST scans.{" "}
+              <Link href="/projects" className="font-medium text-[var(--accent)] hover:underline">
+                Choose a project
+              </Link>
             </p>
-            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--ink)]">
-                <input
-                  type="checkbox"
-                  checked={selectedProjectIds.size === 0}
-                  onChange={selectAllProjects}
-                  className="h-4 w-4 rounded border-slate-300 text-[var(--accent)] focus:ring-[var(--accent)]/30"
-                />
-                All projects
-              </label>
-              {projects.map((project) => (
-                <label
-                  key={project.id}
-                  className="flex cursor-pointer items-center gap-2 text-sm text-[var(--ink)]"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedProjectIds.has(project.id)}
-                    onChange={() => toggleProject(project.id)}
-                    className="h-4 w-4 rounded border-slate-300 text-[var(--accent)] focus:ring-[var(--accent)]/30"
-                  />
-                  {project.name}
-                </label>
-              ))}
-            </div>
-            {seesAll && starters.length > 1 && (
-              <label className="mt-4 flex items-center gap-3 text-sm text-[var(--ink)]">
-                <span className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Started by</span>
-                <select
-                  value={startedBy}
-                  onChange={(e) => {
-                    setStartedBy(e.target.value);
-                    setSelectedScanIds(new Set());
-                  }}
-                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm"
-                >
-                  <option value="">Everyone</option>
-                  {starters.map((label) => (
-                    <option key={label} value={label}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
           </div>
         )}
 
-        {loading ? (
+        {activeProject && seesAll && starters.length > 1 && (
+          <label className="mt-4 flex items-center gap-3 text-sm text-[var(--ink)]">
+            <span className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Started by</span>
+            <select
+              value={startedBy}
+              onChange={(e) => {
+                setStartedBy(e.target.value);
+                setSelectedScanIds(new Set());
+              }}
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm"
+            >
+              <option value="">Everyone</option>
+              {starters.map((label) => (
+                <option key={label} value={label}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {!activeProject ? null : loading ? (
           <p className="mt-10 text-sm text-[var(--muted)]">Loading scans…</p>
         ) : !error && filteredScans.length === 0 ? (
           <div className="mt-10 rounded-md border border-slate-200 bg-white/60 px-6 py-10 text-center">
@@ -297,7 +267,7 @@ export default function ScanHistoryPage() {
             <div className="mt-6 flex items-center justify-between gap-4">
               <p className="text-sm text-[var(--muted)]">
                 Showing {filteredScans.length}
-                {selectedProjectIds.size > 0 ? ` of ${scans.length}` : ""} scan
+                 scan
                 {filteredScans.length === 1 ? "" : "s"}
               </p>
               {can("scans.delete") && (

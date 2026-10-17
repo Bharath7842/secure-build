@@ -185,6 +185,16 @@ def issue_user_token(
     return token, row
 
 
+def peek_user_token(db: Session, token: str | None, now: datetime | None = None) -> UserToken | None:
+    """The valid, unused, unexpired token row for `token`, left untouched; None otherwise."""
+    if not token:
+        return None
+    row = db.query(UserToken).filter(UserToken.token_hash == hash_token(token)).one_or_none()
+    if row is None or row.used_at is not None or as_utc(row.expires_at) <= _now(now):
+        return None
+    return row
+
+
 def consume_user_token(db: Session, token: str | None, now: datetime | None = None) -> UserToken | None:
     """Mark a valid, unused, unexpired token as used and return it; None
     otherwise. The caller commits whatever it changes alongside."""

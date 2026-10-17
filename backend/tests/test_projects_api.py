@@ -212,14 +212,30 @@ def test_llm_api_key_is_write_only(client):
 def test_new_project_has_no_ollama_fallback(client):
     body = client.post("/projects", json=_payload(name="fallback"), headers=AUTH_HEADER).json()
     assert body["fallback_llm_provider"] == "none"
-    assert body["llm_data_policy"] == "allow_external"
 
 
 @pytest.mark.parametrize("field,value", [
     ("llm_provider", "openai"),
     ("fallback_llm_provider", "gpt"),
-    ("llm_data_policy", "sometimes"),
 ])
 def test_project_rejects_unknown_llm_settings(client, field, value):
     resp = client.post("/projects", json=_payload(name=f"bad-{field}", **{field: value}), headers=AUTH_HEADER)
     assert resp.status_code == 422
+
+
+def test_old_databases_lose_the_removed_data_policy_column(tmp_path):
+    """A database created before the code-sharing setting was removed loses its column on startup."""
+    from sqlalchemy import create_engine, inspect, text
+
+    from app.db import init_db
+
+    url = f"sqlite:///{(tmp_path / 'old.db').as_posix()}"
+    init_db(url)
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE projects ADD COLUMN llm_data_policy VARCHAR(20) DEFAULT 'allow_external'"))
+        conn.execute(text("ALTER TABLE scans ADD COLUMN llm_data_policy VARCHAR(20)"))
+    init_db(url)  # restart
+    inspector = inspect(engine)
+    assert "llm_data_policy" not in {c["name"] for c in inspector.get_columns("projects")}
+    assert "llm_data_policy" not in {c["name"] for c in inspector.get_columns("scans")}

@@ -6,12 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from app.config import settings
-from app.services.llm_policy import (
-    DATA_POLICIES,
-    DATA_POLICY_ALLOW_EXTERNAL,
-    SAST_FALLBACK_PROVIDERS,
-    SAST_LLM_PROVIDERS,
-)
+from app.services.llm_policy import SAST_FALLBACK_PROVIDERS, SAST_LLM_PROVIDERS
 
 
 class ReferenceSource(BaseModel):
@@ -22,7 +17,7 @@ class ReferenceSource(BaseModel):
 
 
 class ProjectBase(BaseModel):
-    name: str
+    name: str = Field(max_length=500)
     description: str | None = None
     languages: list[str] = Field(default_factory=list)
     frameworks: list[str] = Field(default_factory=list)
@@ -46,7 +41,6 @@ class ProjectBase(BaseModel):
     llm_model: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
     # openai_compat endpoint (e.g. http://localhost:8000/v1); None = server default.
     llm_base_url: str | None = None
-    llm_data_policy: str = DATA_POLICY_ALLOW_EXTERNAL  # allow_external|local_only
     # After the soft $ cutoff, continue on this provider/model; "none" stops
     # LLM work instead (ignored if primary is ollama).
     fallback_llm_provider: str = "ollama"
@@ -74,10 +68,6 @@ class ProjectBase(BaseModel):
     def _known_fallback_provider(cls, value):
         return _check_choice("fallback_llm_provider", value or "none", SAST_FALLBACK_PROVIDERS)
 
-    @field_validator("llm_data_policy", mode="before")
-    @classmethod
-    def _known_data_policy(cls, value):
-        return _check_choice("llm_data_policy", value or DATA_POLICY_ALLOW_EXTERNAL, DATA_POLICIES)
 
 
 def _check_choice(field: str, value: str | None, allowed: tuple[str, ...]) -> str | None:
@@ -100,7 +90,7 @@ class ProjectCreate(ProjectBase):
 
 
 class ProjectUpdate(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=500)
     description: str | None = None
     languages: list[str] | None = None
     frameworks: list[str] | None = None
@@ -119,7 +109,6 @@ class ProjectUpdate(BaseModel):
     llm_provider: str | None = None
     llm_model: str | None = None
     llm_base_url: str | None = None
-    llm_data_policy: str | None = None
     # Write-only. Omit to keep the stored key; send "" to clear it.
     llm_api_key: SecretStr | None = None
     fallback_llm_provider: str | None = None
@@ -140,10 +129,6 @@ class ProjectUpdate(BaseModel):
     def _known_fallback_provider(cls, value):
         return _check_choice("fallback_llm_provider", value, SAST_FALLBACK_PROVIDERS)
 
-    @field_validator("llm_data_policy")
-    @classmethod
-    def _known_data_policy(cls, value):
-        return _check_choice("llm_data_policy", value, DATA_POLICIES)
 
 
 class ProjectOut(ProjectBase):
@@ -400,6 +385,7 @@ class ScanOut(BaseModel):
     created_by_user_id: str | None = None
     created_by_name: str | None = None  # display name, else email
     created_by_email: str | None = None
+    created_by_deleted: bool = False  # the starter's account was deleted; name/email are kept from then
     created_at: datetime
     updated_at: datetime
 
@@ -410,6 +396,8 @@ class ScanOut(BaseModel):
             return data
         meta = getattr(data, "metadata_json", None) or {}
         creator = getattr(data, "created_by", None)
+        deleted_email = getattr(data, "deleted_creator_email", None)
+        deleted_email_or_name = getattr(data, "deleted_creator_name", None) or deleted_email
         repo_path = meta.get("repo_path")
         root = Path(settings.workspaces_dir) / data.project_id
         if repo_path:
@@ -434,8 +422,9 @@ class ScanOut(BaseModel):
             "local_root_path": str(root),
             "dast_counts": getattr(data, "_dast_counts", None),
             "created_by_user_id": getattr(data, "created_by_user_id", None),
-            "created_by_name": (creator.display_name or creator.email) if creator else None,
-            "created_by_email": creator.email if creator else None,
+            "created_by_name": (creator.display_name or creator.email) if creator else deleted_email_or_name,
+            "created_by_email": creator.email if creator else deleted_email,
+            "created_by_deleted": creator is None and bool(deleted_email),
             "created_at": data.created_at,
             "updated_at": data.updated_at,
         }

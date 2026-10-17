@@ -12,7 +12,16 @@ from sqlalchemy import false
 from sqlalchemy.orm import Query, Session
 
 from app.auth.principal import Principal, forbidden
-from app.models import Scan
+from app.models import Project, Scan
+
+
+def can_see_project(principal: Principal, project: Project) -> bool:
+    """Admins see every project; other users only the ones they created. The CI
+    token is a pipeline, not a person, so it works on any project (the
+    documented CI flow)."""
+    if principal.kind == "service" or principal.can("projects.view_all"):
+        return True
+    return principal.user_id is not None and project.created_by_user_id == principal.user_id
 
 
 def can_see_scan(principal: Principal, scan: Scan) -> bool:

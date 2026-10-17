@@ -1333,7 +1333,6 @@ def test_run_real_scan_threads_llm_endpoint(monkeypatch, project_tree, tmp_path_
         fallback_llm_provider = None
         fallback_llm_model = None
         llm_base_url = "http://127.0.0.1:1234/v1"
-        llm_data_policy = "local_only"
         metadata_json = {"use_llm": True}
 
     project = Project(
@@ -1343,7 +1342,6 @@ def test_run_real_scan_threads_llm_endpoint(monkeypatch, project_tree, tmp_path_
 
     usage = captured_states[0]["usage"]
     assert usage["_provider_options"]["openai_compat"] == {"base_url": "http://127.0.0.1:1234/v1", "api_key": "sk-local"}
-    assert usage["_data_policy"] == "local_only"
     assert usage["fallback_provider"] == "none"
 
 

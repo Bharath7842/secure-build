@@ -1,3 +1,4 @@
+import uuid
 """Authorization on the existing API: every route declares how it's
 authenticated, scans are scoped to their owner, and each caller (anonymous,
 regular user, admin, CI token) gets exactly what the permission catalog says."""
@@ -102,6 +103,13 @@ def project_id(client):
     return r.json()["id"]
 
 
+def _own_project(client, headers):
+    """A project the caller creates, so they may scan it."""
+    r = client.post("/projects", headers=headers, json={"name": f"proj-{uuid.uuid4().hex[:8]}", "default_git_url": "https://github.com/o/r.git"})
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
 def _start(client, headers, project_id, commit="abc", **extra):
     r = client.post("/scans", headers=headers, json={"project_id": project_id, "commit_sha": commit, **extra})
     assert r.status_code == 202, r.text
@@ -132,8 +140,8 @@ SCAN_READS = [
 def test_users_see_only_their_own_scans(client, project_id):
     _, ada = make_user("ada@test.local")
     _, bob = make_user("bob@test.local")
-    ada_scan = _start(client, ada, project_id, "a1")
-    bob_scan = _start(client, bob, project_id, "b1")
+    ada_scan = _start(client, ada, _own_project(client, ada), "a1")
+    bob_scan = _start(client, bob, _own_project(client, bob), "b1")
     ci_scan = _start(client, CI_HEADERS, project_id, "c1")
 
     def listed(headers):
@@ -153,7 +161,7 @@ def test_another_users_scan_is_404_on_every_read(client, project_id, path):
     """Same answer as a scan that doesn't exist, so ids can't be probed."""
     _, ada = make_user("ada@test.local")
     _, bob = make_user("bob@test.local")
-    scan_id = _start(client, ada, project_id)
+    scan_id = _start(client, ada, _own_project(client, ada))
     if "{id}" in path and path.startswith("/scans") and "feedback" not in path:
         assert client.get(path.format(id=scan_id), headers=bob).status_code == 404
         missing = client.get(path.format(id="does-not-exist"), headers=bob)
@@ -174,11 +182,15 @@ def test_legacy_scans_without_an_owner_are_admin_only(client, project_id):
 
 
 def test_reuse_never_hands_back_someone_elses_scan(client, project_id):
+    """Reuse is per project and per commit. An admin, who sees every project,
+    gets the existing scan; a user on another project never does."""
     _, ada = make_user("ada@test.local")
     _, bob = make_user("bob@test.local")
-    first = _start(client, ada, project_id, "same")
-    assert _start(client, ada, project_id, "same") == first  # reused for its owner
-    other = _start(client, bob, project_id, "same")
+    ada_project = _own_project(client, ada)
+    first = _start(client, ada, ada_project, "same")
+    assert _start(client, ada, ada_project, "same") == first  # reused for its owner
+    assert _start(client, ADMIN_HEADERS, ada_project, "same") == first  # admins can see it too
+    other = _start(client, bob, _own_project(client, bob), "same")
     assert other != first
     assert client.get(f"/scans/{other}/status", headers=bob).status_code == 200
 
@@ -186,8 +198,8 @@ def test_reuse_never_hands_back_someone_elses_scan(client, project_id):
 def test_diff_and_report_check_the_comparison_scan_too(client, project_id):
     _, ada = make_user("ada@test.local")
     _, bob = make_user("bob@test.local", overrides={"scans.create_dast": "grant"})
-    ada_scan = _start(client, ada, project_id)
-    bob_scan = _start(client, bob, project_id, scan_type="dast",
+    ada_scan = _start(client, ada, _own_project(client, ada))
+    bob_scan = _start(client, bob, _own_project(client, bob), scan_type="dast",
                       dast={"target_url": "http://localhost:3000", "authorized": True})
     for route in ("diff", "report"):
         assert client.get(f"/scans/{bob_scan}/{route}", headers=bob).status_code == 200, route
@@ -198,7 +210,7 @@ def test_diff_and_report_check_the_comparison_scan_too(client, project_id):
 def test_feedback_list_shows_only_visible_scans(client, project_id):
     _, ada = make_user("ada@test.local", overrides={"findings.review": "grant"})
     _, bob = make_user("bob@test.local", overrides={"findings.review": "grant"})
-    _start(client, ada, project_id)
+    _start(client, ada, _own_project(client, ada))
     assert client.get("/feedback", headers=bob).json()["total"] == 0
 
 
@@ -208,20 +220,21 @@ def test_feedback_list_shows_only_visible_scans(client, project_id):
 def test_default_user_actions(client, project_id):
     _, ada = make_user("ada@test.local")
     _, bob = make_user("bob@test.local")
-    mine = _start(client, ada, project_id)
-    theirs = _start(client, bob, project_id, "b")
+    ada_project = _own_project(client, ada)
+    mine = _start(client, ada, ada_project)
+    theirs = _start(client, bob, _own_project(client, bob), "b")
 
     # Allowed by default.
     assert client.get("/projects", headers=ada).status_code == 200
     assert client.get(f"/scans/{mine}/export.sarif", headers=ada).status_code == 200
+    assert client.get(f"/projects/{ada_project}", headers=ada).status_code == 200
+    assert client.patch(f"/projects/{ada_project}", headers=ada, json={"description": "x"}).status_code == 200
     # Not by default.
     assert client.delete(f"/scans/{mine}", headers=ada).status_code == 403
-    assert client.post("/projects", headers=ada, json={"name": "x", "default_git_url": "https://g/x.git"}).status_code == 403
-    assert client.patch(f"/projects/{project_id}", headers=ada, json={"description": "x"}).status_code == 403
     assert client.patch("/settings/models", headers=ada, json={}).status_code == 403
     assert client.patch("/dast/settings", headers=ada, json={}).status_code == 403
     dast = client.post("/scans", headers=ada, json={
-        "project_id": project_id, "scan_type": "dast", "dast": {"target_url": "http://localhost:3000", "authorized": True},
+        "project_id": ada_project, "scan_type": "dast", "dast": {"target_url": "http://localhost:3000", "authorized": True},
     })
     assert dast.status_code == 403 and dast.json()["code"] == "forbidden"
     # Stopping: own scans only, and someone else's isn't even visible.
@@ -230,7 +243,7 @@ def test_default_user_actions(client, project_id):
 
 def test_grants_unlock_actions_and_denies_take_them_away(client, project_id):
     _, ada = make_user("ada@test.local", overrides={"scans.delete": "grant", "reports.export": "deny"})
-    mine = _start(client, ada, project_id)
+    mine = _start(client, ada, _own_project(client, ada))
     assert client.get(f"/scans/{mine}/export.pdf", headers=ada).status_code == 403
     assert client.delete(f"/scans/{mine}", headers=ada).status_code == 204
     with app_db.SessionLocal() as db:
@@ -239,7 +252,7 @@ def test_grants_unlock_actions_and_denies_take_them_away(client, project_id):
 
 def test_scan_create_needs_view_own(client, project_id):
     _, ada = make_user("ada@test.local", overrides={"scans.view_own": "deny"})
-    r = client.post("/scans", headers=ada, json={"project_id": project_id, "commit_sha": "x"})
+    r = client.post("/scans", headers=ada, json={"project_id": _own_project(client, ada), "commit_sha": "x"})
     assert r.status_code == 403
 
 
@@ -297,7 +310,7 @@ def test_scan_list_says_who_started_each_scan(client, project_id):
     with app_db.SessionLocal() as db:
         db.get(User, ada_id).display_name = "Ada"
         db.commit()
-    ada_scan = _start(client, ada, project_id, "a1")
+    ada_scan = _start(client, ada, _own_project(client, ada), "a1")
     ci_scan = _start(client, CI_HEADERS, project_id, "c1")
 
     by_id = {s["id"]: s for s in client.get("/scans", headers=ADMIN_HEADERS).json()}

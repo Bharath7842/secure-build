@@ -96,8 +96,8 @@ def _load_agent_module():
 
 def llm_usage_options(project: Project, scan: Scan | None = None) -> dict:
     """Keyword arguments for the engine's init_usage carrying this scan's
-    openai_compat endpoint/key and data policy. The key comes from the
-    project (never snapshotted); the base URL and policy prefer the scan's
+    openai_compat endpoint/key. The key comes from the
+    project (never snapshotted); the base URL prefers the scan's
     snapshot so a re-run matches what the scan originally used."""
     base_url = (
         (getattr(scan, "llm_base_url", None) if scan else None)
@@ -107,14 +107,8 @@ def llm_usage_options(project: Project, scan: Scan | None = None) -> dict:
     api_key = getattr(project, "llm_api_key", None) or (
         settings.openai_compat_api_key.get_secret_value() if settings.openai_compat_api_key else ""
     )
-    data_policy = (
-        (getattr(scan, "llm_data_policy", None) if scan else None)
-        or getattr(project, "llm_data_policy", None)
-        or "allow_external"
-    )
     return {
         "provider_options": {"openai_compat": {"base_url": base_url, "api_key": api_key}},
-        "data_policy": data_policy,
     }
 
 

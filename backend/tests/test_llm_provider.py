@@ -413,37 +413,3 @@ def test_call_llm_without_fallback_stops_at_cutoff(llm, monkeypatch):
     assert llm.usage_cost_summary(usage)["budget_exhausted"] is True
 
 
-def test_local_only_policy_refuses_external_providers(llm, monkeypatch):
-    monkeypatch.setattr(llm, "_call_bedrock", lambda *a, **k: "x")
-    usage = llm.init_usage("bedrock", llm.BEDROCK_MODEL_ID, data_policy="local_only")
-    with pytest.raises(llm.LlmPolicyViolation, match="Bedrock"):
-        llm.call_llm("s", "u", usage=usage, step="unit")
-
-    remote = llm.init_usage(
-        "openai_compat", "gpt-4o", data_policy="local_only",
-        provider_options={"openai_compat": {"base_url": "https://api.openai.com/v1"}},
-    )
-    with pytest.raises(llm.LlmPolicyViolation, match="api.openai.com"):
-        llm.call_llm("s", "u", usage=remote, step="unit")
-
-
-def test_local_only_policy_allows_local_openai_compat(llm, monkeypatch):
-    monkeypatch.setattr(llm, "_call_openai_compat", lambda *a, **k: "local ok")
-    usage = llm.init_usage(
-        "openai_compat", "m", data_policy="local_only",
-        provider_options={"openai_compat": {"base_url": "http://127.0.0.1:1234/v1"}},
-    )
-    assert llm.call_llm("s", "u", usage=usage, step="unit") == "local ok"
-
-
-@pytest.mark.parametrize("url,expected", [
-    ("http://localhost:8000/v1", True),
-    ("http://127.0.0.1:1234/v1", True),
-    ("http://192.168.1.20:8000/v1", True),
-    ("http://gpu-box.local:8000/v1", True),
-    ("https://api.openai.com/v1", False),
-    ("http://8.8.8.8/v1", False),
-    ("", False),
-])
-def test_is_local_base_url(llm, url, expected):
-    assert llm.is_local_base_url(url) is expected

@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 
 from app.auth.principal import Principal, forbidden, record, require
-from app.authz.scope import authorize_scan, can_see_scan, can_stop_scan, scope_scans
+from app.authz.scope import authorize_scan, can_see_project, can_see_scan, can_stop_scan, scope_scans
 from app.config import settings
 from app.db import get_db
 from app.dast.domain.curl import to_curl
@@ -36,7 +36,6 @@ from app.services.dast_summary import build_summary
 from app.services.dast_findings_query import build_dast_findings
 from app.services.dast_scan_setup import DastSetupError, prepare_dast_scan
 from app.services.feedback import apply_effective_verdicts, effective_scan_findings
-from app.services.llm_policy import DATA_POLICY_ALLOW_EXTERNAL, data_policy_violation
 from app.services.ollama_check import DEFAULT_FALLBACK_OLLAMA_MODEL, ollama_model_error
 from app.services.scan_export import (
     build_excel_report,
@@ -200,7 +199,7 @@ def trigger_scan(
         )
 
     project = db.get(Project, payload.project_id)
-    if project is None:
+    if project is None or not can_see_project(principal, project):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     if scan_type == "sca" and not project.enable_sca:
         raise HTTPException(
@@ -304,19 +303,6 @@ def trigger_scan(
             if fallback_llm_provider == "ollama" and not fallback_llm_model:
                 fallback_llm_model = DEFAULT_FALLBACK_OLLAMA_MODEL
         llm_base_url = getattr(project, "llm_base_url", None) or None
-        llm_data_policy = getattr(project, "llm_data_policy", None) or DATA_POLICY_ALLOW_EXTERNAL
-        # Refuse up front rather than fail mid-scan: under local_only, neither
-        # the primary nor the fallback may send code off the local network.
-        for candidate in (llm_provider, fallback_llm_provider):
-            if not candidate or candidate == "none":
-                continue
-            violation = data_policy_violation(
-                policy=llm_data_policy,
-                provider=candidate,
-                base_url=_effective_llm_base_url(candidate, llm_base_url),
-            )
-            if violation:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=violation)
         # The fallback only matters once the cutoff is hit, so a missing model
         # would otherwise surface mid-scan. Skipped for the offline mock engine.
         if (
@@ -335,14 +321,12 @@ def trigger_scan(
         fallback_llm_provider = None
         fallback_llm_model = None
         llm_base_url = None
-        llm_data_policy = None
     else:
         llm_provider = None
         llm_model = None
         fallback_llm_provider = None
         fallback_llm_model = None
         llm_base_url = None
-        llm_data_policy = None
     metadata = dict(payload.metadata or {})
     metadata["use_llm"] = use_llm
     if is_dast:
@@ -370,7 +354,6 @@ def trigger_scan(
         fallback_llm_provider=fallback_llm_provider,
         fallback_llm_model=fallback_llm_model,
         llm_base_url=llm_base_url,
-        llm_data_policy=llm_data_policy,
         # The CI token is only issued to pipelines, so its scans are CI scans
         # whatever the metadata says.
         triggered_by="jenkins" if principal.kind == "service" else _resolve_triggered_by(metadata),

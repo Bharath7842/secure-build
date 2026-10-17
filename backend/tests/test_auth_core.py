@@ -231,8 +231,8 @@ def test_unknown_role_holds_nothing():
 
 def test_user_defaults():
     held = catalog.effective_permissions("user")
-    assert {"projects.view", "scans.view_own", "scans.create", "reports.export", "page.history"} <= held
-    assert not {"scans.view_all", "scans.delete", "scans.create_dast", "page.dast", "projects.manage"} & held
+    assert {"projects.view", "projects.manage", "scans.view_own", "scans.create", "reports.export", "page.history"} <= held
+    assert not {"scans.view_all", "projects.view_all", "scans.delete", "scans.create_dast", "page.dast"} & held
 
 
 def test_grant_adds_and_deny_wins():

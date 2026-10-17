@@ -28,6 +28,7 @@ import { DEEP_SCAN_SECTION_RE, TRIAGE_SECTION_RE, extractProjectStructureTree } 
 import { DESKTOP_SPLIT_QUERY, useMediaQuery } from "@/lib/useMediaQuery";
 import type { Project, Scan, ScanDiscovery, ScanLogLine, ScanResults, ScanStatus } from "@/lib/types";
 import { useAuth } from "@/components/auth/AuthProvider";
+import { useActiveProject } from "@/components/project/ActiveProjectProvider";
 import { canStopScan } from "@/lib/access";
 
 const POLL_INTERVAL_MS = 2000;
@@ -43,6 +44,7 @@ function isActiveStatus(status: string): boolean {
 
 export default function ScanDetailPage() {
   const me = useAuth();
+  const { setActiveProjectId, setViewedScanType } = useActiveProject();
   const params = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const id = params.id;
@@ -176,6 +178,17 @@ export default function ScanDetailPage() {
       if (timer) clearInterval(timer);
     };
   }, [id, status?.scan_type]);
+
+  // The sidebar follows the scan: its project and its type's menu.
+  useEffect(() => {
+    if (status?.project_id) setActiveProjectId(status.project_id);
+  }, [status?.project_id, setActiveProjectId]);
+
+  const viewedType = scanRecord?.scan_type ?? null;
+  useEffect(() => {
+    setViewedScanType(viewedType);
+    return () => setViewedScanType(null);
+  }, [viewedType, setViewedScanType]);
 
   useEffect(() => {
     const projectId = status?.project_id;

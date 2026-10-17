@@ -48,6 +48,7 @@ import type {
   ScanResults,
   ScanStatus,
   ScanTrigger,
+  TokenRepo,
 } from "@/lib/types";
 
 /** A readable message from a FastAPI error body: a plain string, a list of validation problems, or
@@ -167,6 +168,8 @@ export const api = {
       patch: { display_name?: string; role?: AppRole; is_active?: boolean },
     ): Promise<UserAccess & { user: AppUser }> =>
       request(`/api/admin/users/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+    deleteUser: (id: string): Promise<void> =>
+      request(`/api/admin/users/${encodeURIComponent(id)}`, { method: "DELETE" }),
     setPermissions: (
       id: string,
       overrides: Record<string, Override>,
@@ -235,6 +238,12 @@ export const api = {
       if (by.projectId) query.set("project_id", by.projectId);
       return request(`/api/git-auth/${provider}/repo?${query.toString()}`);
     },
+    /** Confirm a repository with an access token; the token is kept server-side. */
+    checkToken: (
+      provider: "gitlab",
+      input: { url: string; access_token: string; project_id?: string }
+    ): Promise<TokenRepo> =>
+      request(`/api/git-auth/${provider}/token`, { method: "POST", body: JSON.stringify(input) }),
   },
   scans: {
     list: (projectId?: string, scanType?: "sast" | "sca" | "sbom" | "dast"): Promise<Scan[]> => {

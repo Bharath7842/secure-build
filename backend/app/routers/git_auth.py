@@ -27,10 +27,11 @@ from urllib.parse import quote, urlencode, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth.principal import Principal, require
+from app.authz.scope import can_see_project
 from app.config import settings
 from app.db import get_db
 from app.models import Project, utcnow
@@ -218,6 +219,53 @@ class RepoOut(BaseModel):
     private: bool = False
 
 
+class TokenRepoIn(BaseModel):
+    url: str = Field(max_length=500)
+    access_token: str = Field(min_length=1, max_length=500)
+    # Set when editing a saved project; omitted on the new-project form.
+    project_id: str | None = None
+
+
+class TokenRepoOut(RepoOut):
+    # Set on the new-project form: pass it to POST /projects as git_connection_id.
+    connection_id: str | None = None
+
+
+@router.post("/{provider}/token", response_model=TokenRepoOut)
+def check_repo_token(
+    provider: str,
+    body: TokenRepoIn,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require("projects.manage")),
+):
+    """Confirm a repository with a personal access token, then keep the token the
+    same way an OAuth connection is kept: on the project when editing, or as a
+    short-lived pending connection when creating. The token is never returned."""
+    provider = _require_provider(provider)
+    try:
+        path = repo_path_from_url(provider, body.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    token = body.access_token.strip()
+    repo = _fetch_repo(provider, path, token)
+
+    if body.project_id:
+        project = db.get(Project, body.project_id)
+        if project is None or not can_see_project(principal, project):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+        project.git_provider = provider
+        project.git_access_token = token
+        project.git_refresh_token = None
+        project.git_token_expires_at = None
+        db.commit()
+        return TokenRepoOut(**repo.model_dump())
+
+    connection_id = _store_pending_connection(
+        provider, {"access_token": token, "refresh_token": None, "expires_at": None}
+    )
+    return TokenRepoOut(**repo.model_dump(), connection_id=connection_id)
+
+
 def _resolve_token(
     db: Session, provider: str, connection_id: str | None, project_id: str | None
 ) -> str:
@@ -292,27 +340,9 @@ def repo_path_from_url(provider: str, raw: str) -> str:
     return "/".join(segments)
 
 
-@router.get("/{provider}/repo", response_model=RepoOut)
-def lookup_repo(
-    provider: str,
-    url: str,
-    connection_id: str | None = None,
-    project_id: str | None = None,
-    db: Session = Depends(get_db),
-    principal: Principal = Depends(require("projects.manage")),
-):
-    """Find one repository by its Git URL using the connected account's token.
-
-    Replaces listing every repository (one page of 100 at most): the user pastes
-    the URL and we ask the provider for exactly that repository.
-    """
-    provider = _require_provider(provider)
-    try:
-        path = repo_path_from_url(provider, url)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    token = _resolve_token(db, provider, connection_id, project_id)
-
+def _fetch_repo(provider: str, path: str, token: str) -> RepoOut:
+    """Ask the provider for one repository. Raises 404 when the token can't see
+    it, 502 when the provider can't be reached."""
     try:
         resp = httpx.get(
             f"{settings.gitlab_base_url}/api/v4/projects/{quote(path, safe='')}",
@@ -341,6 +371,30 @@ def lookup_repo(
         default_branch=r.get("default_branch"),
         private=r.get("visibility") != "public",
     )
+
+
+@router.get("/{provider}/repo", response_model=RepoOut)
+def lookup_repo(
+    provider: str,
+    url: str,
+    connection_id: str | None = None,
+    project_id: str | None = None,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require("projects.manage")),
+):
+    """Find one repository by its Git URL using the connected account's token.
+
+    Replaces listing every repository (one page of 100 at most): the user pastes
+    the URL and we ask the provider for exactly that repository.
+    """
+    provider = _require_provider(provider)
+    try:
+        path = repo_path_from_url(provider, url)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    token = _resolve_token(db, provider, connection_id, project_id)
+
+    return _fetch_repo(provider, path, token)
 
 
 @router.delete("/{project_id}/disconnect", status_code=status.HTTP_204_NO_CONTENT)

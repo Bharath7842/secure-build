@@ -28,7 +28,7 @@ class Base(DeclarativeBase):
 class Project(Base):
     __tablename__ = "projects"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    name: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(500), unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     languages: Mapped[list] = mapped_column(JSON, default=list)
     frameworks: Mapped[list] = mapped_column(JSON, default=list)
@@ -47,6 +47,9 @@ class Project(Base):
     enable_sca: Mapped[bool] = mapped_column(Boolean, default=True)
     enable_sbom: Mapped[bool] = mapped_column(Boolean, default=True)
     enable_secrets: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Who created the project. Users see and change only their own; NULL (projects
+    # from before ownership existed) is visible to admins alone.
+    created_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     scan_mode: Mapped[str] = mapped_column(String(20), default="full")  # always full
     max_files_to_scan: Mapped[int] = mapped_column(Integer, default=0)  # 0 = entire repo
     # Hard caps on LLM-derived (OWASP-driven) regex/Semgrep rules per scan.
@@ -63,9 +66,6 @@ class Project(Base):
     # Write-only, like git_access_token: never returned (ProjectOut only
     # exposes llm_api_key_set) and never snapshotted onto a Scan row.
     llm_api_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    # "allow_external" or "local_only" — the latter refuses any provider that
-    # would send repository code off localhost/private networks.
-    llm_data_policy: Mapped[str] = mapped_column(String(20), default="allow_external")
     # After spend hits the soft cutoff, continue on this provider/model;
     # "none" stops LLM work and leaves the rest unverified. Ignored when
     # llm_provider is ollama.
@@ -122,10 +122,9 @@ class Scan(Base):
     llm_model: Mapped[str | None] = mapped_column(String(200), nullable=True)
     fallback_llm_provider: Mapped[str | None] = mapped_column(String(20), nullable=True)
     fallback_llm_model: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    # openai_compat endpoint and data policy in force for this scan (the API
+    # openai_compat endpoint in force for this scan (the API
     # key is deliberately not snapshotted — it is read from the project).
     llm_base_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    llm_data_policy: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # Who triggered the scan: "app" (Secure Build UI) or "jenkins" (CI).
     triggered_by: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # The signed-in user who started the scan. None for CI-triggered scans and
@@ -134,6 +133,9 @@ class Scan(Base):
     created_by_user_id: Mapped[str | None] = mapped_column(
         ForeignKey("users.id"), nullable=True, index=True
     )
+    # Set when that user is deleted, so the scan still says who started it.
+    deleted_creator_name: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    deleted_creator_email: Mapped[str | None] = mapped_column(String(254), nullable=True)
     metadata_json: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -492,8 +494,9 @@ USER_ROLES = ("admin", "user")
 
 
 class User(Base):
-    """A person who signs in. Never hard-deleted: disabling keeps their scans,
-    reviews and audit history attributable."""
+    """A person who signs in. Disabling keeps their scans, reviews and audit
+    history attributable; an admin may delete a disabled account, which clears
+    the owner on their scans (see admin_users.delete_user)."""
 
     __tablename__ = "users"
     __table_args__ = (CheckConstraint("role IN ('admin', 'user')", name="ck_users_role"),)

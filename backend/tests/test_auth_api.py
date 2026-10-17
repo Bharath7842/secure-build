@@ -181,6 +181,20 @@ def test_invited_user_cannot_sign_in_until_accepting(client):
     assert client.post("/auth/login", json={"email": "ada@example.com", "password": PW}).status_code == 200
 
 
+def test_link_preview_names_the_account_without_using_the_link_up(client):
+    admin = _setup_admin(client)
+    r = client.post("/admin/users", headers=admin, json={"email": "ada@example.com", "role": "user", "overrides": {}})
+    token = r.json()["invite_url"].split("#t=", 1)[1]
+    for _ in range(2):  # previewing twice proves nothing was consumed
+        p = client.post("/auth/setup/preview", json={"token": token})
+        assert p.status_code == 200 and p.json() == {"email": "ada@example.com", "purpose": "invite"}
+    assert client.post("/auth/setup", json={"token": token, "password": PW}).status_code == 200
+    # Used up: the preview now refuses it, like any bad token.
+    used = client.post("/auth/setup/preview", json={"token": token})
+    assert used.status_code == 400 and used.json()["code"] == "invalid_or_expired_token"
+    assert client.post("/auth/setup/preview", json={"token": "nope"}).status_code == 400
+
+
 def test_reset_link_signs_the_user_out_everywhere(client):
     admin = _setup_admin(client)
     user_id, ada = _invite_and_accept(client, admin)
@@ -284,6 +298,43 @@ def test_disabling_signs_the_user_out_and_blocks_login(client):
     assert client.post("/auth/login", json={"email": "ada@example.com", "password": PW}).status_code == 200
 
 
+def test_admin_deletes_only_disabled_users_and_keeps_their_scans(client):
+    from app.models import Project, Scan, UserSession
+
+    admin = _setup_admin(client)
+    me_id = client.get("/auth/me", headers=admin).json()["user"]["id"]
+    user_id, ada = _invite_and_accept(client, admin)
+    with _db() as db:
+        project = Project(name="p", default_git_url="https://example.com/r.git")
+        db.add(project)
+        db.flush()
+        scan = Scan(project_id=project.id, git_url=project.default_git_url, created_by_user_id=user_id)
+        db.add(scan)
+        db.commit()
+        scan_id = scan.id
+
+    assert client.delete(f"/admin/users/{user_id}", headers=admin).json()["code"] == "not_disabled"
+    assert client.delete(f"/admin/users/{me_id}", headers=admin).json()["code"] == "cannot_delete_self"
+    assert client.delete("/admin/users/nope", headers=admin).status_code == 404
+
+    client.patch(f"/admin/users/{user_id}", headers=admin, json={"is_active": False})
+    assert client.delete(f"/admin/users/{user_id}", headers=admin).status_code == 204
+    assert client.get(f"/admin/users/{user_id}", headers=admin).status_code == 404
+    assert client.post("/auth/login", json={"email": "ada@example.com", "password": PW}).status_code == 401
+    with _db() as db:
+        kept = db.get(Scan, scan_id)
+        assert kept.created_by_user_id is None and kept.deleted_creator_email == "ada@example.com"
+        assert db.query(UserSession).filter(UserSession.user_id == user_id).count() == 0
+    listed = next(x for x in client.get("/scans", headers=admin).json() if x["id"] == scan_id)
+    assert listed["created_by_deleted"] is True and listed["created_by_email"] == "ada@example.com"
+    events = client.get("/admin/audit", headers=admin).json()
+    assert "user.deleted" in {e["action"] for e in events["items"]}
+
+    # A regular user can't delete anyone.
+    other_id, other = _invite_and_accept(client, admin, "other@example.com")
+    assert client.delete(f"/admin/users/{other_id}", headers=other).status_code == 403
+
+
 def test_last_admin_cannot_be_demoted_or_disabled(client):
     admin = _setup_admin(client)
     me_id = client.get("/auth/me", headers=admin).json()["user"]["id"]
@@ -385,3 +436,25 @@ def test_link_expiry_is_sent_as_utc(client):
     assert created["invite_expires_at"].endswith(("Z", "+00:00"))
     link = client.post(f"/admin/users/{created['user']['id']}/invite-link", headers=admin).json()
     assert link["expires_at"].endswith(("Z", "+00:00"))
+
+
+def test_users_see_and_change_only_the_projects_they_created(client):
+    admin = _setup_admin(client)
+    _, ada = _invite_and_accept(client, admin, "ada@example.com")
+    _, bob = _invite_and_accept(client, admin, "bob@example.com")
+    body = {"name": "ada-proj", "default_git_url": "https://github.com/o/a.git"}
+    ada_proj = client.post("/projects", headers=ada, json=body)
+    assert ada_proj.status_code == 201, ada_proj.text
+    pid = ada_proj.json()["id"]
+    client.post("/projects", headers=admin, json={"name": "admin-proj", "default_git_url": "https://github.com/o/b.git"})
+
+    names = lambda h: sorted(p["name"] for p in client.get("/projects", headers=h).json())
+    assert names(ada) == ["ada-proj"]
+    assert names(bob) == []
+    assert names(admin) == ["ada-proj", "admin-proj"]
+
+    # Bob can't open, edit or scan Ada's project; the answer is the same as for a missing one.
+    assert client.get(f"/projects/{pid}", headers=bob).status_code == 404
+    assert client.patch(f"/projects/{pid}", headers=bob, json={"name": "hijack"}).status_code == 404
+    assert client.get(f"/projects/{pid}", headers=ada).status_code == 200
+    assert client.get(f"/projects/{pid}", headers=admin).status_code == 200

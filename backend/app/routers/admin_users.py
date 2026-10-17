@@ -1,4 +1,4 @@
-"""User management for admins: create (by invite link), edit, disable,
+"""User management for admins: create (by invite link), edit, disable, delete,
 role and permission changes, and reset links. Every change is audited."""
 
 from __future__ import annotations
@@ -7,7 +7,7 @@ import threading
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy import or_
+from sqlalchemy import or_, update
 from sqlalchemy.orm import Session
 
 from app.auth import passwords, sessions
@@ -16,7 +16,7 @@ from app.auth.schemas import OneTimeLinkOut, PermissionsIn, UserCreateIn, UserOu
 from app.authz import catalog
 from app.config import settings
 from app.db import get_db
-from app.models import AuditEvent, User, UserPermissionOverride
+from app.models import AuditEvent, DastSchedule, Scan, User, UserPermissionOverride, UserToken
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -224,6 +224,46 @@ def _apply_user_update(db, request, principal, user, body, demoting, disabling):
         record(db, request, action, principal, target_type="user", target_id=user.id,
                details={"field": field, **change})
     return {"user": UserOut.model_validate(user).model_dump(mode="json"), **_access(user)}
+
+
+@router.delete("/users/{user_id}", status_code=204)
+def delete_user(
+    user_id: str,
+    request: Request,
+    principal: Principal = Depends(_MANAGE),
+    db: Session = Depends(get_db),
+):
+    """Permanently remove a disabled account. Scans and schedules they started
+    are kept but lose their owner (so only `scans.view_all` sees them); each scan
+    keeps the starter's name and email, and audit events keep the email they were
+    recorded with."""
+    with _admin_change_lock:
+        user = db.get(User, user_id, populate_existing=True)
+        if user is None:
+            raise ApiError(404, "not_found", "User not found")
+        if user.id == principal.user_id:
+            raise ApiError(409, "cannot_delete_self", "You can't delete your own account.")
+        if user.is_active:
+            raise ApiError(409, "not_disabled", "Disable this account before deleting it.")
+        email, role = user.email, user.role
+        db.execute(
+            update(Scan)
+            .where(Scan.created_by_user_id == user.id)
+            .values(deleted_creator_name=user.display_name or None, deleted_creator_email=email)
+        )
+        for model, column in (
+            (Scan, Scan.created_by_user_id),
+            (DastSchedule, DastSchedule.created_by_user_id),
+            (UserToken, UserToken.created_by_user_id),
+            (UserPermissionOverride, UserPermissionOverride.created_by_user_id),
+            (User, User.created_by_user_id),
+            (User, User.disabled_by_user_id),
+        ):
+            db.execute(update(model).where(column == user.id).values({column.key: None}))
+        db.delete(user)  # sessions, tokens and overrides cascade
+        db.commit()
+    record(db, request, "user.deleted", principal, target_type="user", target_id=user_id,
+           details={"email": email, "role": role})
 
 
 @router.put("/users/{user_id}/permissions")

@@ -3,8 +3,10 @@
 import { usePathname } from "next/navigation";
 
 import { useAuth } from "@/components/auth/AuthProvider";
+import { ActiveProjectProvider } from "@/components/project/ActiveProjectProvider";
 import Forbidden from "@/components/Forbidden";
 import Sidebar from "@/components/Sidebar";
+import TopBar from "@/components/TopBar";
 import { isPublicPage, pageKeyFor } from "@/lib/access";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -22,11 +24,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const forbidden = !!me && !!key && !me.pages.includes(key);
 
   return (
-    <>
+    <ActiveProjectProvider>
       <Sidebar />
-      <main className="h-screen min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
-        {forbidden ? <Forbidden landing={me.landing} /> : children}
-      </main>
-    </>
+      <div className="flex h-screen min-w-0 flex-1 flex-col">
+        <TopBar />
+        <main className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
+          {forbidden ? <Forbidden landing={me.landing} /> : children}
+        </main>
+      </div>
+    </ActiveProjectProvider>
   );
 }

@@ -2917,10 +2917,6 @@ def main() -> None:
                         choices=[llm_client.PROVIDER_NONE, *llm_client.KNOWN_PROVIDERS], default=None,
                         help="Provider to continue on past the cost cutoff (default: none = stop LLM work)")
     parser.add_argument("--fallback-llm-model", default=None)
-    parser.add_argument("--llm-data-policy",
-                        choices=[llm_client.DATA_POLICY_ALLOW_EXTERNAL, llm_client.DATA_POLICY_LOCAL_ONLY],
-                        default=None,
-                        help="local_only refuses any provider that would send code off the local network")
     parser.add_argument("--verbose-files", action="store_true",
                          help="Log every individual file (noisy — off by default; summaries always shown)")
     parser.add_argument("--quiet", action="store_true", help="Suppress live trace printing (still saved to JSON)")
@@ -3026,7 +3022,6 @@ def main() -> None:
                 {llm_client.PROVIDER_OPENAI_COMPAT: {"base_url": args.llm_base_url}}
                 if args.llm_base_url else None
             ),
-            data_policy=args.llm_data_policy,
         ),
         "group_triage_mode": not args.no_group_triage,
         "confirm_triage_groups": args.confirm_triage_groups,

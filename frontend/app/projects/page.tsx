@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import DeleteProjectModal from "@/components/DeleteProjectModal";
@@ -8,13 +9,21 @@ import PageContainer from "@/components/PageContainer";
 import { ApiError, api } from "@/lib/api";
 import type { Project } from "@/lib/types";
 import { useCan } from "@/components/auth/AuthProvider";
+import { useActiveProject } from "@/components/project/ActiveProjectProvider";
 
 export default function ProjectsPage() {
   const can = useCan();
+  const { activeProject, setActiveProjectId, refresh } = useActiveProject();
+  const router = useRouter();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
+
+  // Nothing of the user's yet: the first thing to do is create a project.
+  useEffect(() => {
+    if (!loading && projects.length === 0 && can("projects.manage")) router.replace("/projects/new");
+  }, [loading, projects.length, can, router]);
 
   useEffect(() => {
     let active = true;
@@ -106,13 +115,16 @@ export default function ProjectsPage() {
                       >
                         Edit
                       </Link>
-                      {can("scans.create") && (
-                        <Link
-                          href={`/scans/new?project_id=${project.id}`}
+                      {activeProject?.id === project.id ? (
+                        <span className="font-medium text-[var(--muted)]">Active</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setActiveProjectId(project.id)}
                           className="font-medium text-[var(--accent)]"
                         >
-                          New Scan →
-                        </Link>
+                          Use this project
+                        </button>
                       )}
                       {can("projects.manage") && (
                         <button
@@ -139,6 +151,7 @@ export default function ProjectsPage() {
           onDeleted={() => {
             setProjects((prev) => prev.filter((p) => p.id !== deleteTarget.id));
             setDeleteTarget(null);
+            void refresh();
           }}
         />
       )}

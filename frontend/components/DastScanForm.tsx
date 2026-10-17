@@ -17,7 +17,6 @@ import type {
   ScanCreateInput,
 } from "@/lib/types";
 
-const NEW_PROJECT_VALUE = "__new__";
 /** Local Employee Management practice target — pre-filled so a scan can start without retyping. */
 const PRACTICE_TARGET_URL = "http://localhost:4200";
 const PRACTICE_IDENTITY = {
@@ -35,7 +34,8 @@ const INTENSITIES: { value: DastIntensity; label: string }[] = [
 ];
 
 interface DastScanFormProps {
-  projectId?: string;
+  /** The active project. DAST needs no repository: the target address is entered per scan. */
+  project: Project;
   onSubmit: (input: ScanCreateInput) => Promise<void>;
 }
 
@@ -63,14 +63,8 @@ function describePreset(preset: Record<string, number> | undefined): string {
 }
 
 /** Inputs for a DAST scan: the target and authorization, scope and safety, identities, rule packs and model. */
-export default function DastScanForm({ projectId, onSubmit }: DastScanFormProps) {
+export default function DastScanForm({ project, onSubmit }: DastScanFormProps) {
   const uid = useId();
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loadingProjects, setLoadingProjects] = useState(true);
-  const [selectedProjectId, setSelectedProjectId] = useState("");
-  const [creatingNewProject, setCreatingNewProject] = useState(false);
-  const [newProjectName, setNewProjectName] = useState("");
-
   const [targetUrl, setTargetUrl] = useState(PRACTICE_TARGET_URL);
   const [targetTouched, setTargetTouched] = useState(false);
   const [authorized, setAuthorized] = useState(true);
@@ -91,26 +85,6 @@ export default function DastScanForm({ projectId, onSubmit }: DastScanFormProps)
 
   useEffect(() => {
     let active = true;
-    async function load() {
-      setLoadingProjects(true);
-      try {
-        const data = await api.projects.list();
-        if (active) {
-          setProjects(data || []);
-          setSelectedProjectId((current) => {
-            if (current && data.some((p) => p.id === current)) return current;
-            const fromUrl = projectId && data.some((p) => p.id === projectId) ? projectId : null;
-            return fromUrl ?? data[0]?.id ?? "";
-          });
-        }
-      } catch (err) {
-        console.error("Failed to load projects:", err);
-        if (active) setProjects([]);
-      } finally {
-        if (active) setLoadingProjects(false);
-      }
-    }
-    load();
     // Settings and provider status are best-effort: the form still works without them.
     api.dast.settings.get().then((s) => {
       if (!active || !s) return;
@@ -120,22 +94,7 @@ export default function DastScanForm({ projectId, onSubmit }: DastScanFormProps)
     return () => {
       active = false;
     };
-  }, [projectId]);
-
-  const projectSelectValue = creatingNewProject
-    ? NEW_PROJECT_VALUE
-    : projects.some((p) => p.id === selectedProjectId)
-      ? selectedProjectId
-      : "";
-
-  function handleProjectSelect(value: string) {
-    if (value === NEW_PROJECT_VALUE) {
-      setCreatingNewProject(true);
-      return;
-    }
-    setCreatingNewProject(false);
-    setSelectedProjectId(value);
-  }
+  }, []);
 
   const urlProblem = targetUrlProblem(targetUrl);
   const identityIssues = identities.map((d) => identityProblems(d, identities));
@@ -146,11 +105,6 @@ export default function DastScanForm({ projectId, onSubmit }: DastScanFormProps)
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setShowErrors(true);
-    if (creatingNewProject) {
-      if (!newProjectName.trim()) return setError("Enter a name for the new project.");
-    } else if (!selectedProjectId) {
-      return setError("Select a project to scan.");
-    }
     if (!targetUrl.trim() || urlProblem) return setError(urlProblem ?? "Target URL is required.");
     if (identityIssues.some((p) => Object.keys(p).length > 0)) return setError("Fix the highlighted identity fields.");
     if (!authorized) return setError("Confirm that you are authorized to test this target.");
@@ -158,18 +112,8 @@ export default function DastScanForm({ projectId, onSubmit }: DastScanFormProps)
     setError(null);
     setSubmitting(true);
     try {
-      let project = selectedProjectId;
-      if (creatingNewProject) {
-        // A project used only for DAST has no repository — name alone is enough.
-        const created = await api.projects.create({ name: newProjectName.trim() });
-        project = created.id;
-        setProjects((prev) => [...prev, created]);
-        setSelectedProjectId(created.id);
-        setCreatingNewProject(false);
-      }
-
       const payload: ScanCreateInput = {
-        project_id: project,
+        project_id: project.id,
         scan_type: "dast",
         use_llm: false,
         metadata: { source: "app" },
@@ -212,55 +156,11 @@ export default function DastScanForm({ projectId, onSubmit }: DastScanFormProps)
         </SectionLabel>
 
         <div>
-          <label htmlFor="dast-project" className="block text-sm font-medium text-[var(--ink)]">
-            Project
-          </label>
-          <select
-            id="dast-project"
-            value={projectSelectValue}
-            onChange={(event) => handleProjectSelect(event.target.value)}
-            className={selectClass}
-            disabled={loadingProjects}
-          >
-            <option value="" disabled>
-              {loadingProjects ? "Loading projects…" : "Select a project"}
-            </option>
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-            <option value={NEW_PROJECT_VALUE}>+ New project…</option>
-          </select>
-          {creatingNewProject ? (
-            <div className="mt-2">
-              <label htmlFor="dast-new-project-name" className="sr-only">
-                New project name
-              </label>
-              <input
-                id="dast-new-project-name"
-                value={newProjectName}
-                onChange={(event) => setNewProjectName(event.target.value)}
-                className={inputClass}
-                placeholder="Project name"
-                autoFocus
-                required
-              />
-              <p className="mt-1 text-xs text-[var(--muted)]">
-                Created when you start the scan — just a name, no repository needed. It&apos;ll show up on the Projects page too.{" "}
-                {projects.length > 0 && (
-                  <button type="button" onClick={() => handleProjectSelect(projects[0]!.id)} className="font-medium text-[var(--accent)] hover:underline">
-                    Pick an existing project instead
-                  </button>
-                )}
-              </p>
-            </div>
-          ) : (
-            !loadingProjects &&
-            projects.length === 0 && (
-              <p className="mt-1 text-xs text-[var(--muted)]">No projects yet — pick &quot;+ New project…&quot; above to create one.</p>
-            )
-          )}
+          <p className="block text-sm font-medium text-[var(--ink)]">Project</p>
+          <p className="mt-1 text-sm text-[var(--ink)]">{project.name}</p>
+          <p className="mt-1 text-xs text-[var(--muted)]">
+            Change the project from the selector in the sidebar. DAST scans a running web address, so the project needs no repository.
+          </p>
         </div>
 
         <div>
@@ -343,7 +243,7 @@ export default function DastScanForm({ projectId, onSubmit }: DastScanFormProps)
       <DastIdentitiesEditor identities={identities} onChange={setIdentities} showErrors={showErrors} />
 
       <DastRulePackPicker
-        projectId={creatingNewProject ? null : selectedProjectId || null}
+        projectId={project.id}
         hasSecondIdentity={authenticated >= 2}
         oastConfigured={Boolean(settings?.oast_configured)}
         onChange={setRulePacks}

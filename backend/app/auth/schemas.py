@@ -64,6 +64,12 @@ class SetupIn(BaseModel):
     _email = field_validator("email")(_check_email)
 
 
+class TokenIn(BaseModel):
+    """An invite or reset link's one-time token."""
+
+    token: str = Field(max_length=512)
+
+
 class TokenPasswordIn(BaseModel):
     """Accepting an invite or a reset link."""
 

@@ -7,7 +7,7 @@ import { ApiError, api } from "@/lib/api";
 import { inputClass, selectClass } from "@/lib/formStyles";
 import { LLM_PRESETS, llmPresetForProviderModel, type LlmPresetId } from "@/lib/llmPresets";
 import { useModelCatalog } from "@/lib/useModelCatalog";
-import type { GitRepo, LlmDataPolicy, Project, ProjectCreateInput } from "@/lib/types";
+import type { GitRepo, Project, ProjectCreateInput } from "@/lib/types";
 
 interface ProjectFormProps {
   mode: "create" | "edit";
@@ -35,7 +35,6 @@ interface NewProjectDraft {
   // Never the API key: a secret has no business in sessionStorage.
   llmModel?: string;
   llmBaseUrl?: string;
-  dataPolicy?: LlmDataPolicy;
 }
 
 function FormSection({
@@ -97,8 +96,6 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
   // SAST + Secrets are always on; SCA/SBOM are user-toggleable per project.
   const enableSast = true;
   const enableSecrets = true;
-  const [enableSca, setEnableSca] = useState(initial?.enable_sca ?? true);
-  const [enableSbom, setEnableSbom] = useState(initial?.enable_sbom ?? true);
   const { presets, sastOptions } = useModelCatalog();
   const [llmChoice, setLlmChoice] = useState<LlmPresetId>(
     llmPresetForProviderModel(initial?.llm_provider, initial?.llm_model),
@@ -110,7 +107,6 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
   );
   const [llmBaseUrl, setLlmBaseUrl] = useState(initial?.llm_base_url ?? "");
   const [llmApiKey, setLlmApiKey] = useState("");
-  const [dataPolicy, setDataPolicy] = useState<LlmDataPolicy>(initial?.llm_data_policy ?? "allow_external");
   const isOpenAiCompat = presets[llmChoice]?.provider === "openai_compat";
 
   const [submitting, setSubmitting] = useState(false);
@@ -132,6 +128,12 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
   const [repoLookup, setRepoLookup] = useState<GitRepo | null>(null);
   const [repoLookupLoading, setRepoLookupLoading] = useState(false);
   const [repoLookupError, setRepoLookupError] = useState<string | null>(null);
+  // How to reach the repository: sign in with GitLab, or paste its URL with an access token.
+  const [gitMethod, setGitMethod] = useState<"oauth" | "token">("oauth");
+  const [tokenUrl, setTokenUrl] = useState("");
+  const [accessToken, setAccessToken] = useState("");
+  const [tokenChecking, setTokenChecking] = useState(false);
+  const [tokenError, setTokenError] = useState<string | null>(null);
 
   useEffect(() => {
     if (mode !== "create") return;
@@ -156,7 +158,6 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
           if (draft.llmChoice !== undefined && draft.llmChoice in LLM_PRESETS) setLlmChoice(draft.llmChoice);
           if (draft.llmModel !== undefined) setLlmModel(draft.llmModel);
           if (draft.llmBaseUrl !== undefined) setLlmBaseUrl(draft.llmBaseUrl);
-          if (draft.dataPolicy !== undefined) setDataPolicy(draft.dataPolicy);
         }
         sessionStorage.removeItem(NEW_PROJECT_DRAFT_KEY);
       } catch {
@@ -199,6 +200,34 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
     }
   }
 
+  // Confirm a repository with an access token. On success the token is kept
+  // server-side (on the project, or as a pending connection for a new one) and
+  // the form behaves as if the account were connected.
+  async function handleCheckToken() {
+    if (!tokenUrl.trim() || !accessToken.trim()) return;
+    setGitError(null);
+    setTokenError(null);
+    setTokenChecking(true);
+    try {
+      const repo = await api.gitAuth.checkToken("gitlab", {
+        url: tokenUrl.trim(),
+        access_token: accessToken.trim(),
+        project_id: mode === "edit" ? initial?.id : undefined,
+      });
+      setRepoLookup(repo);
+      setDefaultGitUrl(repo.clone_url);
+      if (repo.default_branch) setDefaultBranch(repo.default_branch);
+      setGitProvider("gitlab");
+      setGitConnected(true);
+      if (mode === "create") setPendingConnectionId(repo.connection_id ?? null);
+      setAccessToken("");
+    } catch (err) {
+      setTokenError(err instanceof ApiError ? err.message : "Could not confirm the repository.");
+    } finally {
+      setTokenChecking(false);
+    }
+  }
+
   async function handleConnect(provider: "gitlab") {
     setGitError(null);
     setConnectingProvider(provider);
@@ -218,7 +247,6 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
             llmChoice,
             llmModel,
             llmBaseUrl,
-            dataPolicy,
           };
           sessionStorage.setItem(NEW_PROJECT_DRAFT_KEY, JSON.stringify(draft));
         } catch {
@@ -255,11 +283,23 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
     setGitConnected(false);
   }
 
+  // A repository URL that hasn't been confirmed (found through the provider or
+  // checked with a token) blocks saving. Leaving the URL blank is fine for a
+  // DAST-only project, and an unchanged saved URL needs no new check.
+  const trimmedGitUrl = defaultGitUrl.trim();
+  const repoConfirmed = !!repoLookup && repoLookup.clone_url === trimmedGitUrl;
+  const repoNeedsConfirm =
+    trimmedGitUrl !== "" && trimmedGitUrl !== (initial?.default_git_url ?? "").trim() && !repoConfirmed;
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
 
     if (!name.trim()) {
       setError("Name is required.");
+      return;
+    }
+    if (repoNeedsConfirm) {
+      setError("Confirm the repository in the Git provider section before saving.");
       return;
     }
 
@@ -274,13 +314,13 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
       default_branch: defaultBranch.trim() || "main",
       monorepo_path: monorepoPath.trim() || null,
       enable_sast: enableSast,
-      enable_sca: enableSca,
-      enable_sbom: enableSbom,
+      // SCA and SBOM are always on for a project.
+      enable_sca: true,
+      enable_sbom: true,
       enable_secrets: enableSecrets,
       scan_mode: "full",
       llm_provider: presets[llmChoice].provider,
       llm_model: isOpenAiCompat ? llmModel.trim() || presets[llmChoice].model : presets[llmChoice].model,
-      llm_data_policy: dataPolicy,
     };
     if (isOpenAiCompat) {
       payload.llm_base_url = llmBaseUrl.trim() || null;
@@ -313,18 +353,20 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
         </div>
       )}
 
-      <FormSection title="Overview" description="What this project is and where it lives.">
-        <Field label="Project Name" htmlFor="name">
+      <div className="space-y-6">
+        <Field label="Project Name *" htmlFor="name">
           <input
             id="name"
             value={name}
             onChange={(event) => setName(event.target.value)}
             required
+            maxLength={500}
+            aria-required="true"
             className={inputClass}
             placeholder="Project Name"
           />
         </Field>
-        <Field label="Description" htmlFor="description">
+        <Field label="Description (optional)" htmlFor="description">
           <textarea
             id="description"
             rows={3}
@@ -334,11 +376,11 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
             placeholder="What this project does and who owns it."
           />
         </Field>
-      </FormSection>
+      </div>
 
       <FormSection
         title="Git provider"
-        description="Connect GitLab so scans can clone this project's private repository, or paste a Git URL below directly."
+        description="Connect GitLab, or paste the repository URL with an access token. Confirm the repository before you save."
       >
         {gitError && (
           <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -428,23 +470,97 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
             </div>
           </div>
         ) : (
-          <div className="grid gap-3">
-            <button
-              type="button"
-              onClick={() => handleConnect("gitlab")}
-              disabled={connectingProvider !== null}
-              className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-left transition-all hover:-translate-y-0.5 hover:border-orange-300 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:shadow-none"
-            >
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-50 text-orange-600">
-                <GitLabLogo className="h-5 w-5" />
-              </span>
-              <span>
-                <span className="block text-sm font-medium text-[var(--ink)]">
-                  {connectingProvider === "gitlab" ? "Redirecting…" : "Connect GitLab"}
+          <div className="space-y-4">
+            <div role="tablist" aria-label="How to reach the repository" className="inline-flex rounded-md border border-slate-200 bg-slate-50 p-0.5 text-sm">
+              {(
+                [
+                  ["oauth", "Connect GitLab"],
+                  ["token", "Repo URL + access token"],
+                ] as const
+              ).map(([method, label]) => (
+                <button
+                  key={method}
+                  type="button"
+                  role="tab"
+                  aria-selected={gitMethod === method}
+                  onClick={() => setGitMethod(method)}
+                  className={`rounded px-3 py-1.5 font-medium transition-colors ${
+                    gitMethod === method ? "bg-white text-[var(--ink)] shadow-sm" : "text-[var(--muted)] hover:text-[var(--ink)]"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {gitMethod === "oauth" ? (
+              <button
+                type="button"
+                onClick={() => handleConnect("gitlab")}
+                disabled={connectingProvider !== null}
+                className="flex w-full items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-left transition-all hover:-translate-y-0.5 hover:border-orange-300 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:shadow-none"
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-50 text-orange-600">
+                  <GitLabLogo className="h-5 w-5" />
                 </span>
-                <span className="block text-xs text-[var(--muted)]">Authorize access to your projects</span>
-              </span>
-            </button>
+                <span>
+                  <span className="block text-sm font-medium text-[var(--ink)]">
+                    {connectingProvider === "gitlab" ? "Redirecting…" : "Connect GitLab"}
+                  </span>
+                  <span className="block text-xs text-[var(--muted)]">Authorize access to your projects</span>
+                </span>
+              </button>
+            ) : (
+              <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4">
+                <Field label="Repository URL" htmlFor="token-repo-url" hint="The full Git URL, for example https://gitlab.com/group/project.git.">
+                  <input
+                    id="token-repo-url"
+                    value={tokenUrl}
+                    onChange={(event) => setTokenUrl(event.target.value)}
+                    className={inputClass}
+                    placeholder="https://gitlab.com/group/project.git"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </Field>
+                <Field
+                  label="Access token"
+                  htmlFor="token-value"
+                  hint="A personal access token that can read this repository. It is stored on the server and never shown again."
+                >
+                  <input
+                    id="token-value"
+                    type="password"
+                    value={accessToken}
+                    onChange={(event) => setAccessToken(event.target.value)}
+                    onKeyDown={(event) => {
+                      // Enter confirms the repository; it must not submit the whole project form.
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void handleCheckToken();
+                      }
+                    }}
+                    className={inputClass}
+                    autoComplete="new-password"
+                  />
+                </Field>
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => void handleCheckToken()}
+                    disabled={tokenChecking || !tokenUrl.trim() || !accessToken.trim()}
+                    className="rounded-md border border-slate-300 bg-white px-3.5 py-1.5 text-sm font-medium text-[var(--ink)] transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {tokenChecking ? "Confirming…" : "Confirm repository"}
+                  </button>
+                </div>
+                {tokenError && (
+                  <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {tokenError}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
       </FormSection>
@@ -453,13 +569,15 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
         title="Repository"
         description="Default source location used when a SAST/SCA/SBOM scan is triggered. Leave blank for a project used only for DAST scans — those target a URL directly, not a repository."
       >
-        <Field label="Git URL" htmlFor="git-url">
+        {/* Set by confirming the repository in the Git provider section above. */}
+        <Field label="Git URL" htmlFor="git-url" hint="Confirm a repository in the Git provider section to change this.">
           <input
             id="git-url"
             value={defaultGitUrl}
-            onChange={(event) => setDefaultGitUrl(event.target.value)}
-            className={inputClass}
-            placeholder="https://gitlab.com/group/project.git (optional for DAST-only projects)"
+            readOnly
+            aria-readonly="true"
+            className={`${inputClass} cursor-default bg-slate-50 text-[var(--muted)]`}
+            placeholder="None — confirm a repository above (optional for DAST-only projects)"
           />
         </Field>
         <Field label="Default branch" htmlFor="branch">
@@ -547,49 +665,19 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
             </Field>
           </>
         )}
-        <Field
-          label="Code sharing"
-          htmlFor="llm-data-policy"
-          hint="Local only refuses to start a scan whose LLM is outside localhost or a private network."
-        >
-          <select
-            id="llm-data-policy"
-            value={dataPolicy}
-            onChange={(event) => setDataPolicy(event.target.value as LlmDataPolicy)}
-            className={selectClass}
-          >
-            <option value="allow_external">Allow external LLM providers</option>
-            <option value="local_only">Local only</option>
-          </select>
-        </Field>
-        <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
-          <input
-            type="checkbox"
-            checked={enableSca}
-            onChange={(event) => setEnableSca(event.target.checked)}
-            className="h-4 w-4 rounded border-slate-300 text-[var(--accent)] focus:ring-[var(--accent)]/30"
-          />
-          Enable SCA (dependency vulnerability) scanning
-        </label>
-        <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
-          <input
-            type="checkbox"
-            checked={enableSbom}
-            onChange={(event) => setEnableSbom(event.target.checked)}
-            className="h-4 w-4 rounded border-slate-300 text-[var(--accent)] focus:ring-[var(--accent)]/30"
-          />
-          Enable SBOM generation
-        </label>
       </FormSection>
 
       <div className="flex items-center gap-4 border-t border-slate-200 pt-6">
         <button
           type="submit"
-          disabled={submitting}
+          disabled={submitting || repoNeedsConfirm}
           className="rounded-md bg-[var(--accent)] px-5 py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {submitting ? "Saving…" : mode === "create" ? "Create project" : "Save changes"}
         </button>
+        {repoNeedsConfirm && (
+          <p className="text-sm text-amber-700">Confirm the repository in the Git provider section first.</p>
+        )}
       </div>
     </form>
   );

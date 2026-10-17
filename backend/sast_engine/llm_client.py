@@ -4,7 +4,6 @@ Ollama (local, optional)."""
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import os
 import random
@@ -13,7 +12,6 @@ import threading
 import time
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional, Tuple
-from urllib.parse import urlparse
 
 import boto3
 import requests
@@ -72,9 +70,6 @@ DEFAULT_FALLBACK_LLM_MODEL = os.environ.get("FALLBACK_LLM_MODEL", "")
 # Per-scan provider settings (base_url / api_key per provider, data policy).
 # Underscore-prefixed like the result cache: never part of usage_cost_summary.
 PROVIDER_OPTIONS_USAGE_KEY = "_provider_options"
-DATA_POLICY_USAGE_KEY = "_data_policy"
-DATA_POLICY_LOCAL_ONLY = "local_only"
-DATA_POLICY_ALLOW_EXTERNAL = "allow_external"
 
 
 # --- concurrency: one process-wide cap on in-flight provider calls ----------
@@ -213,9 +208,6 @@ class LlmBudgetExhausted(RuntimeError):
     """The cost cutoff was reached and no fallback provider is configured."""
 
 
-class LlmPolicyViolation(RuntimeError):
-    """A call would send repository content somewhere the data policy forbids."""
-
 _bedrock = boto3.client("bedrock-runtime", region_name=AWS_REGION)
 
 # Bedrock prompt caching: a cache checkpoint after the system prompt lets every
@@ -323,21 +315,6 @@ def _default_model_for(provider: str) -> str:
     return BEDROCK_MODEL_ID
 
 
-def is_local_base_url(url: Optional[str]) -> bool:
-    """True for loopback, private-network and link-local hosts — the
-    endpoints a `local_only` data policy allows."""
-    host = (urlparse(url or "").hostname or "").strip().lower()
-    if not host:
-        return False
-    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
-        return True
-    try:
-        addr = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return addr.is_loopback or addr.is_private or addr.is_link_local
-
-
 def provider_base_url(usage: Optional[Dict[str, Any]], provider: str) -> str:
     options = ((usage or {}).get(PROVIDER_OPTIONS_USAGE_KEY) or {}).get(provider) or {}
     if options.get("base_url"):
@@ -349,22 +326,6 @@ def provider_base_url(usage: Optional[Dict[str, Any]], provider: str) -> str:
     return ""
 
 
-def check_data_policy(usage: Optional[Dict[str, Any]], provider: str) -> None:
-    """Raise LlmPolicyViolation when `local_only` is set and this provider
-    would send prompts (repository code) off the local network."""
-    policy = (usage or {}).get(DATA_POLICY_USAGE_KEY) or DATA_POLICY_ALLOW_EXTERNAL
-    if policy != DATA_POLICY_LOCAL_ONLY:
-        return
-    if provider == PROVIDER_BEDROCK:
-        raise LlmPolicyViolation("data policy is local_only; Bedrock is an external provider")
-    if provider in (PROVIDER_OLLAMA, PROVIDER_OPENAI_COMPAT):
-        url = provider_base_url(usage, provider)
-        if not is_local_base_url(url):
-            raise LlmPolicyViolation(
-                f"data policy is local_only; {provider} endpoint {urlparse(url).hostname!r} is not local"
-            )
-
-
 def init_usage(
     provider: Optional[str] = None,
     model: Optional[str] = None,
@@ -373,11 +334,9 @@ def init_usage(
     fallback_model: Optional[str] = None,
     cost_cutoff_usd: Optional[float] = None,
     provider_options: Optional[Dict[str, Dict[str, Any]]] = None,
-    data_policy: Optional[str] = None,
 ) -> Dict[str, Any]:
     """`provider_options` maps provider name -> {"base_url", "api_key"} for
-    this scan (falling back to env); `data_policy` is `allow_external`
-    (default) or `local_only`."""
+    this scan (falling back to env)."""
     provider = (provider or DEFAULT_LLM_PROVIDER or "bedrock").strip().lower()
     model = model or _default_model_for(provider)
     # Ollama primary: no Bedrock spend, so no cutoff. Otherwise use env default
@@ -415,8 +374,6 @@ def init_usage(
         usage[PROVIDER_OPTIONS_USAGE_KEY] = {
             str(name).strip().lower(): dict(opts or {}) for name, opts in provider_options.items()
         }
-    if data_policy:
-        usage[DATA_POLICY_USAGE_KEY] = data_policy
     return usage
 
 
@@ -674,7 +631,6 @@ def call_llm(
     model = model or _default_model_for(provider)
     if not model:
         raise ValueError(f"no model configured for LLM provider {provider!r}")
-    check_data_policy(usage, provider)
 
     # Cross-scan result reuse (see RESULT_CACHE_VERSION). Only JSON-mode calls
     # are eligible: their completeness can be checked structurally before a

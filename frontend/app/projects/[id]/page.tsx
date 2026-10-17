@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { useActiveProject } from "@/components/project/ActiveProjectProvider";
 import { useEffect, useState } from "react";
 
 import DeleteProjectModal from "@/components/DeleteProjectModal";
@@ -30,6 +31,7 @@ export default function ProjectDetailPage() {
   const can = useCan();
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const { refresh } = useActiveProject();
   const id = params.id;
 
   const [project, setProject] = useState<Project | null>(null);
@@ -71,6 +73,7 @@ export default function ProjectDetailPage() {
     const updated = await api.projects.update(id, input);
     setProject(updated);
     setSavedAt(Date.now());
+    await refresh();
   }
 
   if (loading) {
@@ -196,7 +199,10 @@ export default function ProjectDetailPage() {
           project={project}
           scanCount={scans.length}
           onClose={() => setShowDeleteModal(false)}
-          onDeleted={() => router.push("/projects")}
+          onDeleted={() => {
+            void refresh();
+            router.push("/projects");
+          }}
         />
       )}
     </PageContainer>

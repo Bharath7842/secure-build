@@ -41,9 +41,14 @@ PERMISSIONS: tuple[Permission, ...] = (
         "See projects and the scan options offered for them.", user_default=True,
     ),
     Permission(
+        "projects.view_all", "action", "View every project",
+        "See projects created by other people. Without it, a user sees only the projects they created.",
+        user_default=False, grantable_to_user=False, requires=("projects.view",),
+    ),
+    Permission(
         "projects.manage", "action", "Manage projects",
         "Create, edit and delete projects, connect Git, and change a project's scan limitations and DAST rules.",
-        user_default=False, requires=("projects.view",),
+        user_default=True, requires=("projects.view",),
     ),
     Permission(
         "scans.view_own", "action", "View own scans",
@@ -120,11 +125,11 @@ PERMISSIONS: tuple[Permission, ...] = (
         requires=("projects.view",),
     ),
     Permission(
-        "page.project_new", "page", "New project", "/projects/new.", user_default=False,
+        "page.project_new", "page", "New project", "/projects/new.", user_default=True,
         requires=("projects.manage",),
     ),
     Permission(
-        "page.project_settings", "page", "Project settings", "/projects/[id]/settings.", user_default=False,
+        "page.project_settings", "page", "Project settings", "/projects/[id]/settings.", user_default=True,
         requires=("projects.manage",),
     ),
     Permission(

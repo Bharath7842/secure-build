@@ -8,6 +8,18 @@ engine = None
 SessionLocal = None
 
 
+def _drop_data_policy_columns(engine) -> None:
+    """The per-project "code sharing" policy was removed. Drop its columns from
+    databases created before that; SQLite 3.35+ supports DROP COLUMN."""
+    inspector = inspect(engine)
+    for table in ("projects", "scans"):
+        if table not in inspector.get_table_names():
+            continue
+        if "llm_data_policy" in {col["name"] for col in inspector.get_columns(table)}:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {table} DROP COLUMN llm_data_policy"))
+
+
 def _run_light_migrations(engine) -> None:
     """`Base.metadata.create_all` only creates *missing tables* — it never
     alters an existing one, so columns added to a model after a DB already
@@ -15,6 +27,12 @@ def _run_light_migrations(engine) -> None:
     No alembic in this project; this is intentionally minimal."""
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
+
+    if "projects" in table_names:
+        project_cols = {col["name"] for col in inspector.get_columns("projects")}
+        if "created_by_user_id" not in project_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE projects ADD COLUMN created_by_user_id VARCHAR(36)"))
 
     if "scans" in table_names:
         existing_cols = {col["name"] for col in inspector.get_columns("scans")}
@@ -33,6 +51,10 @@ def _run_light_migrations(engine) -> None:
                         text("UPDATE scans SET version = :v WHERE id = :sid"),
                         {"v": counters[project_id], "sid": scan_id},
                     )
+        for col in ("deleted_creator_name", "deleted_creator_email"):
+            if col not in existing_cols:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE scans ADD COLUMN {col} VARCHAR(254)"))
         if "llm_provider" not in existing_cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE scans ADD COLUMN llm_provider VARCHAR(20)"))
@@ -48,9 +70,6 @@ def _run_light_migrations(engine) -> None:
         if "llm_base_url" not in existing_cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE scans ADD COLUMN llm_base_url VARCHAR(500)"))
-        if "llm_data_policy" not in existing_cols:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE scans ADD COLUMN llm_data_policy VARCHAR(20)"))
         if "triggered_by" not in existing_cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE scans ADD COLUMN triggered_by VARCHAR(20)"))
@@ -184,14 +203,6 @@ def _run_light_migrations(engine) -> None:
         if "llm_api_key" not in existing_cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE projects ADD COLUMN llm_api_key VARCHAR(500)"))
-        if "llm_data_policy" not in existing_cols:
-            with engine.begin() as conn:
-                conn.execute(
-                    text(
-                        "ALTER TABLE projects ADD COLUMN llm_data_policy "
-                        "VARCHAR(20) DEFAULT 'allow_external'"
-                    )
-                )
         if "max_derived_regex_rules" not in existing_cols:
             with engine.begin() as conn:
                 conn.execute(
@@ -284,6 +295,7 @@ def init_db(url: str | None = None):
         event.listen(engine, "connect", _configure_sqlite_connection)
     Base.metadata.create_all(bind=engine)
     _run_light_migrations(engine)
+    _drop_data_policy_columns(engine)
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     return SessionLocal
 

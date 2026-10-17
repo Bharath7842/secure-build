@@ -140,12 +140,18 @@ export type Page<T> = { items: T[]; next_cursor: number | null };
  *  the person's name, "CI (Jenkins)" for pipeline scans, or "Before
  *  accounts" for scans from before sign-in existed. */
 export function startedByLabel(
-  scan: { created_by_user_id?: string | null; created_by_name?: string | null; triggered_by?: string | null },
+  scan: {
+    created_by_user_id?: string | null;
+    created_by_name?: string | null;
+    created_by_deleted?: boolean;
+    triggered_by?: string | null;
+  },
   me: Me | null,
 ): string {
   if (scan.created_by_user_id) {
     if (me && scan.created_by_user_id === me.user.id) return "You";
     return scan.created_by_name || "Unknown user";
   }
+  if (scan.created_by_deleted && scan.created_by_name) return `${scan.created_by_name} (deleted)`;
   return scan.triggered_by === "jenkins" ? "CI (Jenkins)" : "Before accounts";
 }

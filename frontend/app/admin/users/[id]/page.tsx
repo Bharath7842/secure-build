@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import OneTimeLinkPanel from "@/components/admin/OneTimeLinkPanel";
@@ -29,6 +29,7 @@ function sameOverrides(a: Record<string, Override>, b: Record<string, Override>)
 
 export default function AdminUserPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const me = useAuth();
   const { confirm, dialog } = useConfirmDialog();
   const [detail, setDetail] = useState<UserDetail | null>(null);
@@ -112,6 +113,24 @@ export default function AdminUserPage() {
       if (!ok) return;
     }
     await run(() => api.admin.updateUser(user.id, { is_active: active }), active ? "Account enabled." : "Account disabled.");
+  }
+
+  async function deleteAccount() {
+    const ok = await confirm({
+      title: "Delete this account?",
+      message: `${user.email} will be removed permanently and can't be restored. Scans they started are kept and still show their name, marked as deleted, but only admins can see them.`,
+      confirmLabel: "Delete account",
+    });
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.admin.deleteUser(user.id);
+      router.push("/admin/users");
+    } catch (err) {
+      setError(message(err, "That didn't work. Try again."));
+      setBusy(false);
+    }
   }
 
   async function newLink(kind: "invite" | "reset") {
@@ -217,9 +236,19 @@ export default function AdminUserPage() {
             </button>
           )}
           {user.status === "disabled" ? (
-            <button type="button" className={BUTTON} disabled={busy} onClick={() => setActive(true)}>
-              Enable account
-            </button>
+            <>
+              <button type="button" className={BUTTON} disabled={busy} onClick={() => setActive(true)}>
+                Enable account
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-100 disabled:opacity-60"
+                disabled={busy}
+                onClick={deleteAccount}
+              >
+                Delete account
+              </button>
+            </>
           ) : (
             <button
               type="button"

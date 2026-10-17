@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.auth.principal import Principal, require
+from app.authz.scope import can_see_project
 from app.config import settings
 from app.db import get_db
 from app.defaults.reference_sources import normalize_sources, sync_legacy_fields
@@ -20,9 +21,10 @@ from app.services import scan_log
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
-def _get_project_or_404(db: Session, project_id: str) -> Project:
+def _get_project_or_404(db: Session, project_id: str, principal: Principal) -> Project:
+    """A project outside the caller's view answers 404, like one that doesn't exist."""
     project = db.get(Project, project_id)
-    if project is None:
+    if project is None or not can_see_project(principal, project):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     return project
 
@@ -75,7 +77,7 @@ def create_project(
     data["llm_api_key"] = _plain_secret(data.get("llm_api_key"))
     connection_id = data.pop("git_connection_id", None)
     _apply_reference_sources(data)
-    project = Project(**data)
+    project = Project(**data, created_by_user_id=principal.user_id)
     if connection_id:
         connection = consume_pending_connection(connection_id)
         if connection is not None:
@@ -94,7 +96,10 @@ def list_projects(
     db: Session = Depends(get_db),
     principal: Principal = Depends(require("projects.view")),
 ):
-    return db.query(Project).order_by(Project.created_at.desc()).all()
+    query = db.query(Project)
+    if not principal.can("projects.view_all"):
+        query = query.filter(Project.created_by_user_id == principal.user_id)
+    return query.order_by(Project.created_at.desc()).all()
 
 
 @router.get("/{project_id}", response_model=ProjectOut)
@@ -103,7 +108,7 @@ def get_project(
     db: Session = Depends(get_db),
     principal: Principal = Depends(require("projects.view")),
 ):
-    return _get_project_or_404(db, project_id)
+    return _get_project_or_404(db, project_id, principal)
 
 
 @router.patch("/{project_id}", response_model=ProjectOut)
@@ -113,7 +118,7 @@ def update_project(
     db: Session = Depends(get_db),
     principal: Principal = Depends(require("projects.manage")),
 ):
-    project = _get_project_or_404(db, project_id)
+    project = _get_project_or_404(db, project_id, principal)
     updates = payload.model_dump(exclude_unset=True)
     updates["scan_mode"] = "full"
     if "llm_api_key" in updates:
@@ -139,7 +144,7 @@ def delete_project(
     its GitHub/GitLab authorization. Rejects while any scan is still
     queued/running — same guard as DELETE /scans/{id} — so a background scan
     thread never has its DB rows disappear out from under it mid-run."""
-    project = _get_project_or_404(db, project_id)
+    project = _get_project_or_404(db, project_id, principal)
 
     scans = db.query(Scan).filter(Scan.project_id == project_id).all()
     active = [s for s in scans if s.status in ("queued", "running", "paused")]
@@ -196,7 +201,7 @@ def update_project_limitations(
     principal: Principal = Depends(require("projects.manage")),
 ):
     """Update which scan limitations are enabled for a project."""
-    project = _get_project_or_404(db, project_id)
+    project = _get_project_or_404(db, project_id, principal)
     all_limitation_ids = {lim.id for lim in SCAN_LIMITATIONS}
     enabled_set = set(payload.enabled_ids)
     if not enabled_set.issubset(all_limitation_ids):

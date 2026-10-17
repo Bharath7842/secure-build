@@ -303,8 +303,7 @@ python sast_scan_agent.py --path /path/to/project --llm-provider ollama --llm-mo
 python sast_scan_agent.py --path /path/to/project --no-joern
 python sast_scan_agent.py --path /path/to/project --sequential   # one stage at a time
 python sast_scan_agent.py --path /path/to/project --llm-provider openai_compat \
-    --llm-base-url http://localhost:8000/v1 --llm-model Qwen/Qwen2.5-Coder-32B-Instruct \
-    --llm-data-policy local_only
+    --llm-base-url http://localhost:8000/v1 --llm-model Qwen/Qwen2.5-Coder-32B-Instruct
 ```
 
 ## LLM backends
@@ -324,10 +323,7 @@ name raises rather than falling through to Bedrock. Tech-stack detection
 (step 2) is fully deterministic. Past the soft spend cutoff, calls switch to
 the configured fallback provider — default `none`, which raises
 `LlmBudgetExhausted` so each stage records its remaining work as unverified.
-A `local_only` data policy (`init_usage(data_policy=...)`) refuses Bedrock
-and any non-localhost/private endpoint (`LlmPolicyViolation`); the API also
-refuses such a scan at trigger time. `call_llm(meta_out=...)` reports one
-call's own tokens.
+`call_llm(meta_out=...)` reports one call's own tokens.
 
 `call_llm` also owns the two token-saving mechanisms shared by every stage:
 
