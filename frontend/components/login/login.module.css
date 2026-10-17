@@ -1,401 +1,53 @@
-/* Login page. Colors come from the app tokens in app/globals.css (--sidebar, --ink, --canvas,
-   --accent, --muted); the few extra values here are the excerpt syntax colors and the finding
-   red, which match the severity/verdict reds in lib/findingStyles.ts. */
+/* Login page: one column, Swiss-minimal. Logo top-left, the form in a narrow left-aligned column
+   centered on the page, a quiet footer. Colors come from the app tokens in app/globals.css
+   (--ink, --canvas, --accent, --muted); the error red matches lib/findingStyles.ts. */
 
 .page {
   --field-border: #8794a8; /* 3:1 against white, so the field edge is visible (WCAG 1.4.11) */
   --finding-red: #b91c1c;
 
-  display: grid;
-  min-height: 100svh;
-  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
-  background: var(--canvas);
-  color: var(--ink);
-}
-
-/* ——— Brand panel: the sidebar's navy, with the example evidence trace ——— */
-
-.panel {
   display: flex;
+  min-height: 100svh;
   flex-direction: column;
-  padding: 32px clamp(32px, 5vw, 72px) 40px;
-  background: var(--sidebar);
-  color: #e2e8f0;
-}
-
-.panelBody {
-  width: 100%;
-  max-width: 580px;
-  margin-block: auto;
-  padding-top: 48px;
-}
-
-.headline {
-  max-width: 22ch;
-  text-wrap: balance;
-  color: #fff;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(2rem, 3.1vw, 2.625rem);
-  font-weight: 400;
-  line-height: 1.15;
-  letter-spacing: -0.01em;
-}
-
-.lede {
-  max-width: 50ch;
-  text-wrap: pretty;
-  margin-top: 16px;
-  color: #a9b6c9;
-  font-size: 1rem;
-  line-height: 1.65;
-}
-
-/* ——— Evidence trace: one issue, followed through every scanner that saw it ——— */
-
-.traceFigure {
-  margin-top: 36px;
-}
-
-/* The pulse timeline. Node i lights at --start + i * --gap; the rail below it draws (with the
-   glowing dot riding its front edge) during the --gap that follows, so the dot reaches each node
-   as that node lights. The resting styles are the finished state, so with animations off
-   (reduced motion) the trace simply appears complete. */
-.trace {
-  --rail: rgb(143 176 243 / 0.3);
-  --node: #8fb0f3;
-  --start: 0.35s;
-  --gap: 0.6s;
-
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.step {
-  --node-color: var(--node);
-  --node-glow: rgb(143 176 243 / 0.55);
-  --node-rest: var(--sidebar);
-  --rail-x: calc(56px + 12px + 10px);
-  --t: calc(var(--start) + var(--i, 0) * var(--gap));
-
-  position: relative;
-  display: grid;
-  grid-template-columns: 56px 20px minmax(0, 1fr);
-  column-gap: 12px;
-  padding-bottom: 20px;
-}
-
-/* The rail joining each step's node to the next. */
-.step:not(:last-child)::before {
-  position: absolute;
-  top: 16px;
-  bottom: -2px;
-  left: var(--rail-x);
-  width: 1px;
-  background: var(--rail);
-  content: "";
-  animation: rail-draw calc(var(--gap) - 0.1s) ease-in-out calc(var(--t) + 0.1s) both;
-}
-
-/* The pulse: a small glowing dot on the rail's drawing edge. */
-.step:not(:last-child)::after {
-  position: absolute;
-  top: 16px;
-  left: calc(var(--rail-x) - 3px);
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #e0e9ff;
-  box-shadow: 0 0 10px 3px rgb(143 176 243 / 0.75);
-  content: "";
-  opacity: 0;
-  animation: pulse-travel calc(var(--gap) - 0.1s) ease-in-out calc(var(--t) + 0.1s) both;
-}
-
-.stepModule,
-.stepBody {
-  animation: step-in 420ms ease-out var(--t) both;
-}
-
-.stepModule {
-  padding-top: 1px;
-  color: var(--node-color);
-  font-size: 0.75rem;
-  font-weight: 600;
-  line-height: 1.6;
-  text-align: right;
-}
-
-.stepNode {
-  justify-self: center;
-  width: 11px;
-  height: 11px;
-  margin-top: 5px;
-  border: 2px solid var(--node-color);
-  border-radius: 50%;
-  background: var(--node-rest);
-  animation: node-on 700ms ease-out var(--t) both;
-}
-
-.stepBody p {
-  color: #dbe3ee;
-  font-size: 0.875rem;
-  line-height: 1.5;
-  text-wrap: pretty;
-}
-
-.stepCode {
-  display: block;
-  width: fit-content;
-  max-width: 100%;
-  margin-top: 8px;
-  padding: 5px 10px;
-  overflow-x: auto;
-  border: 1px solid rgb(255 255 255 / 0.08);
-  border-radius: 6px;
-  background: #0e192b;
-  color: #cbd5e1;
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 0.75rem;
-  line-height: 1.6;
-  white-space: pre;
-}
-
-.tkKeyword {
-  color: #8fb0f3;
-}
-
-.tkString {
-  color: #a5d6b4;
-}
-
-.tkDim {
-  color: #64748b;
-}
-
-/* The part of each excerpt the scanner is pointing at. */
-.tkFlag {
-  padding: 0 3px;
-  border-radius: 3px;
-  background: rgb(239 68 68 / 0.18);
-  color: #fecaca;
-}
-
-.stepResult {
-  padding-bottom: 0;
-}
-
-.stepResult {
-  --node-color: #ef4444;
-  --node-glow: rgb(239 68 68 / 0.6);
-  --node-rest: #ef4444;
-}
-
-.stepResult .stepModule {
-  color: #fca5a5;
-}
-
-.stepResult .verdict {
-  animation: verdict-in 520ms cubic-bezier(0.2, 0.7, 0.2, 1) calc(var(--t) + 0.1s) both;
-}
-
-/* Where the trace resolves: the confirmed finding, drawn like a finding in the app. */
-.verdict {
-  padding: 14px 16px;
-  border-radius: 8px;
   background: #fff;
   color: var(--ink);
-  font-size: 0.8125rem;
-  line-height: 1.55;
-  box-shadow: 0 12px 30px rgb(4 10 20 / 0.45);
 }
 
-.verdictHead {
+.header {
+  padding: 28px 40px;
+}
+
+.main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px 64px;
+}
+
+.footer {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-}
-
-.verdictHead strong {
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-
-/* Critical chip and confirmed verdict match lib/findingStyles.ts (RISK_STYLES, VERDICT_TEXT). */
-.verdictSeverity {
-  padding: 1px 7px;
-  border-radius: 4px;
-  background: #fee2e2;
-  color: #991b1b;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-
-.verdictLabel {
-  margin-left: auto;
-  color: var(--finding-red);
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-
-.verdict p {
-  margin-top: 6px;
-  color: #475569;
-  text-wrap: pretty;
-}
-
-.verdictRef {
-  margin-left: 8px;
+  justify-content: space-between;
+  gap: 8px 24px;
+  padding: 20px 40px 24px;
+  border-top: 1px solid #e2e8f0;
   color: var(--muted);
-  white-space: nowrap;
-}
-
-.caption {
-  max-width: 68ch;
-  margin-top: 14px;
-  margin-left: calc(56px + 12px + 20px + 12px);
-  color: #8a98ad;
   font-size: 0.8125rem;
-  line-height: 1.55;
 }
 
-@keyframes step-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-}
-
-@keyframes verdict-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.98);
-  }
-}
-
-/* Pulse keyframes come in identical pairs (-a/-b): EvidenceTrace flips data-run to swap names,
-   and a changed animation-name is what restarts an animation for the replay. */
-@keyframes rail-draw {
-  from {
-    clip-path: inset(0 0 100% 0);
-  }
-  to {
-    clip-path: inset(0);
-  }
-}
-
-@keyframes rail-draw-b {
-  from {
-    clip-path: inset(0 0 100% 0);
-  }
-  to {
-    clip-path: inset(0);
-  }
-}
-
-@keyframes pulse-travel {
-  0% {
-    top: 16px;
-    opacity: 0;
-  }
-  15%,
-  85% {
-    opacity: 1;
-  }
-  100% {
-    top: calc(100% - 4px);
-    opacity: 0;
-  }
-}
-
-@keyframes pulse-travel-b {
-  0% {
-    top: 16px;
-    opacity: 0;
-  }
-  15%,
-  85% {
-    opacity: 1;
-  }
-  100% {
-    top: calc(100% - 4px);
-    opacity: 0;
-  }
-}
-
-@keyframes node-on {
-  0% {
-    border-color: var(--rail);
-    background: var(--sidebar);
-    box-shadow: 0 0 0 0 var(--node-glow);
-  }
-  30% {
-    border-color: var(--node-color);
-    background: var(--node-color);
-  }
-  100% {
-    box-shadow: 0 0 0 9px transparent;
-  }
-}
-
-@keyframes node-on-b {
-  0% {
-    border-color: var(--rail);
-    background: var(--sidebar);
-    box-shadow: 0 0 0 0 var(--node-glow);
-  }
-  30% {
-    border-color: var(--node-color);
-    background: var(--node-color);
-  }
-  100% {
-    box-shadow: 0 0 0 9px transparent;
-  }
-}
-
-.trace[data-run="1"] .step:not(:last-child)::before {
-  animation-name: rail-draw-b;
-}
-
-.trace[data-run="1"] .step:not(:last-child)::after {
-  animation-name: pulse-travel-b;
-}
-
-.trace[data-run="1"] .stepNode {
-  animation-name: node-on-b;
-}
-
-/* ——— Form side ——— */
-
-.formSide {
-  display: flex;
-  flex-direction: column;
-  padding: 32px clamp(24px, 6vw, 96px);
-}
+/* ——— Form ——— */
 
 .formWrap {
   width: 100%;
   max-width: 380px;
-  margin: auto;
-}
-
-.formBrand {
-  margin-bottom: 40px;
 }
 
 .title {
   font-family: Georgia, "Times New Roman", serif;
-  font-size: 2.25rem;
+  font-size: 2rem;
   font-weight: 400;
   line-height: 1.15;
-}
-
-.subtitle {
-  margin-top: 8px;
-  color: var(--muted);
-  font-size: 0.9375rem;
-  line-height: 1.6;
 }
 
 .form {
@@ -562,77 +214,25 @@
   }
 }
 
-.help {
-  margin-top: 32px;
-  padding-top: 20px;
-  border-top: 1px solid #e2e8f0;
-  color: var(--muted);
-  font-size: 0.875rem;
-  line-height: 1.6;
-}
-
-.help strong {
-  color: var(--ink);
-  font-weight: 600;
-}
-
 /* ——— Responsive ——— */
 
-@media (max-width: 1180px) {
-  .step {
-    grid-template-columns: 48px 20px minmax(0, 1fr);
-    column-gap: 10px;
+@media (max-width: 640px) {
+  .header {
+    padding: 20px 24px;
   }
 
-  .step {
-    --rail-x: calc(48px + 10px + 10px);
+  .main {
+    align-items: flex-start;
+    padding: 40px 24px 48px;
   }
 
-  .stepBody p {
-    font-size: 0.8125rem;
-  }
-
-  .caption {
-    margin-left: calc(48px + 10px + 20px + 10px);
-  }
-}
-
-@media (max-width: 1000px) {
-  .panel {
-    padding-inline: 32px;
-  }
-
-  .caption {
-    display: none;
-  }
-}
-
-/* Below this the panel would squeeze the form, so it hides; the form keeps its own logo. */
-@media (max-width: 900px) {
-  .page {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .panel {
-    display: none;
-  }
-
-  .formSide {
-    padding: 0;
-  }
-
-  .formWrap {
-    padding: 48px 24px max(40px, env(safe-area-inset-bottom));
-  }
-}
-
-@media (max-width: 480px) {
-  .formWrap {
-    padding-top: 36px;
+  .footer {
+    flex-direction: column;
+    padding: 16px 24px max(20px, env(safe-area-inset-bottom));
   }
 
   .title {
-    font-size: 2rem;
+    font-size: 1.75rem;
   }
 
   .form {
@@ -644,72 +244,7 @@
   }
 }
 
-/* Short laptop screens: tighten the panel so the whole trace still fits above the fold. */
-@media (min-width: 901px) and (max-height: 820px) {
-  .panel {
-    padding-top: 28px;
-    padding-bottom: 24px;
-  }
-
-  .panelBody {
-    padding-top: 28px;
-  }
-
-  .formSide {
-    padding-block: 24px;
-  }
-
-  .formBrand {
-    margin-bottom: 28px;
-  }
-
-  .headline {
-    font-size: 1.875rem;
-  }
-
-  /* The trace explains itself; dropping the lede is what lets it fit. */
-  .lede {
-    display: none;
-  }
-
-  .traceFigure {
-    margin-top: 22px;
-  }
-
-  .step {
-    padding-bottom: 14px;
-  }
-
-  .stepCode {
-    margin-top: 6px;
-    padding-block: 3px;
-  }
-
-  .verdict {
-    padding: 10px 14px;
-  }
-}
-
-@media (min-width: 901px) and (max-height: 700px) {
-  .caption {
-    display: none;
-  }
-}
-
-/* Very short screens keep the trace as text only. */
-@media (min-width: 901px) and (max-height: 660px) {
-  .stepCode {
-    display: none;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .step::before,
-  .step::after,
-  .stepModule,
-  .stepBody,
-  .stepNode,
-  .stepResult .verdict,
   .spinner {
     animation: none;
   }

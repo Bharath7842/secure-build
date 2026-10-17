@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 
 import BrandMark from "@/components/login/BrandMark";
-import BrandPanel from "@/components/login/BrandPanel";
 import LoginForm from "@/components/login/LoginForm";
 import styles from "@/components/login/login.module.css";
 
@@ -13,16 +12,21 @@ export const metadata: Metadata = {
 export default function LoginPage() {
   return (
     <div className={styles.page}>
-      <BrandPanel />
+      <header className={styles.header}>
+        <BrandMark tone="light-bg" tagline={false} />
+      </header>
 
-      <main className={styles.formSide}>
+      <main className={styles.main}>
         <div className={styles.formWrap}>
-          <BrandMark tone="light-bg" className={styles.formBrand} />
-          <h1 className={styles.title}>Sign in</h1>
-
+          <h1 className={styles.title}>Sign in to Secure Build</h1>
           <LoginForm />
         </div>
       </main>
+
+      <footer className={styles.footer}>
+        <span>Unified Application Security Platform</span>
+        <span>© {new Date().getFullYear()} Secure Build</span>
+      </footer>
     </div>
   );
 }
