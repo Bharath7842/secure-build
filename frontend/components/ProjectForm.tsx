@@ -494,22 +494,21 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
             </div>
 
             {gitMethod === "oauth" ? (
-              <button
-                type="button"
-                onClick={() => handleConnect("gitlab")}
-                disabled={connectingProvider !== null}
-                className="flex w-full items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-left transition-all hover:-translate-y-0.5 hover:border-orange-300 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:shadow-none"
-              >
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-50 text-orange-600">
-                  <GitLabLogo className="h-5 w-5" />
-                </span>
-                <span>
-                  <span className="block text-sm font-medium text-[var(--ink)]">
-                    {connectingProvider === "gitlab" ? "Redirecting…" : "Connect GitLab"}
-                  </span>
-                  <span className="block text-xs text-[var(--muted)]">Authorize access to your projects</span>
-                </span>
-              </button>
+              <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-[var(--muted)]">
+                  Sign in to GitLab once and pick this project&apos;s repository. Scans can then clone private repositories.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleConnect("gitlab")}
+                  disabled={connectingProvider !== null}
+                  className="inline-flex shrink-0 items-center justify-center gap-2 rounded-md bg-orange-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <GitLabLogo className="h-4 w-4" />
+                  {connectingProvider === "gitlab" ? "Redirecting to GitLab…" : "Authorize with GitLab"}
+                  <span aria-hidden>→</span>
+                </button>
+              </div>
             ) : (
               <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4">
                 <Field label="Repository URL" htmlFor="token-repo-url" hint="The full Git URL, for example https://gitlab.com/group/project.git.">
