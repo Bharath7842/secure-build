@@ -564,9 +564,7 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
         )}
       </FormSection>
 
-      <FormSection
-        title="Repository"
-      >
+      <div className="space-y-3 border-t border-slate-200 pt-6">
         <Field label="Default branch" htmlFor="branch">
           <input
             id="branch"
@@ -589,7 +587,7 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
             placeholder="apps/api"
           />
         </Field>
-      </FormSection>
+      </div>
 
       <FormSection title="Scan settings" description="LLM model and scan types available for this project.">
         <Field label="LLM model" htmlFor="llm-choice">
