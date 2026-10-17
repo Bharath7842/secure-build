@@ -579,7 +579,7 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
           />
         </Field>
         <Field
-          label="Subdirectory to scan"
+          label="Subdirectory to scan (optional)"
           htmlFor="repo-path"
           hint="Optional subdirectory to scan by default (e.g. apps/api). Leave blank for the full repo."
         >
