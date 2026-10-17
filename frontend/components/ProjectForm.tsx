@@ -302,6 +302,10 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
       setError("Confirm the repository in the Git provider section before saving.");
       return;
     }
+    if (trimmedGitUrl && !defaultBranch.trim()) {
+      setError("Enter the branch to scan.");
+      return;
+    }
 
     // Reference sources (OWASP/NVD Top 10 URLs, etc.) are no longer managed
     // here: omitting these fields lets the backend fill OWASP + NVD Top 10
@@ -311,7 +315,7 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
       name: name.trim(),
       description: description.trim() || null,
       default_git_url: defaultGitUrl.trim(),
-      default_branch: defaultBranch.trim() || "main",
+      default_branch: defaultBranch.trim(),
       monorepo_path: monorepoPath.trim() || null,
       enable_sast: enableSast,
       // SCA and SBOM are always on for a project.
@@ -566,7 +570,7 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
 
       <div className="space-y-3 border-t border-slate-200 pt-6">
         <Field
-          label="Branch to scan"
+          label="Branch to scan *"
           htmlFor="branch"
           hint="The branch scans check out by default, e.g. main. Found automatically when you confirm the repository."
         >
@@ -574,8 +578,9 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
             id="branch"
             value={defaultBranch}
             onChange={(event) => setDefaultBranch(event.target.value)}
+            required={!!trimmedGitUrl}
+            aria-required={!!trimmedGitUrl}
             className={inputClass}
-            placeholder="main"
           />
         </Field>
         <Field
