@@ -565,7 +565,11 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
       </FormSection>
 
       <div className="space-y-3 border-t border-slate-200 pt-6">
-        <Field label="Default branch" htmlFor="branch">
+        <Field
+          label="Branch to scan"
+          htmlFor="branch"
+          hint="The branch scans check out by default, e.g. main. Found automatically when you confirm the repository."
+        >
           <input
             id="branch"
             value={defaultBranch}
@@ -575,7 +579,7 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
           />
         </Field>
         <Field
-          label="Repo path"
+          label="Subdirectory to scan"
           htmlFor="repo-path"
           hint="Optional subdirectory to scan by default (e.g. apps/api). Leave blank for the full repo."
         >
