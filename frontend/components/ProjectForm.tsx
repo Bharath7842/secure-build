@@ -567,19 +567,8 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
 
       <FormSection
         title="Repository"
-        description="Default source location used when a SAST/SCA/SBOM scan is triggered. Leave blank for a project used only for DAST scans — those target a URL directly, not a repository."
+        description="The repository comes from the Git provider section above. Leave it unconfirmed for a project used only for DAST scans — those target a URL directly, not a repository."
       >
-        {/* Set by confirming the repository in the Git provider section above. */}
-        <Field label="Git URL" htmlFor="git-url" hint="Confirm a repository in the Git provider section to change this.">
-          <input
-            id="git-url"
-            value={defaultGitUrl}
-            readOnly
-            aria-readonly="true"
-            className={`${inputClass} cursor-default bg-slate-50 text-[var(--muted)]`}
-            placeholder="None — confirm a repository above (optional for DAST-only projects)"
-          />
-        </Field>
         <Field label="Default branch" htmlFor="branch">
           <input
             id="branch"
