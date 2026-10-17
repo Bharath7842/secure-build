@@ -24,7 +24,24 @@ DastModelProvider = Literal["ollama", "bedrock", "openai", "anthropic"]
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ROOT / ".env", extra="ignore")
 
+    # CI credential (Jenkins / GitHub Actions call the API with this bearer token).
     sast_api_token: str = "changeme-token"
+
+    # --- Accounts and sessions ---
+    # Required to create the first admin on /setup; setup closes for good once
+    # any user exists. Must be at least SETUP_TOKEN_MIN_LENGTH characters.
+    setup_token: SecretStr | None = None
+    session_idle_minutes: int = 480  # sign out after this long unused (not for "remember me")
+    session_absolute_hours: int = 12  # hard limit for a normal sign-in
+    session_remember_days: int = 14  # hard limit for a "remember me" sign-in
+    invite_ttl_hours: int = 72
+    reset_ttl_hours: int = 24
+    audit_retention_days: int = 365
+    # Shared with the Next.js server; the backend trusts its X-Client-IP header
+    # (used for login rate limiting) only when this matches X-Frontend-Key.
+    frontend_proxy_secret: SecretStr | None = None
+    # Base URL of the web app, used to build invite and reset links.
+    public_app_url: str = "http://localhost:3000"
     # In-repo engine (backend/sast_engine); no external checkout required.
     sast_framework_path: str = str(ROOT / "backend" / "sast_engine")
     aws_region: str = "us-east-1"
@@ -172,7 +189,14 @@ class Settings(BaseSettings):
     gitlab_oauth_redirect_uri: str = "http://localhost:3000/git-auth/gitlab/callback"
     gitlab_base_url: str = "https://gitlab.com"  # override for self-hosted GitLab
 
-    @field_validator("anthropic_api_key", "openai_api_key", "dast_training_admin_token", mode="before")
+    @field_validator(
+        "anthropic_api_key",
+        "openai_api_key",
+        "dast_training_admin_token",
+        "setup_token",
+        "frontend_proxy_secret",
+        mode="before",
+    )
     @classmethod
     def empty_api_key_is_unset(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
@@ -207,6 +231,20 @@ class Settings(BaseSettings):
     )
     @classmethod
     def dast_limit_is_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("must be >= 1")
+        return value
+
+    @field_validator(
+        "session_idle_minutes",
+        "session_absolute_hours",
+        "session_remember_days",
+        "invite_ttl_hours",
+        "reset_ttl_hours",
+        "audit_retention_days",
+    )
+    @classmethod
+    def account_duration_is_positive(cls, value: int) -> int:
         if value < 1:
             raise ValueError("must be >= 1")
         return value

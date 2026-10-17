@@ -1,7 +1,19 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -116,6 +128,12 @@ class Scan(Base):
     llm_data_policy: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # Who triggered the scan: "app" (Secure Build UI) or "jenkins" (CI).
     triggered_by: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # The signed-in user who started the scan. None for CI-triggered scans and
+    # scans from before accounts existed — those are visible only to admins
+    # and users granted scans.view_all.
+    created_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
     metadata_json: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -427,6 +445,10 @@ class DastSchedule(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_scan_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # Each run is owned by, and permission-checked against, this user.
+    created_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
 
 
 class FileSnapshot(Base):
@@ -460,3 +482,130 @@ class LlmResultCache(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     hit_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+# --- Accounts, sessions and audit ---------------------------------------------
+# Roles and the permission catalog live in code (app/authz/catalog.py); the
+# database only stores each user's role and their per-permission overrides.
+USER_ROLES = ("admin", "user")
+
+
+class User(Base):
+    """A person who signs in. Never hard-deleted: disabling keeps their scans,
+    reviews and audit history attributable."""
+
+    __tablename__ = "users"
+    __table_args__ = (CheckConstraint("role IN ('admin', 'user')", name="ck_users_role"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    email: Mapped[str] = mapped_column(String(254))  # as typed, for display
+    # app.auth.passwords.normalize_email(email); lookups and uniqueness use this.
+    email_normalized: Mapped[str] = mapped_column(String(254), unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(120), default="")
+    role: Mapped[str] = mapped_column(String(16), default="user", index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    # None until the user accepts their invite; such a user cannot sign in.
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failed_login_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    created_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    disabled_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    permission_overrides: Mapped[list["UserPermissionOverride"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        foreign_keys="UserPermissionOverride.user_id",
+    )
+
+    @property
+    def status(self) -> str:
+        """"disabled", "invited" (no password set yet) or "active"."""
+        if not self.is_active:
+            return "disabled"
+        return "active" if self.password_hash else "invited"
+
+    @property
+    def overrides(self) -> dict[str, str]:
+        """{permission_key: "grant" | "deny"}."""
+        return {o.permission_key: o.effect for o in self.permission_overrides}
+
+
+class UserPermissionOverride(Base):
+    """A per-user change to the role's default for one permission. One row per
+    key, so a grant and a deny can never conflict; deleting the row restores
+    the role default."""
+
+    __tablename__ = "user_permission_overrides"
+    __table_args__ = (
+        UniqueConstraint("user_id", "permission_key", name="uq_user_permission_overrides_user_key"),
+        CheckConstraint("effect IN ('grant', 'deny')", name="ck_user_permission_overrides_effect"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    permission_key: Mapped[str] = mapped_column(String(64))
+    effect: Mapped[str] = mapped_column(String(8))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    user: Mapped["User"] = relationship(back_populates="permission_overrides", foreign_keys=[user_id])
+
+
+class UserSession(Base):
+    """A signed-in browser. Only the SHA-256 of the session token is stored, so
+    a copy of the database holds no usable sessions."""
+
+    __tablename__ = "user_sessions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    remember: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Pushed forward on use; None for "remember me" sessions, which only
+    # expire at absolute_expires_at.
+    idle_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    absolute_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    user: Mapped["User"] = relationship()
+
+
+class UserToken(Base):
+    """A single-use invite or password-reset link. Stored hashed, like sessions."""
+
+    __tablename__ = "user_tokens"
+    __table_args__ = (CheckConstraint("purpose IN ('invite', 'reset')", name="ck_user_tokens_purpose"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    purpose: Mapped[str] = mapped_column(String(16))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+
+class AuditEvent(Base):
+    """Sign-ins, account and permission changes, and important scan actions.
+    `details` never holds passwords, tokens or other secrets
+    (app.services.audit drops secret-looking keys before writing)."""
+
+    __tablename__ = "audit_events"
+    __table_args__ = (Index("ix_audit_events_target", "target_type", "target_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    actor_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Email at the time of the event, "ci-token" or "system".
+    actor_label: Mapped[str] = mapped_column(String(254), default="")
+    action: Mapped[str] = mapped_column(String(64), index=True)  # e.g. auth.login.failed
+    outcome: Mapped[str] = mapped_column(String(16), default="success")  # success | failure | denied
+    target_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    target_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    details: Mapped[dict] = mapped_column(JSON, default=dict)

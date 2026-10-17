@@ -36,6 +36,9 @@ tldextract==5.3.2
 reportlab==5.0.1
 openpyxl==3.1.5
 
+# --- Accounts: password hashing (Argon2id) ---
+pwdlib[argon2]==0.3.1
+
 # --- Production database (not needed for SQLite dev) ---
 psycopg[binary]==3.3.6
 

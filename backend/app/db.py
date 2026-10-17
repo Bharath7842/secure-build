@@ -60,6 +60,22 @@ def _run_light_migrations(engine) -> None:
                     text("ALTER TABLE scans ADD COLUMN scan_type VARCHAR(20) DEFAULT 'sast'")
                 )
 
+    # Owner columns. SQLite cannot add a foreign key with ALTER TABLE, so an
+    # existing DB gets a plain indexed column; fresh DBs get the real FK from
+    # create_all. Users are only ever disabled, never deleted.
+    for table in ("scans", "dast_schedules"):
+        if table in table_names:
+            cols = {col["name"] for col in inspector.get_columns(table)}
+            if "created_by_user_id" not in cols:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN created_by_user_id VARCHAR(36)"))
+                    conn.execute(
+                        text(
+                            f"CREATE INDEX IF NOT EXISTS ix_{table}_created_by_user_id "
+                            f"ON {table} (created_by_user_id)"
+                        )
+                    )
+
     if "findings" in table_names:
         finding_cols = {col["name"] for col in inspector.get_columns("findings")}
         for col_name, col_sql in (
@@ -248,6 +264,15 @@ def _run_light_migrations(engine) -> None:
                     conn.execute(text(f"ALTER TABLE dast_request_audit ADD COLUMN {col_name} {col_type}"))
 
 
+def _configure_sqlite_connection(dbapi_conn, _record) -> None:
+    """WAL lets readers run alongside the one writer, and busy_timeout makes a
+    writer wait for the lock instead of failing at once. Both matter now that
+    sign-ins and audit events write while scan threads are writing findings."""
+    dbapi_conn.execute("PRAGMA foreign_keys=ON")
+    dbapi_conn.execute("PRAGMA journal_mode=WAL")
+    dbapi_conn.execute("PRAGMA busy_timeout=5000")
+
+
 def init_db(url: str | None = None):
     global engine, SessionLocal
     db_url = url or settings.database_url
@@ -256,7 +281,7 @@ def init_db(url: str | None = None):
         connect_args["check_same_thread"] = False
     engine = create_engine(db_url, connect_args=connect_args)
     if db_url.startswith("sqlite"):
-        event.listen(engine, "connect", lambda c, _: c.execute("PRAGMA foreign_keys=ON"))
+        event.listen(engine, "connect", _configure_sqlite_connection)
     Base.metadata.create_all(bind=engine)
     _run_light_migrations(engine)
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
