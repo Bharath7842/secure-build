@@ -598,7 +598,7 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
         </Field>
       </div>
 
-      <FormSection title="Scan settings" description="LLM model and scan types available for this project.">
+      <div className="space-y-3 border-t border-slate-200 pt-6">
         <Field label="LLM model" htmlFor="llm-choice">
           <select
             id="llm-choice"
@@ -659,7 +659,7 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
             </Field>
           </>
         )}
-      </FormSection>
+      </div>
 
       <div className="flex items-center gap-4 border-t border-slate-200 pt-6">
         <button
