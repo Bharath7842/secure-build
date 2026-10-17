@@ -1,603 +1,501 @@
+/* Login page. Colors come from the app tokens in app/globals.css (--sidebar, --ink, --canvas,
+   --accent, --muted); the few extra values here are the excerpt syntax colors and the finding
+   red, which match the severity/verdict reds in lib/findingStyles.ts. */
+
 .page {
-  --login-navy: #071426;
-  --login-blue: #2f6df6;
-  --login-blue-bright: #78a6ff;
-  --login-line: rgb(130 166 226 / 0.18);
-  position: relative;
+  --field-border: #8794a8; /* 3:1 against white, so the field edge is visible (WCAG 1.4.11) */
+  --finding-red: #b91c1c;
+
   display: grid;
   min-height: 100svh;
-  place-items: center;
-  overflow: hidden;
-  padding: clamp(16px, 2.2vw, 34px);
-  background:
-    radial-gradient(circle at 12% 0%, rgb(47 109 246 / 0.18), transparent 34%),
-    radial-gradient(circle at 90% 100%, rgb(47 109 246 / 0.1), transparent 30%),
-    #030b17;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+  background: var(--canvas);
+  color: var(--ink);
 }
 
-.ambientGlow {
-  position: absolute;
-  top: -35%;
-  left: 35%;
-  width: 45vw;
-  height: 45vw;
-  border-radius: 50%;
-  background: rgb(47 109 246 / 0.08);
-  filter: blur(90px);
-  pointer-events: none;
-}
+/* ——— Brand panel: the sidebar's navy, with the example evidence trace ——— */
 
-.shell {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 1.14fr) minmax(430px, 0.86fr);
-  width: min(1440px, 100%);
-  min-height: min(900px, calc(100svh - clamp(32px, 4.4vw, 68px)));
-  overflow: hidden;
-  border: 1px solid rgb(142 178 236 / 0.2);
-  border-radius: 32px;
-  background: var(--login-navy);
-  box-shadow: 0 32px 90px rgb(0 0 0 / 0.42);
-}
-
-.brandPanel {
-  position: relative;
+.panel {
   display: flex;
-  min-width: 0;
   flex-direction: column;
-  isolation: isolate;
-  overflow: hidden;
-  padding: clamp(32px, 3.7vw, 58px) clamp(34px, 4.8vw, 76px) 30px;
-  background:
-    linear-gradient(145deg, rgb(255 255 255 / 0.025), transparent 42%),
-    linear-gradient(160deg, #0e2039 0%, var(--login-navy) 60%);
-  color: #fff;
+  padding: 32px clamp(32px, 5vw, 72px) 40px;
+  background: var(--sidebar);
+  color: #e2e8f0;
 }
 
-.brandPanel::after {
-  position: absolute;
-  z-index: -1;
-  right: 0;
-  bottom: 0;
-  width: 44%;
-  height: 46%;
-  border-top: 1px solid var(--login-line);
-  border-left: 1px solid var(--login-line);
-  border-radius: 96px 0 0;
-  content: "";
-  opacity: 0.7;
-}
-
-.grid {
-  position: absolute;
-  z-index: -2;
-  inset: 0;
-  pointer-events: none;
-  background-image:
-    linear-gradient(rgb(125 161 220 / 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(125 161 220 / 0.055) 1px, transparent 1px);
-  background-size: 58px 58px;
-  mask-image: linear-gradient(135deg, #000, transparent 64%);
-}
-
-.brandGlow {
-  position: absolute;
-  z-index: -1;
-  right: -22%;
-  bottom: -22%;
-  width: 70%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: rgb(47 109 246 / 0.22);
-  filter: blur(80px);
-}
-
-.brandHeader,
-.panelTopline,
-.postureHeader,
-.brandFooter,
-.formFooter {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.brandHeader {
-  position: relative;
-  gap: 24px;
-}
-
-.systemStatus,
-.secureSession {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
-}
-
-.systemStatus {
-  color: #9caec6;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-}
-
-.systemStatus > span,
-.secureSession > span {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #4ade80;
-  box-shadow: 0 0 0 4px rgb(74 222 128 / 0.1);
-}
-
-.brandContent {
+.panelBody {
   width: 100%;
-  max-width: 650px;
+  max-width: 580px;
   margin-block: auto;
-  padding-block: clamp(34px, 5vh, 70px);
-}
-
-.eyebrow,
-.formKicker,
-.postureLabel,
-.routeLabel {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-}
-
-.eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 22px;
-  color: var(--login-blue-bright);
-}
-
-.eyebrow::before {
-  width: 30px;
-  height: 1px;
-  background: currentColor;
-  content: "";
+  padding-top: 48px;
 }
 
 .headline {
+  max-width: 22ch;
+  text-wrap: balance;
+  color: #fff;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2rem, 3.1vw, 2.625rem);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+
+.lede {
+  max-width: 50ch;
+  text-wrap: pretty;
+  margin-top: 16px;
+  color: #a9b6c9;
+  font-size: 1rem;
+  line-height: 1.65;
+}
+
+/* ——— Evidence trace: one issue, followed through every scanner that saw it ——— */
+
+.traceFigure {
+  margin-top: 36px;
+}
+
+/* The pulse timeline. Node i lights at --start + i * --gap; the rail below it draws (with the
+   glowing dot riding its front edge) during the --gap that follows, so the dot reaches each node
+   as that node lights. The resting styles are the finished state, so with animations off
+   (reduced motion) the trace simply appears complete. */
+.trace {
+  --rail: rgb(143 176 243 / 0.3);
+  --node: #8fb0f3;
+  --start: 0.35s;
+  --gap: 0.6s;
+
   margin: 0;
-  color: #f7faff;
-  font-size: clamp(54px, 5.2vw, 82px);
-  font-weight: 600;
-  line-height: 0.98;
-  letter-spacing: -0.064em;
-}
-
-.headline span {
-  color: var(--login-blue-bright);
-}
-
-.description {
-  max-width: 540px;
-  margin-top: 25px;
-  color: #aebed3;
-  font-size: 15px;
-  line-height: 1.75;
-}
-
-.postureCard {
-  position: relative;
-  max-width: 610px;
-  margin-top: clamp(32px, 4.2vh, 48px);
-  overflow: hidden;
-  padding: 22px 24px 10px;
-  border: 1px solid rgb(130 166 226 / 0.2);
-  border-radius: 18px;
-  background: linear-gradient(135deg, rgb(21 46 79 / 0.88), rgb(7 20 38 / 0.9));
-  box-shadow: 0 20px 48px rgb(0 0 0 / 0.18);
-  backdrop-filter: blur(14px);
-}
-
-.postureCard::before {
-  position: absolute;
-  top: 0;
-  left: 26px;
-  width: 86px;
-  height: 2px;
-  background: var(--login-blue);
-  content: "";
-}
-
-.postureHeader {
-  gap: 24px;
-}
-
-.postureHeader > div:first-child {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.postureHeader strong {
-  color: #eaf1fd;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.postureLabel {
-  color: #8297b4;
-}
-
-.postureScore {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-}
-
-.postureScore strong {
-  font-size: 27px;
-  letter-spacing: -0.05em;
-}
-
-.postureScore span {
-  color: #758ba9;
-  font-size: 11px;
-}
-
-.postureMeter {
-  height: 4px;
-  margin-top: 19px;
-  overflow: hidden;
-  border-radius: 99px;
-  background: rgb(118 153 211 / 0.14);
-}
-
-.postureMeter span {
-  display: block;
-  width: 94%;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--login-blue), #7facff);
-}
-
-.checks {
-  margin: 16px 0 0;
   padding: 0;
   list-style: none;
 }
 
-.checks li {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto 62px;
-  align-items: center;
-  gap: 10px;
-  min-height: 48px;
-  border-top: 1px solid rgb(130 166 226 / 0.12);
-}
+.step {
+  --node-color: var(--node);
+  --node-glow: rgb(143 176 243 / 0.55);
+  --node-rest: var(--sidebar);
+  --rail-x: calc(56px + 12px + 10px);
+  --t: calc(var(--start) + var(--i, 0) * var(--gap));
 
-.checks li:first-child {
-  border-top: 0;
-}
-
-.checkIcon {
-  display: grid;
-  width: 25px;
-  height: 25px;
-  place-items: center;
-  border: 1px solid rgb(130 166 226 / 0.19);
-  border-radius: 8px;
-  background: rgb(255 255 255 / 0.025);
-}
-
-.checkIcon svg {
-  width: 17px;
-  height: 17px;
-  stroke: #78a6ff;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.testingRing {
-  width: 10px;
-  height: 10px;
-  border: 2px solid rgb(120 166 255 / 0.26);
-  border-top-color: #78a6ff;
-  border-radius: 50%;
-  animation: login-spin 1.1s linear infinite;
-}
-
-.checkName {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.checkName strong {
-  color: #d9e4f5;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.checkName small,
-.checkValue {
-  color: #7389a8;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 9px;
-}
-
-.checkValue {
-  font-size: 11px;
-}
-
-.clearState,
-.testingState {
-  justify-self: end;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 9px;
-  letter-spacing: 0.09em;
-}
-
-.clearState {
-  color: #68d997;
-}
-
-.testingState {
-  color: #8bb2ff;
-}
-
-.brandFooter {
-  gap: 20px;
-  padding-top: 24px;
-  border-top: 1px solid rgb(130 166 226 / 0.14);
-  color: #687e9d;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 9px;
-  letter-spacing: 0.11em;
-}
-
-.formPanel {
   position: relative;
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  padding: clamp(34px, 3.6vw, 56px) clamp(42px, 5.2vw, 82px) 28px;
-  background:
-    linear-gradient(rgb(255 255 255 / 0.6), rgb(255 255 255 / 0.6)),
-    #f3f6fb;
-  color: var(--ink);
+  display: grid;
+  grid-template-columns: 56px 20px minmax(0, 1fr);
+  column-gap: 12px;
+  padding-bottom: 20px;
 }
 
-.formPanel::before {
+/* The rail joining each step's node to the next. */
+.step:not(:last-child)::before {
   position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background-image: radial-gradient(rgb(41 76 129 / 0.1) 0.7px, transparent 0.7px);
-  background-size: 18px 18px;
+  top: 16px;
+  bottom: -2px;
+  left: var(--rail-x);
+  width: 1px;
+  background: var(--rail);
   content: "";
-  mask-image: linear-gradient(to bottom, #000, transparent 30%);
-  opacity: 0.26;
+  animation: rail-draw calc(var(--gap) - 0.1s) ease-in-out calc(var(--t) + 0.1s) both;
 }
 
-.panelTopline {
-  position: relative;
-  gap: 20px;
-  color: #718096;
-  font-size: 10px;
-}
-
-.secureSession {
-  font-weight: 600;
-}
-
-.secureSession > span {
-  width: 6px;
-  height: 6px;
-  box-shadow: none;
-}
-
-.routeLabel {
-  color: #93a1b5;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 9px;
-}
-
-.formContent {
-  position: relative;
-  width: 100%;
-  max-width: 420px;
-  margin: auto;
-  padding-block: 48px;
-}
-
-.formKicker {
-  margin-bottom: 18px;
-  color: var(--login-blue);
-}
-
-.formContent h1 {
-  max-width: 400px;
-  color: #0b172a;
-  font-size: clamp(36px, 3.1vw, 48px);
-  font-weight: 600;
-  line-height: 1.08;
-  letter-spacing: -0.055em;
-}
-
-.formDescription {
-  max-width: 370px;
-  margin-top: 14px;
-  color: #65758c;
-  font-size: 14px;
-  line-height: 1.7;
-}
-
-.loginForm {
-  display: grid;
-  gap: 20px;
-  margin-top: 34px;
-}
-
-.fieldGroup {
-  min-width: 0;
-}
-
-.fieldLabel {
-  display: block;
-  color: #17243a;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.fieldShell {
-  position: relative;
-  margin-top: 9px;
-}
-
-.fieldIcon {
+/* The pulse: a small glowing dot on the rail's drawing edge. */
+.step:not(:last-child)::after {
   position: absolute;
-  z-index: 1;
-  top: 50%;
-  left: 17px;
-  display: flex;
-  color: #72839b;
-  pointer-events: none;
-  transform: translateY(-50%);
+  top: 16px;
+  left: calc(var(--rail-x) - 3px);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #e0e9ff;
+  box-shadow: 0 0 10px 3px rgb(143 176 243 / 0.75);
+  content: "";
+  opacity: 0;
+  animation: pulse-travel calc(var(--gap) - 0.1s) ease-in-out calc(var(--t) + 0.1s) both;
 }
 
-.fieldInput {
+.stepModule,
+.stepBody {
+  animation: step-in 420ms ease-out var(--t) both;
+}
+
+.stepModule {
+  padding-top: 1px;
+  color: var(--node-color);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.6;
+  text-align: right;
+}
+
+.stepNode {
+  justify-self: center;
+  width: 11px;
+  height: 11px;
+  margin-top: 5px;
+  border: 2px solid var(--node-color);
+  border-radius: 50%;
+  background: var(--node-rest);
+  animation: node-on 700ms ease-out var(--t) both;
+}
+
+.stepBody p {
+  color: #dbe3ee;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.stepCode {
   display: block;
-  width: 100%;
-  height: 56px;
-  padding: 0 16px 0 51px;
-  border: 1px solid #d8e0eb;
-  border-radius: 13px;
-  outline: none;
-  background: rgb(255 255 255 / 0.82);
-  color: #14223a;
-  font: inherit;
-  font-size: 15px;
-  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 8px;
+  padding: 5px 10px;
+  overflow-x: auto;
+  border: 1px solid rgb(255 255 255 / 0.08);
+  border-radius: 6px;
+  background: #0e192b;
+  color: #cbd5e1;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  white-space: pre;
 }
 
-.fieldInput::placeholder {
-  color: #8997aa;
+.tkKeyword {
+  color: #8fb0f3;
 }
 
-.fieldInput:hover {
-  border-color: #bdc9d9;
+.tkString {
+  color: #a5d6b4;
 }
 
-.fieldInput:focus {
-  border-color: var(--login-blue);
+.tkDim {
+  color: #64748b;
+}
+
+/* The part of each excerpt the scanner is pointing at. */
+.tkFlag {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: rgb(239 68 68 / 0.18);
+  color: #fecaca;
+}
+
+.stepResult {
+  padding-bottom: 0;
+}
+
+.stepResult {
+  --node-color: #ef4444;
+  --node-glow: rgb(239 68 68 / 0.6);
+  --node-rest: #ef4444;
+}
+
+.stepResult .stepModule {
+  color: #fca5a5;
+}
+
+.stepResult .verdict {
+  animation: verdict-in 520ms cubic-bezier(0.2, 0.7, 0.2, 1) calc(var(--t) + 0.1s) both;
+}
+
+/* Where the trace resolves: the confirmed finding, drawn like a finding in the app. */
+.verdict {
+  padding: 14px 16px;
+  border-radius: 8px;
   background: #fff;
-  box-shadow: 0 0 0 4px rgb(47 109 246 / 0.11);
+  color: var(--ink);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  box-shadow: 0 12px 30px rgb(4 10 20 / 0.45);
 }
 
-.fieldInputError,
-.fieldInputError:hover,
-.fieldInputError:focus {
-  border-color: #dc4c4c;
+.verdictHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
 }
 
-.fieldInputError:focus {
-  box-shadow: 0 0 0 4px rgb(220 76 76 / 0.1);
+.verdictHead strong {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+/* Critical chip and confirmed verdict match lib/findingStyles.ts (RISK_STYLES, VERDICT_TEXT). */
+.verdictSeverity {
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: #fee2e2;
+  color: #991b1b;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.verdictLabel {
+  margin-left: auto;
+  color: var(--finding-red);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.verdict p {
+  margin-top: 6px;
+  color: #475569;
+  text-wrap: pretty;
+}
+
+.verdictRef {
+  margin-left: 8px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.caption {
+  max-width: 68ch;
+  margin-top: 14px;
+  margin-left: calc(56px + 12px + 20px + 12px);
+  color: #8a98ad;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@keyframes verdict-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+/* Pulse keyframes come in identical pairs (-a/-b): EvidenceTrace flips data-run to swap names,
+   and a changed animation-name is what restarts an animation for the replay. */
+@keyframes rail-draw {
+  from {
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    clip-path: inset(0);
+  }
+}
+
+@keyframes rail-draw-b {
+  from {
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    clip-path: inset(0);
+  }
+}
+
+@keyframes pulse-travel {
+  0% {
+    top: 16px;
+    opacity: 0;
+  }
+  15%,
+  85% {
+    opacity: 1;
+  }
+  100% {
+    top: calc(100% - 4px);
+    opacity: 0;
+  }
+}
+
+@keyframes pulse-travel-b {
+  0% {
+    top: 16px;
+    opacity: 0;
+  }
+  15%,
+  85% {
+    opacity: 1;
+  }
+  100% {
+    top: calc(100% - 4px);
+    opacity: 0;
+  }
+}
+
+@keyframes node-on {
+  0% {
+    border-color: var(--rail);
+    background: var(--sidebar);
+    box-shadow: 0 0 0 0 var(--node-glow);
+  }
+  30% {
+    border-color: var(--node-color);
+    background: var(--node-color);
+  }
+  100% {
+    box-shadow: 0 0 0 9px transparent;
+  }
+}
+
+@keyframes node-on-b {
+  0% {
+    border-color: var(--rail);
+    background: var(--sidebar);
+    box-shadow: 0 0 0 0 var(--node-glow);
+  }
+  30% {
+    border-color: var(--node-color);
+    background: var(--node-color);
+  }
+  100% {
+    box-shadow: 0 0 0 9px transparent;
+  }
+}
+
+.trace[data-run="1"] .step:not(:last-child)::before {
+  animation-name: rail-draw-b;
+}
+
+.trace[data-run="1"] .step:not(:last-child)::after {
+  animation-name: pulse-travel-b;
+}
+
+.trace[data-run="1"] .stepNode {
+  animation-name: node-on-b;
+}
+
+/* ——— Form side ——— */
+
+.formSide {
+  display: flex;
+  flex-direction: column;
+  padding: 32px clamp(24px, 6vw, 96px);
+}
+
+.formWrap {
+  width: 100%;
+  max-width: 380px;
+  margin: auto;
+}
+
+.formBrand {
+  margin-bottom: 40px;
+}
+
+.title {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 2.25rem;
+  font-weight: 400;
+  line-height: 1.15;
+}
+
+.subtitle {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-top: 32px;
+}
+
+.label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.input {
+  width: 100%;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--field-border);
+  border-radius: 6px;
+  outline: none;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9375rem;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.input::placeholder {
+  color: #94a3b8;
+}
+
+.input:hover {
+  border-color: #64748b;
+}
+
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 0.2);
+}
+
+.inputError,
+.inputError:hover {
+  border-color: #dc2626;
+}
+
+.inputError:focus {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgb(220 38 38 / 0.18);
+}
+
+.passwordField {
+  position: relative;
 }
 
 .passwordInput {
-  padding-right: 58px;
+  padding-right: 72px;
 }
 
 .passwordToggle {
   position: absolute;
-  z-index: 2;
-  top: 6px;
+  top: 50%;
   right: 6px;
-  display: grid;
-  width: 44px;
-  height: 44px;
-  place-items: center;
+  height: 32px;
+  padding: 0 10px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 4px;
   background: transparent;
-  color: #71829a;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
   cursor: pointer;
-  transition: color 150ms ease, background-color 150ms ease;
+  transform: translateY(-50%);
 }
 
 .passwordToggle:hover {
-  background: #edf2f8;
-  color: #1d2c43;
+  background: #eff6ff;
 }
 
-.passwordToggle:focus-visible,
-.checkbox:focus-visible,
-.submitButton:focus-visible {
-  outline: 3px solid rgb(47 109 246 / 0.28);
-  outline-offset: 2px;
+.passwordToggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .fieldError {
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  margin-top: 8px;
-  color: #c93636;
-  font-size: 12px;
+  margin-top: 6px;
+  color: var(--finding-red);
+  font-size: 0.8125rem;
   line-height: 1.45;
 }
 
-.fieldError > span,
-.formError > span {
-  display: flex;
-  flex: 0 0 auto;
+.fieldError svg {
+  flex-shrink: 0;
   margin-top: 1px;
-}
-
-.formOptions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 44px;
-}
-
-.rememberLabel {
-  display: inline-flex;
-  min-height: 44px;
-  align-items: center;
-  gap: 10px;
-  color: #3c4b61;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.checkbox {
-  position: relative;
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-  appearance: none;
-  border: 1px solid #b9c5d4;
-  border-radius: 5px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.checkbox:checked {
-  border-color: var(--login-blue);
-  background: var(--login-blue);
-}
-
-.checkbox:checked::after {
-  position: absolute;
-  top: 3px;
-  left: 6px;
-  width: 5px;
-  height: 9px;
-  border-right: 2px solid #fff;
-  border-bottom: 2px solid #fff;
-  content: "";
-  transform: rotate(45deg);
 }
 
 .formError {
@@ -605,303 +503,219 @@
   align-items: flex-start;
   gap: 10px;
   padding: 12px 14px;
-  border: 1px solid #f0caca;
-  border-radius: 12px;
-  background: #fff4f4;
-  color: #9c2929;
-  font-size: 13px;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 0.875rem;
   line-height: 1.5;
 }
 
-.submitButton {
-  position: relative;
+.formError svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.submit {
   display: flex;
-  width: 100%;
-  height: 56px;
+  height: 44px;
   align-items: center;
   justify-content: center;
-  gap: 9px;
+  gap: 8px;
+  margin-top: 4px;
   border: 0;
-  border-radius: 13px;
-  background: #0b1b31;
+  border-radius: 6px;
+  background: var(--accent);
   color: #fff;
   font: inherit;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 0.9375rem;
+  font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 12px 25px rgb(8 27 52 / 0.18);
-  transition: transform 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+  transition: background-color 150ms ease;
 }
 
-.submitButton:hover:not(:disabled) {
-  background: var(--login-blue);
-  box-shadow: 0 14px 30px rgb(47 109 246 / 0.27);
-  transform: translateY(-1px);
+.submit:hover:not(:disabled) {
+  background: #1d4ed8;
 }
 
-.submitButton:active:not(:disabled) {
-  transform: translateY(0);
+.submit:active:not(:disabled) {
+  background: #1e40af;
 }
 
-.submitting {
+.submit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.submit:disabled {
   cursor: wait;
-  opacity: 0.76;
-}
-
-.submitArrow {
-  position: absolute;
-  right: 7px;
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border-radius: 10px;
-  background: rgb(255 255 255 / 0.1);
-}
-
-.submitArrow svg {
-  width: 18px;
-  height: 18px;
+  opacity: 0.75;
 }
 
 .spinner {
-  width: 18px;
-  height: 18px;
-  animation: login-spin 900ms linear infinite;
+  animation: spin 900ms linear infinite;
 }
 
-.accessNote {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  margin-top: 29px;
-  padding-top: 24px;
-  border-top: 1px solid #dce3ed;
-  color: #77869a;
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.accessNote > span:first-child {
-  color: #28374d;
-  font-weight: 700;
-}
-
-.formFooter {
-  position: relative;
-  gap: 9px;
-  justify-content: flex-start;
-  color: #8a98aa;
-  font-size: 10px;
-}
-
-.mobileHeader {
-  display: none;
-}
-
-@keyframes login-spin {
+@keyframes spin {
   to {
     transform: rotate(360deg);
   }
 }
 
+.help {
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid #e2e8f0;
+  color: var(--muted);
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.help strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* ——— Responsive ——— */
+
 @media (max-width: 1180px) {
-  .shell {
-    grid-template-columns: minmax(0, 1fr) minmax(410px, 0.86fr);
+  .step {
+    grid-template-columns: 48px 20px minmax(0, 1fr);
+    column-gap: 10px;
   }
 
-  .brandPanel {
-    padding-inline: 38px;
+  .step {
+    --rail-x: calc(48px + 10px + 10px);
   }
 
-  .headline {
-    font-size: clamp(50px, 5.5vw, 68px);
+  .stepBody p {
+    font-size: 0.8125rem;
   }
 
-  .systemStatus {
-    display: none;
-  }
-
-  .formPanel {
-    padding-inline: 44px;
+  .caption {
+    margin-left: calc(48px + 10px + 20px + 10px);
   }
 }
 
-@media (max-width: 920px) {
-  .page {
-    display: block;
-    min-height: 100svh;
-    overflow: visible;
-    padding: 14px;
-    background: #071426;
+@media (max-width: 1000px) {
+  .panel {
+    padding-inline: 32px;
   }
 
-  .shell {
-    display: block;
-    width: 100%;
-    min-height: calc(100svh - 28px);
-    border-radius: 24px;
-  }
-
-  .brandPanel {
+  .caption {
     display: none;
-  }
-
-  .formPanel {
-    min-height: calc(100svh - 30px);
-    padding: 26px clamp(24px, 8vw, 70px) 24px;
-  }
-
-  .mobileHeader {
-    position: relative;
-    display: block;
-    padding-bottom: 22px;
-    border-bottom: 1px solid #dce3ed;
-  }
-
-  .panelTopline {
-    margin-top: 24px;
-  }
-
-  .formContent {
-    margin-block: auto;
-    padding-block: 54px;
-  }
-
-  .formContent h1 {
-    font-size: clamp(36px, 8vw, 46px);
   }
 }
 
-@media (max-width: 540px) {
+/* Below this the panel would squeeze the form, so it hides; the form keeps its own logo. */
+@media (max-width: 900px) {
   .page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .panel {
+    display: none;
+  }
+
+  .formSide {
     padding: 0;
-    background: #f3f6fb;
   }
 
-  .shell {
-    min-height: 100svh;
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
-  }
-
-  .formPanel {
-    min-height: 100svh;
-    padding: 22px 22px max(22px, env(safe-area-inset-bottom));
-  }
-
-  .mobileHeader {
-    padding-bottom: 18px;
-  }
-
-  .panelTopline {
-    margin-top: 20px;
-  }
-
-  .routeLabel {
-    display: none;
-  }
-
-  .formContent {
-    padding-block: 30px;
-  }
-
-  .formContent h1 {
-    max-width: 340px;
-    font-size: 36px;
-  }
-
-  .loginForm {
-    gap: 16px;
-    margin-top: 24px;
-  }
-
-  .formDescription {
-    margin-top: 10px;
-  }
-
-  .accessNote {
-    margin-top: 20px;
-    padding-top: 18px;
-  }
-
-  .formFooter {
-    flex-wrap: wrap;
-    line-height: 1.5;
+  .formWrap {
+    padding: 48px 24px max(40px, env(safe-area-inset-bottom));
   }
 }
 
-@media (min-width: 921px) and (max-height: 780px) {
-  .page {
-    padding: 14px;
+@media (max-width: 480px) {
+  .formWrap {
+    padding-top: 36px;
   }
 
-  .shell {
-    min-height: calc(100svh - 28px);
+  .title {
+    font-size: 2rem;
   }
 
-  .brandPanel {
+  .form {
+    margin-top: 28px;
+  }
+
+  .input {
+    font-size: 1rem; /* 16px stops iOS zooming into the field on focus */
+  }
+}
+
+/* Short laptop screens: tighten the panel so the whole trace still fits above the fold. */
+@media (min-width: 901px) and (max-height: 820px) {
+  .panel {
     padding-top: 28px;
-    padding-bottom: 22px;
+    padding-bottom: 24px;
   }
 
-  .brandContent {
-    padding-block: 28px;
+  .panelBody {
+    padding-top: 28px;
   }
 
-  .eyebrow {
-    margin-bottom: 16px;
+  .formSide {
+    padding-block: 24px;
+  }
+
+  .formBrand {
+    margin-bottom: 28px;
   }
 
   .headline {
-    font-size: clamp(47px, 4.8vw, 65px);
+    font-size: 1.875rem;
   }
 
-  .description {
-    margin-top: 18px;
+  /* The trace explains itself; dropping the lede is what lets it fit. */
+  .lede {
+    display: none;
   }
 
-  .postureCard {
-    margin-top: 24px;
-    padding-top: 18px;
+  .traceFigure {
+    margin-top: 22px;
   }
 
-  .checks li {
-    min-height: 42px;
+  .step {
+    padding-bottom: 14px;
   }
 
-  .formPanel {
-    padding-top: 28px;
-    padding-bottom: 22px;
+  .stepCode {
+    margin-top: 6px;
+    padding-block: 3px;
   }
 
-  .formContent {
-    padding-block: 28px;
+  .verdict {
+    padding: 10px 14px;
   }
+}
 
-  .formContent h1 {
-    font-size: 38px;
+@media (min-width: 901px) and (max-height: 700px) {
+  .caption {
+    display: none;
   }
+}
 
-  .loginForm {
-    gap: 16px;
-    margin-top: 24px;
-  }
-
-  .accessNote {
-    margin-top: 20px;
-    padding-top: 18px;
+/* Very short screens keep the trace as text only. */
+@media (min-width: 901px) and (max-height: 660px) {
+  .stepCode {
+    display: none;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .testingRing,
+  .step::before,
+  .step::after,
+  .stepModule,
+  .stepBody,
+  .stepNode,
+  .stepResult .verdict,
   .spinner {
     animation: none;
   }
 
-  .submitButton {
+  .input,
+  .submit {
     transition: none;
   }
 }

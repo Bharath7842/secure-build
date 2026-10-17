@@ -6,52 +6,23 @@ import LoginForm from "@/components/login/LoginForm";
 import styles from "@/components/login/login.module.css";
 
 export const metadata: Metadata = {
-  title: "Sign in · Securebuild",
-  description: "Sign in to Securebuild, your unified agentic security platform.",
+  title: "Sign in | Secure Build",
+  description: "Sign in to Secure Build to see your projects, scans and findings.",
 };
 
 export default function LoginPage() {
   return (
     <div className={styles.page}>
-      <div className={styles.ambientGlow} aria-hidden="true" />
-      <div className={styles.shell}>
-        <BrandPanel />
+      <BrandPanel />
 
-        <main className={styles.formPanel}>
-          <header className={styles.mobileHeader}>
-            <BrandMark tone="light-bg" />
-          </header>
+      <main className={styles.formSide}>
+        <div className={styles.formWrap}>
+          <BrandMark tone="light-bg" className={styles.formBrand} />
+          <h1 className={styles.title}>Sign in</h1>
 
-          <div className={styles.panelTopline}>
-            <span className={styles.secureSession}>
-              <span aria-hidden="true" />
-              Encrypted session
-            </span>
-            <span className={styles.routeLabel}>SECUREBUILD / ACCESS</span>
-          </div>
-
-          <div className={styles.formContent}>
-            <p className={styles.formKicker}>WELCOME BACK</p>
-            <h1>Sign in to your workspace</h1>
-            <p className={styles.formDescription}>
-              Access your projects, findings, and security posture.
-            </p>
-
-            <LoginForm />
-
-            <div className={styles.accessNote}>
-              <span>New to Securebuild?</span>
-              <span>Ask your workspace administrator for access.</span>
-            </div>
-          </div>
-
-          <footer className={styles.formFooter}>
-            <span>Privacy</span>
-            <span aria-hidden="true">•</span>
-            <span>Protected workspace access</span>
-          </footer>
-        </main>
-      </div>
+          <LoginForm />
+        </div>
+      </main>
     </div>
   );
 }

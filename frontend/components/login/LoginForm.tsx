@@ -53,12 +53,10 @@ function FieldError({ id, message }: { id: string; message: string | null }) {
     <div id={id} aria-live="polite" aria-atomic="true">
       {message && (
         <p className={styles.fieldError}>
-          <span>
-            <Icon size={16}>
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 8v4M12 16h.01" />
-            </Icon>
-          </span>
+          <Icon size={16}>
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 8v4M12 16h.01" />
+          </Icon>
           <span>{message}</span>
         </p>
       )}
@@ -69,7 +67,6 @@ function FieldError({ id, message }: { id: string; message: string | null }) {
 export default function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [remember, setRemember] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [touched, setTouched] = useState({ email: false, password: false });
   const [submitting, setSubmitting] = useState(false);
@@ -102,7 +99,7 @@ export default function LoginForm() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), password, remember }),
+        body: JSON.stringify({ email: email.trim(), password }),
       });
 
       if (res.ok) {
@@ -125,51 +122,37 @@ export default function LoginForm() {
 
   return (
     <>
-      <form onSubmit={onSubmit} noValidate aria-busy={submitting} className={styles.loginForm}>
-        <div className={styles.fieldGroup}>
-          <label htmlFor="email" className={styles.fieldLabel}>
-            Email address
+      <form onSubmit={onSubmit} noValidate aria-busy={submitting} className={styles.form}>
+        <div>
+          <label htmlFor="email" className={styles.label}>
+            Work email
           </label>
-          <div className={styles.fieldShell}>
-            <span className={styles.fieldIcon}>
-              <Icon>
-                <rect x="3" y="5" width="18" height="14" rx="2" />
-                <path d="m3 7 9 6 9-6" />
-              </Icon>
-            </span>
-            <input
-              ref={emailRef}
-              id="email"
-              name="email"
-              type="email"
-              inputMode="email"
-              autoComplete="username"
-              autoCapitalize="none"
-              spellCheck={false}
-              required
-              placeholder="you@company.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onBlur={() => setTouched((t) => ({ ...t, email: true }))}
-              aria-invalid={emailError ? true : undefined}
-              aria-describedby={emailError ? "email-error" : undefined}
-              className={`${styles.fieldInput} ${emailError ? styles.fieldInputError : ""}`}
-            />
-          </div>
+          <input
+            ref={emailRef}
+            id="email"
+            name="email"
+            type="email"
+            inputMode="email"
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
+            required
+            placeholder="you@company.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            onBlur={() => setTouched((t) => ({ ...t, email: true }))}
+            aria-invalid={emailError ? true : undefined}
+            aria-describedby={emailError ? "email-error" : undefined}
+            className={`${styles.input} ${emailError ? styles.inputError : ""}`}
+          />
           <FieldError id="email-error" message={emailError} />
         </div>
 
-        <div className={styles.fieldGroup}>
-          <label htmlFor="password" className={styles.fieldLabel}>
+        <div>
+          <label htmlFor="password" className={styles.label}>
             Password
           </label>
-          <div className={styles.fieldShell}>
-            <span className={styles.fieldIcon}>
-              <Icon>
-                <rect x="5" y="11" width="14" height="10" rx="2" />
-                <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-              </Icon>
-            </span>
+          <div className={styles.passwordField}>
             <input
               ref={passwordRef}
               id="password"
@@ -177,13 +160,12 @@ export default function LoginForm() {
               type={showPassword ? "text" : "password"}
               autoComplete="current-password"
               required
-              placeholder="Enter your password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               onBlur={() => setTouched((t) => ({ ...t, password: true }))}
               aria-invalid={passwordError ? true : undefined}
               aria-describedby={passwordError ? "password-error" : undefined}
-              className={`${styles.fieldInput} ${styles.passwordInput} ${passwordError ? styles.fieldInputError : ""}`}
+              className={`${styles.input} ${styles.passwordInput} ${passwordError ? styles.inputError : ""}`}
             />
             <button
               type="button"
@@ -192,48 +174,18 @@ export default function LoginForm() {
               aria-pressed={showPassword}
               className={styles.passwordToggle}
             >
-              <Icon>
-                {showPassword ? (
-                  <>
-                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-                    <path d="m1 1 22 22" />
-                  </>
-                ) : (
-                  <>
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" />
-                    <circle cx="12" cy="12" r="3" />
-                  </>
-                )}
-              </Icon>
+              {showPassword ? "Hide" : "Show"}
             </button>
           </div>
           <FieldError id="password-error" message={passwordError} />
         </div>
 
-        <div className={styles.formOptions}>
-          <label className={styles.rememberLabel}>
-            <input
-              type="checkbox"
-              name="remember"
-              checked={remember}
-              onChange={(e) => setRemember(e.target.checked)}
-              className={styles.checkbox}
-            />
-            Remember me
-          </label>
-        </div>
-
         {formError && (
-          <div
-            role="alert"
-            className={styles.formError}
-          >
-            <span>
-              <Icon size={18}>
-                <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
-                <path d="M12 9v4M12 17h.01" />
-              </Icon>
-            </span>
+          <div role="alert" className={styles.formError}>
+            <Icon size={18}>
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 8v4M12 16h.01" />
+            </Icon>
             <span>{formError}</span>
           </div>
         )}
@@ -242,7 +194,7 @@ export default function LoginForm() {
           type="submit"
           disabled={submitting}
           aria-disabled={submitting}
-          className={`${styles.submitButton} ${submitting ? styles.submitting : ""}`}
+          className={styles.submit}
         >
           {submitting && (
             <svg
@@ -260,14 +212,7 @@ export default function LoginForm() {
               <path d="M21 12a9 9 0 1 1-6.2-8.56" />
             </svg>
           )}
-          {submitting ? "Signing in…" : "Sign in securely"}
-          {!submitting && (
-            <span className={styles.submitArrow}>
-              <Icon>
-                <path d="M5 12h14M13 6l6 6-6 6" />
-              </Icon>
-            </span>
-          )}
+          {submitting ? "Signing in…" : "Sign in"}
         </button>
       </form>
       <p role="status" aria-live="polite" aria-atomic="true" className="sr-only">
