@@ -2,7 +2,6 @@ import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from pydantic import BaseModel
@@ -27,17 +26,6 @@ def _get_project_or_404(db: Session, project_id: str, principal: Principal) -> P
     if project is None or not can_see_project(principal, project):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     return project
-
-
-def _commit_or_raise_duplicate(db: Session) -> None:
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Project name already exists",
-        )
 
 
 def _plain_secret(value) -> str | None:
@@ -86,7 +74,7 @@ def create_project(
             project.git_refresh_token = connection["refresh_token"]
             project.git_token_expires_at = connection["expires_at"]
     db.add(project)
-    _commit_or_raise_duplicate(db)
+    db.commit()
     db.refresh(project)
     return project
 
@@ -128,7 +116,7 @@ def update_project(
         _apply_reference_sources(updates)
     for field, value in updates.items():
         setattr(project, field, value)
-    _commit_or_raise_duplicate(db)
+    db.commit()
     db.refresh(project)
     return project
 

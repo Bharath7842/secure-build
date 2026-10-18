@@ -4,9 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 
 import { ApiError, api } from "@/lib/api";
-import { inputClass, selectClass } from "@/lib/formStyles";
-import { LLM_PRESETS, llmPresetForProviderModel, type LlmPresetId } from "@/lib/llmPresets";
-import { useModelCatalog } from "@/lib/useModelCatalog";
+import { inputClass } from "@/lib/formStyles";
 import type { GitRepo, Project, ProjectCreateInput } from "@/lib/types";
 
 interface ProjectFormProps {
@@ -31,10 +29,6 @@ interface NewProjectDraft {
   defaultGitUrl: string;
   defaultBranch: string;
   monorepoPath: string;
-  llmChoice: LlmPresetId;
-  // Never the API key: a secret has no business in sessionStorage.
-  llmModel?: string;
-  llmBaseUrl?: string;
 }
 
 function FormSection({
@@ -96,18 +90,6 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
   // SAST + Secrets are always on; SCA/SBOM are user-toggleable per project.
   const enableSast = true;
   const enableSecrets = true;
-  const { presets, sastOptions } = useModelCatalog();
-  const [llmChoice, setLlmChoice] = useState<LlmPresetId>(
-    llmPresetForProviderModel(initial?.llm_provider, initial?.llm_model),
-  );
-  // OpenAI-compatible servers serve whatever model id they were started
-  // with, so the model is free text for that provider.
-  const [llmModel, setLlmModel] = useState(
-    initial?.llm_provider === "openai_compat" ? initial.llm_model : LLM_PRESETS["openai-compat-qwen-coder-32b"].model,
-  );
-  const [llmBaseUrl, setLlmBaseUrl] = useState(initial?.llm_base_url ?? "");
-  const [llmApiKey, setLlmApiKey] = useState("");
-  const isOpenAiCompat = presets[llmChoice]?.provider === "openai_compat";
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -124,7 +106,7 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
   const [connectingProvider, setConnectingProvider] = useState<"gitlab" | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
   const [gitError, setGitError] = useState<string | null>(null);
-  const [repoUrl, setRepoUrl] = useState("");
+  const [repoUrl, setRepoUrl] = useState(initial?.default_git_url ?? "");
   const [repoLookup, setRepoLookup] = useState<GitRepo | null>(null);
   const [repoLookupLoading, setRepoLookupLoading] = useState(false);
   const [repoLookupError, setRepoLookupError] = useState<string | null>(null);
@@ -155,9 +137,6 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
           if (draft.defaultGitUrl !== undefined) setDefaultGitUrl(draft.defaultGitUrl);
           if (draft.defaultBranch !== undefined) setDefaultBranch(draft.defaultBranch);
           if (draft.monorepoPath !== undefined) setMonorepoPath(draft.monorepoPath);
-          if (draft.llmChoice !== undefined && draft.llmChoice in LLM_PRESETS) setLlmChoice(draft.llmChoice);
-          if (draft.llmModel !== undefined) setLlmModel(draft.llmModel);
-          if (draft.llmBaseUrl !== undefined) setLlmBaseUrl(draft.llmBaseUrl);
         }
         sessionStorage.removeItem(NEW_PROJECT_DRAFT_KEY);
       } catch {
@@ -199,6 +178,19 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
       setRepoLookupLoading(false);
     }
   }
+
+  // Pasting or typing a full URL looks it up on its own; the Find button stays
+  // as a retry. The short delay lets a paste or fast typing settle first.
+  useEffect(() => {
+    const url = repoUrl.trim();
+    if (!/^https?:\/\/\S+$/i.test(url)) return;
+    // The saved repository is already known; only a changed URL needs a lookup
+    // (a lookup would also reset the branch the user chose).
+    if (url === (initial?.default_git_url ?? "").trim()) return;
+    const timer = setTimeout(() => void handleLookupRepo(), 500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repoUrl]);
 
   // Confirm a repository with an access token. On success the token is kept
   // server-side (on the project, or as a pending connection for a new one) and
@@ -244,9 +236,6 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
             defaultGitUrl,
             defaultBranch,
             monorepoPath,
-            llmChoice,
-            llmModel,
-            llmBaseUrl,
           };
           sessionStorage.setItem(NEW_PROJECT_DRAFT_KEY, JSON.stringify(draft));
         } catch {
@@ -323,14 +312,7 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
       enable_sbom: true,
       enable_secrets: enableSecrets,
       scan_mode: "full",
-      llm_provider: presets[llmChoice].provider,
-      llm_model: isOpenAiCompat ? llmModel.trim() || presets[llmChoice].model : presets[llmChoice].model,
     };
-    if (isOpenAiCompat) {
-      payload.llm_base_url = llmBaseUrl.trim() || null;
-      // Blank keeps whatever key is stored; the key is never read back.
-      if (llmApiKey.trim()) payload.llm_api_key = llmApiKey.trim();
-    }
     if (mode === "create" && pendingConnectionId) {
       payload.git_connection_id = pendingConnectionId;
     }
@@ -426,7 +408,7 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
                 htmlFor="repo-url"
                 hint={`Paste the repository's full Git URL. It is checked against your ${
                   GIT_PROVIDER_LABELS[gitProvider ?? ""] ?? "Git"
-                } account, then fills in the default branch below.`}
+                } account as soon as you paste or type it, then fills in the default branch below.`}
               >
                 <div className="flex gap-2">
                   <input
@@ -596,69 +578,6 @@ export default function ProjectForm({ mode, initial, onSubmit }: ProjectFormProp
             placeholder="apps/api"
           />
         </Field>
-      </div>
-
-      <div className="space-y-3 border-t border-slate-200 pt-6">
-        <Field label="LLM model" htmlFor="llm-choice">
-          <select
-            id="llm-choice"
-            value={llmChoice}
-            onChange={(event) => setLlmChoice(event.target.value as LlmPresetId)}
-            className={selectClass}
-          >
-            {sastOptions(llmChoice).map(([id, preset]) => (
-              <option key={id} value={id}>
-                {preset.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-        {isOpenAiCompat && (
-          <>
-            <Field label="Model" htmlFor="llm-model" hint="The model id your server serves, e.g. Qwen/Qwen2.5-Coder-32B-Instruct.">
-              <input
-                id="llm-model"
-                value={llmModel}
-                onChange={(event) => setLlmModel(event.target.value)}
-                className={inputClass}
-                autoComplete="off"
-              />
-            </Field>
-            <Field
-              label="Base URL"
-              htmlFor="llm-base-url"
-              hint="Include the API version prefix. Leave blank to use the server default."
-            >
-              <input
-                id="llm-base-url"
-                type="url"
-                value={llmBaseUrl}
-                onChange={(event) => setLlmBaseUrl(event.target.value)}
-                placeholder="http://localhost:8000/v1"
-                className={inputClass}
-                autoComplete="off"
-              />
-            </Field>
-            <Field
-              label="API key"
-              htmlFor="llm-api-key"
-              hint={
-                initial?.llm_api_key_set
-                  ? "A key is saved. Leave blank to keep it."
-                  : "Optional for local servers. Stored server-side and never shown again."
-              }
-            >
-              <input
-                id="llm-api-key"
-                type="password"
-                value={llmApiKey}
-                onChange={(event) => setLlmApiKey(event.target.value)}
-                className={inputClass}
-                autoComplete="new-password"
-              />
-            </Field>
-          </>
-        )}
       </div>
 
       <div className="flex items-center gap-4 border-t border-slate-200 pt-6">

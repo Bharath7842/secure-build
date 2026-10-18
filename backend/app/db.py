@@ -29,6 +29,14 @@ def _run_light_migrations(engine) -> None:
     table_names = set(inspector.get_table_names())
 
     if "projects" in table_names:
+        # Project names used to be unique; a unique index is all that enforced it.
+        name_index = next(
+            (i for i in inspector.get_indexes("projects") if i["name"] == "ix_projects_name"), None
+        )
+        if name_index is not None and name_index.get("unique"):
+            with engine.begin() as conn:
+                conn.execute(text("DROP INDEX ix_projects_name"))
+                conn.execute(text("CREATE INDEX ix_projects_name ON projects (name)"))
         project_cols = {col["name"] for col in inspector.get_columns("projects")}
         if "created_by_user_id" not in project_cols:
             with engine.begin() as conn:

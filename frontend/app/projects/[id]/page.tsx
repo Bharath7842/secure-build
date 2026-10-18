@@ -10,7 +10,7 @@ import PageContainer from "@/components/PageContainer";
 import ProjectForm from "@/components/ProjectForm";
 import { ApiError, api } from "@/lib/api";
 import type { Project, ProjectCreateInput, Scan } from "@/lib/types";
-import { useCan } from "@/components/auth/AuthProvider";
+import { useAuth, useCan } from "@/components/auth/AuthProvider";
 
 const SCAN_STATUS_LABELS: Record<string, string> = {
   queued: "Queued",
@@ -29,6 +29,7 @@ function formatDate(value: string): string {
 
 export default function ProjectDetailPage() {
   const can = useCan();
+  const isAdmin = useAuth()?.user.role === "admin";
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const { refresh } = useActiveProject();
@@ -127,7 +128,7 @@ export default function ProjectDetailPage() {
                 New Scan
               </Link>
             )}
-            {can("projects.manage") && (
+            {isAdmin && can("projects.manage") && (
               <Link
                 href={`/projects/${project.id}/settings`}
                 className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"

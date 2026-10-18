@@ -25,7 +25,6 @@ export default function ScanForm({ project, scanType = "sast", onSubmit }: ScanF
   const [gitUrl, setGitUrl] = useState("");
   const [repoPath, setRepoPath] = useState("");
   const [branch, setBranch] = useState("");
-  const [force, setForce] = useState(false);
   // LLM scanning is always on for SAST scans now — no UI toggle. SCA/SBOM
   // never use it regardless (see isLlmFree below).
   const useLlm = true;
@@ -52,6 +51,10 @@ export default function ScanForm({ project, scanType = "sast", onSubmit }: ScanF
       setError("Repository URL is required.");
       return;
     }
+    if (!branch.trim()) {
+      setError("Enter the branch to scan.");
+      return;
+    }
 
     const payload: ScanCreateInput = {
       project_id: selectedProjectId,
@@ -61,7 +64,8 @@ export default function ScanForm({ project, scanType = "sast", onSubmit }: ScanF
       // Always blank from the UI — the backend auto-resolves the branch's
       // latest commit on git.
       commit_sha: null,
-      force,
+      // Always rescan, even when a recent scan of the same commit exists.
+      force: true,
       scan_type: scanType,
       use_llm: isLlmFree ? false : useLlm,
       metadata: {
@@ -178,26 +182,17 @@ export default function ScanForm({ project, scanType = "sast", onSubmit }: ScanF
 
       <div>
         <label htmlFor="scan-branch" className="block text-sm font-medium text-[var(--ink)]">
-          Branch
+          Branch to scan *
         </label>
         <input
           id="scan-branch"
           value={branch}
           onChange={(event) => setBranch(event.target.value)}
           className={inputClass}
-          placeholder="main"
+          required
+          aria-required="true"
         />
       </div>
-
-      <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
-        <input
-          type="checkbox"
-          checked={force}
-          onChange={(event) => setForce(event.target.checked)}
-          className="h-4 w-4 rounded border-slate-300 text-[var(--accent)] focus:ring-[var(--accent)]/30"
-        />
-        Force scan even if a recent scan already exists
-      </label>
 
       <div className="flex items-center gap-4 border-t border-slate-200 pt-6">
         <button

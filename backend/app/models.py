@@ -28,7 +28,8 @@ class Base(DeclarativeBase):
 class Project(Base):
     __tablename__ = "projects"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    name: Mapped[str] = mapped_column(String(500), unique=True, index=True)
+    # Not unique: two projects may share a name (they differ by id).
+    name: Mapped[str] = mapped_column(String(500), index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     languages: Mapped[list] = mapped_column(JSON, default=list)
     frameworks: Mapped[list] = mapped_column(JSON, default=list)

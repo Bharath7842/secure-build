@@ -19,6 +19,17 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
+  const [justCreated, setJustCreated] = useState(false);
+
+  // Set by the create page after a successful save; the flag is dropped from
+  // the URL so a refresh doesn't show the banner again.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("created") === "1") {
+      setJustCreated(true);
+      window.history.replaceState(null, "", "/projects");
+    }
+  }, []);
 
   // Nothing of the user's yet: the first thing to do is create a project.
   useEffect(() => {
@@ -69,6 +80,12 @@ export default function ProjectsPage() {
           )}
         </div>
 
+        {justCreated && (
+          <div className="mt-6 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            Project created successfully.
+          </div>
+        )}
+
         {error && (
           <div className="mt-8 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
@@ -109,6 +126,19 @@ export default function ProjectsPage() {
                   <td className="py-3 text-[var(--muted)]">{project.default_branch || "—"}</td>
                   <td className="py-3 text-right">
                     <div className="flex items-center justify-end gap-4">
+                      {can("scans.create") && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // The scan page scans whichever project is active.
+                            setActiveProjectId(project.id);
+                            router.push("/scans/new");
+                          }}
+                          className="font-medium text-[var(--accent)] hover:underline"
+                        >
+                          New SAST scan
+                        </button>
+                      )}
                       <Link
                         href={`/projects/${project.id}`}
                         className="font-medium text-[var(--ink)] hover:text-[var(--accent)]"

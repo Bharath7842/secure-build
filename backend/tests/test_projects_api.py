@@ -125,11 +125,23 @@ def test_create_project_without_auth_returns_401(client):
     assert resp.status_code == 401
 
 
-def test_create_duplicate_project_name_returns_409(client):
-    client.post("/projects", json=_payload(name="duplicate"), headers=AUTH_HEADER)
+def test_create_duplicate_project_name_keeps_the_name(client):
+    first = client.post("/projects", json=_payload(name="duplicate"), headers=AUTH_HEADER).json()
     resp = client.post("/projects", json=_payload(name="duplicate"), headers=AUTH_HEADER)
-    assert resp.status_code == 409
-    assert resp.json()["detail"] == "Project name already exists"
+    assert resp.status_code == 201
+    second = resp.json()
+    assert first["name"] == second["name"] == "duplicate"
+    assert second["id"] != first["id"]
+
+
+def test_rename_onto_existing_name_is_accepted(client):
+    client.post("/projects", json=_payload(name="taken-name"), headers=AUTH_HEADER)
+    other = client.post("/projects", json=_payload(name="other-name"), headers=AUTH_HEADER).json()
+    resp = client.patch(
+        f"/projects/{other['id']}", json={"name": "taken-name"}, headers=AUTH_HEADER
+    )
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "taken-name"
 
 
 def test_list_projects_returns_created_project(client):
