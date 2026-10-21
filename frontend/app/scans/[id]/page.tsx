@@ -15,6 +15,7 @@ import ScanUsageCard from "@/components/ScanUsageCard";
 import ScanUsageResultPanel from "@/components/ScanUsageResultPanel";
 import ScanFindingsCard from "@/components/ScanFindingsCard";
 import ScanFindingsResultPanel from "@/components/ScanFindingsResultPanel";
+import ScanDecisionDiffPanel from "@/components/ScanDecisionDiffPanel";
 import ScanExportButtons from "@/components/ScanExportButtons";
 import ScanResultCard from "@/components/ScanResultCard";
 import ScanResultPanel from "@/components/ScanResultPanel";
@@ -652,6 +653,7 @@ export default function ScanDetailPage() {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">
+          {canExportFindings && <ScanDecisionDiffPanel scanId={id} projectId={status.project_id} />}
           {canExportFindings && <ScanExportButtons scanId={id} compact />}
           <ScanStatusBadge status={status.status} />
         </div>

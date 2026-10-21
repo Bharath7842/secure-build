@@ -621,6 +621,53 @@ class FindingHistoryOut(BaseModel):
     entries: list[DecisionHistoryEntryOut]
 
 
+class DecisionDiffStateOut(BaseModel):
+    verdict: str | None = None
+    issue_class: str | None = None
+    unresolved_reason: str | None = None
+    confidence: float | None = None
+
+
+class DecisionDiffEntryOut(BaseModel):
+    occurrence_id: str
+    # added | removed | verdict_changed | issue_class_changed | unchanged
+    change: str
+    rule_id: str | None = None
+    title: str | None = None
+    severity: str | None = None
+    file_path: str | None = None
+    line: int | None = None
+    identity_quality: str | None = None
+    old: DecisionDiffStateOut | None = None
+    new: DecisionDiffStateOut | None = None
+    # The new decision: the stage that made it and its reasoning.
+    stage: str | None = None
+    verdict_reason: str | None = None
+    members: dict[str, int] = {}
+
+
+class DecisionDiffScanOut(BaseModel):
+    scan_id: str
+    version: int | None = None
+    commit_sha: str | None = None
+    created_at: datetime | None = None
+    # The scan's recorded `versions` block (engine commit, rule catalog, prompts, model).
+    evidence_version: dict = {}
+
+
+class DecisionDiffOut(BaseModel):
+    scan: DecisionDiffScanOut
+    base: DecisionDiffScanOut
+    commit_differs: bool
+    file_level_joins: int = 0
+    without_identity: dict[str, int] = {}
+    entries: list[DecisionDiffEntryOut]
+    counts: dict[str, int]
+    # {transitions: [{from, to, count}] (true_positive → false_positive and
+    # true_positive → removed first), by_rule: {rule_id: {change: count}}}
+    summary: dict[str, Any]
+
+
 class ScanFindingsOut(BaseModel):
     scan_id: str
     tp_count: int

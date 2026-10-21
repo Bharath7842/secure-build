@@ -41,6 +41,7 @@ import type {
   ReviewInput,
   Scan,
   ScanCreateInput,
+  DecisionDiff,
   FindingHistory,
   ScanFindings,
   ScanLimitation,
@@ -265,6 +266,13 @@ export const api = {
       const search = verdict ? `?verdict=${encodeURIComponent(verdict)}` : "";
       return request(`/api/scans/${id}/findings${search}`);
     },
+    /** What changed between two scans of one project, per occurrence (SAST). */
+    decisionDiff: (id: string, base: string, includeUnchanged = false): Promise<DecisionDiff> =>
+      request(
+        `/api/scans/${id}/decision-diff?base=${encodeURIComponent(base)}${
+          includeUnchanged ? "&include_unchanged=true" : ""
+        }`,
+      ),
     /** Every machine and human decision on one finding, in time order. */
     findingHistory: (id: string, findingId: string): Promise<FindingHistory> =>
       request(`/api/scans/${id}/findings/${findingId}/history`),

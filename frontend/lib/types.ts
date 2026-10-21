@@ -433,6 +433,60 @@ export interface FindingHistoryEntry {
   action: string | null;
 }
 
+/** One side of a changed occurrence in a decision diff. */
+export interface DecisionDiffState {
+  verdict: string | null;
+  issue_class: string | null;
+  unresolved_reason: string | null;
+  confidence: number | null;
+}
+
+export type DecisionDiffChange =
+  | "added"
+  | "removed"
+  | "verdict_changed"
+  | "issue_class_changed"
+  | "unchanged";
+
+export interface DecisionDiffEntry {
+  occurrence_id: string;
+  change: DecisionDiffChange;
+  rule_id: string | null;
+  title: string | null;
+  severity: string | null;
+  file_path: string | null;
+  line: number | null;
+  identity_quality: "exact" | "file_level" | null;
+  old: DecisionDiffState | null;
+  new: DecisionDiffState | null;
+  /** The stage that made the new decision, and why. */
+  stage: string | null;
+  verdict_reason: string | null;
+}
+
+export interface DecisionDiffScan {
+  scan_id: string;
+  version: number | null;
+  commit_sha: string | null;
+  created_at: string | null;
+  /** The scan's recorded versions: engine commit, rule catalog, prompts, model. */
+  evidence_version: Record<string, unknown>;
+}
+
+/** `GET /scans/{id}/decision-diff`: what changed between two scans of one project, per occurrence. */
+export interface DecisionDiff {
+  scan: DecisionDiffScan;
+  base: DecisionDiffScan;
+  commit_differs: boolean;
+  file_level_joins: number;
+  entries: DecisionDiffEntry[];
+  counts: Record<DecisionDiffChange, number>;
+  summary: {
+    transitions: { from: string; to: string; count: number }[];
+    by_rule: Record<string, Record<string, number>>;
+  };
+}
+
 export interface FindingHistory {
   scan_id: string;
   finding_id: string;

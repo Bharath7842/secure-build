@@ -3,6 +3,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 import json
+import logging
 import re
 import threading
 from pathlib import Path
@@ -18,6 +19,7 @@ from app.schemas import (
     DastAuthzMatrixOut,
     DastRequestAuditPageOut,
     DastScanFindingsOut,
+    DecisionDiffOut,
     FindingHistoryOut,
     FindingOut,
     ScanCreate,
@@ -36,6 +38,7 @@ from app.services.dast_report import build_dast_report
 from app.services.dast_summary import build_summary
 from app.services.dast_findings_query import build_dast_findings
 from app.services.dast_scan_setup import DastSetupError, prepare_dast_scan
+from app.services.decision_diff import DiffError, build_decision_diff_xlsx, compare_scans
 from app.services.decision_history import finding_history
 from app.services.feedback import apply_effective_verdicts, effective_scan_findings
 from app.services.ollama_check import DEFAULT_FALLBACK_OLLAMA_MODEL, ollama_model_error
@@ -47,6 +50,8 @@ from app.services.scan_export import (
     group_findings_by_issue,
 )
 from app.services.scan_progress import infer_progress_from_lines
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/scans", tags=["scans"])
 
@@ -588,6 +593,55 @@ def get_finding_history(
     if finding is None or finding.scan_id != scan.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found")
     return {"scan_id": scan.id, "finding_id": finding.id, "entries": finding_history(db, finding)}
+
+
+def _decision_diff(db: Session, scan_id: str, base: str, principal: Principal, include_unchanged: bool):
+    """Both scans go through `authorize_scan`: a base scan outside the caller's scope is a 404
+    (never a 403), exactly like a scan that does not exist."""
+    scan = _get_scan_or_404(db, scan_id, principal)
+    base_scan = _get_scan_or_404(db, base, principal)
+    try:
+        result = compare_scans(db, scan, base_scan, include_unchanged=include_unchanged)
+    except DiffError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    summary = result["summary"]["transitions"]
+    logger.info(
+        "decision diff %s vs %s: counts=%s transitions=%s",
+        scan.id, base_scan.id, result["counts"],
+        [(t["from"], t["to"], t["count"]) for t in summary[:5]],
+    )
+    return scan, base_scan, result
+
+
+@router.get("/{scan_id}/decision-diff", response_model=DecisionDiffOut)
+def get_decision_diff(
+    scan_id: str,
+    base: str = Query(description="The scan to compare with (same project)"),
+    include_unchanged: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require("scans.view_own")),
+):
+    """Every occurrence whose decision changed between `base` and this scan, in both
+    directions, joined on `occurrence_id`, with the stage that made the new decision."""
+    return _decision_diff(db, scan_id, base, principal, include_unchanged)[2]
+
+
+@router.get("/{scan_id}/decision-diff.xlsx")
+def export_decision_diff_excel(
+    scan_id: str,
+    base: str = Query(description="The scan to compare with (same project)"),
+    include_unchanged: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require("reports.export")),
+):
+    scan, base_scan, result = _decision_diff(db, scan_id, base, principal, include_unchanged)
+    return Response(
+        content=build_decision_diff_xlsx(result),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="decision-diff-v{base_scan.version}-v{scan.version}.xlsx"'
+        },
+    )
 
 
 @router.get("/{scan_id}/requests", response_model=DastRequestAuditPageOut)
