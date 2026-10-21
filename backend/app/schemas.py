@@ -629,9 +629,10 @@ class ScanFindingsOut(BaseModel):
     # persisted payloads and any caller not yet aware of it still validate.
     unverified_count: int = 0
     files_scanned: int = 0
-    # scan_export.count_groups_by_severity over the whole scan (ignoring the
-    # verdict filter): {"actionable": {sev: {groups, occurrences}},
-    # "dismissed": {groups, occurrences}} — the same basis as the PDF headline.
+    # scan_export.count_findings over the whole scan (ignoring the verdict filter) —
+    # the same numbers, from the same function, as the PDF cover and Excel summary:
+    # by_verdict {bucket: {severity: {groups, occurrences}}}, totals {bucket: cell},
+    # by_issue_class, actionable {severity: cell}, dismissed cell, by_owasp [...].
     severity_group_counts: dict[str, Any] | None = None
     findings: list[FindingOut]
 

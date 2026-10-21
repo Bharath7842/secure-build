@@ -9,7 +9,7 @@ from app.models import Finding, Project, Scan
 from app.services.scan_export import (
     build_excel_report,
     build_pdf_report,
-    count_groups_by_severity,
+    count_findings,
     export_filenames,
     group_findings_by_issue,
 )
@@ -329,6 +329,7 @@ def test_excel_findings_use_expected_columns():
         "Issue Class",
         "Unresolved Reason",
         "Verdict (raw)",
+        "Counted As",
         "OWASP Category",
         "CWE",
         "CVSS",
@@ -347,6 +348,7 @@ def test_excel_findings_use_expected_columns():
     assert by_header["Scanner Verdict"] == "True Positive"
     assert by_header["Review State"] == "pending"
     assert by_header["Verdict (raw)"] == "TRUE_POSITIVE"
+    assert by_header["Counted As"] == "Confirmed"
     assert by_header["OWASP Category"] == "A03:2021 – Injection"
     assert by_header["CWE"] == "CWE-89"
     assert by_header["Confidence"] == "91%"
@@ -400,7 +402,8 @@ def test_excel_strips_illegal_control_chars_from_binary_snippets():
     data = build_excel_report(project, scan, findings)
     assert data[:2] == b"PK"
     wb = load_workbook(BytesIO(data))
-    location_cell = wb["Findings"].cell(2, 14).value or ""
+    sheet = wb["Findings"]
+    location_cell = sheet.cell(2, headers_row(sheet).index("Location(s)") + 1).value or ""
     assert "\x00" not in location_cell
     assert "visible text" in location_cell
 
@@ -437,7 +440,7 @@ def test_excel_truncates_oversized_cells():
     data = build_excel_report(project, scan, findings)
     wb = load_workbook(BytesIO(data))
     sheet = wb["Findings"]
-    cell = sheet.cell(2, 18).value or ""
+    cell = sheet.cell(2, headers_row(sheet).index("Example Fix") + 1).value or ""
     assert len(cell) <= _EXCEL_CELL_MAX
     assert "truncated" in cell.lower()
 
@@ -611,7 +614,7 @@ def test_headline_counts_actionable_groups_with_occurrences():
     grouped = group_findings_by_issue(_construct_rows())
     assert sorted(f.occurrence_count for f in grouped) == [2, 3]
 
-    counts = count_groups_by_severity(grouped)
+    counts = count_findings(grouped)
     assert counts["actionable"]["high"] == {"groups": 1, "occurrences": 3}
     assert counts["actionable"]["medium"] == {"groups": 0, "occurrences": 0}
     assert counts["dismissed"] == {"groups": 1, "occurrences": 2}
@@ -621,7 +624,7 @@ def test_singleton_groups_count_one_occurrence():
     project, scan, findings = _sample()
     grouped = group_findings_by_issue(findings)
     assert [f.occurrence_count for f in grouped] == [1, 1]
-    counts = count_groups_by_severity(grouped)
+    counts = count_findings(grouped)
     assert counts["actionable"]["high"] == {"groups": 1, "occurrences": 1}
     assert counts["dismissed"] == {"groups": 1, "occurrences": 1}
 

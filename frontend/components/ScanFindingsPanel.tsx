@@ -7,13 +7,13 @@ import { toModulePath } from "@/lib/modulePath";
 import type { Finding, ScanReport } from "@/lib/types";
 import {
   RISK_DOT,
-  RISK_LEVELS,
   RISK_STYLES,
   VERDICT_LABEL,
   VERDICT_ROW,
   VERDICT_TEXT,
   normalizeSeverity,
 } from "@/lib/findingStyles";
+import { severityChips, type SeverityGroupCounts } from "@/lib/findingCounts";
 import {
   reviewStateLabel,
   unresolvedReasonLabel,
@@ -133,6 +133,8 @@ export default function ScanFindingsPanel({
   // `null` means "not loaded yet". Polling must never flip back to a loading
   // state: that unmounted the whole list every 2s and reset the scroll position.
   const [findings, setFindings] = useState<Finding[] | null>(null);
+  // The server's counts (`count_findings`); the chips show them as they are.
+  const [counts, setCounts] = useState<SeverityGroupCounts | null>(null);
   const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
   // Bumped after a review is saved so the list (verdicts, counts, badges) is re-fetched.
   const [reloadKey, setReloadKey] = useState(0);
@@ -143,7 +145,10 @@ export default function ScanFindingsPanel({
     async function load() {
       try {
         const res = await api.scans.findings(scanId, verdictFilter ?? undefined);
-        if (!cancelled) setFindings(res.findings);
+        if (!cancelled) {
+          setFindings(res.findings);
+          setCounts(res.severity_group_counts ?? null);
+        }
       } catch {
         // Keep whatever is already on screen if a poll fails.
         if (!cancelled) setFindings((current) => current ?? []);
@@ -164,30 +169,14 @@ export default function ScanFindingsPanel({
     };
   }, [scanId, verdictFilter, live, reloadKey]);
 
-  // Findings arrive grouped. Chips count actionable groups (true positive +
-  // unverified) with their occurrences — the same basis as the PDF headline —
-  // while `severityCounts` still includes dismissed groups so a severity
-  // holding only dismissed ones stays selectable.
-  const { severityCounts, actionableCounts } = useMemo(() => {
-    const all: Record<string, number> = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
-    const actionable: Record<string, { groups: number; occurrences: number }> = {
-      CRITICAL: { groups: 0, occurrences: 0 },
-      HIGH: { groups: 0, occurrences: 0 },
-      MEDIUM: { groups: 0, occurrences: 0 },
-      LOW: { groups: 0, occurrences: 0 },
-    };
-    for (const finding of findings ?? []) {
-      const sev = normalizeSeverity(finding.severity);
-      all[sev] = (all[sev] ?? 0) + 1;
-      // Same test as scan_export._is_dismissed, so chips match the PDF.
-      if ((finding.verdict ?? "").toLowerCase() !== "false_positive") {
-        const bucket = (actionable[sev] ??= { groups: 0, occurrences: 0 });
-        bucket.groups += 1;
-        bucket.occurrences += finding.occurrence_count ?? 1;
-      }
-    }
-    return { severityCounts: all, actionableCounts: actionable };
-  }, [findings]);
+  // Chips show actionable groups (confirmed + unresolved) with their occurrences, straight from
+  // the server's counts — the PDF cover's basis. `severityCounts` also includes false-positive
+  // groups so a severity holding only those stays selectable. Nothing is recounted here.
+  const {
+    levels: chipLevels,
+    all: severityCounts,
+    actionable: actionableCounts,
+  } = useMemo(() => severityChips(counts), [counts]);
 
   // Drop a severity chip that no longer matches (e.g. HIGH selected, then
   // switch to dismissed where that severity has 0) so dismissed findings show.
@@ -200,7 +189,7 @@ export default function ScanFindingsPanel({
   const visibleFindings = useMemo(() => {
     if (!findings) return [];
     if (!severityFilter) return findings;
-    return findings.filter((f) => normalizeSeverity(f.severity) === severityFilter);
+    return findings.filter((f) => normalizeSeverity(f.severity, true) === severityFilter);
   }, [findings, severityFilter]);
 
   const toggleOpen = useCallback((id: string) => {
@@ -222,7 +211,7 @@ export default function ScanFindingsPanel({
       <section className="overflow-clip rounded-md border border-slate-200 border-t-2 border-t-blue-500 bg-gradient-to-br from-white via-white to-blue-50/40 p-5">
         <div className="sticky top-0 z-10 -mx-5 -mt-5 border-b border-slate-200 bg-white/95 px-5 pb-3 pt-5 backdrop-blur">
         <div className="flex flex-wrap items-center gap-2">
-          {RISK_LEVELS.map((risk) => {
+          {chipLevels.map((risk) => {
             const selected = severityFilter === risk;
             const count = severityCounts[risk] ?? 0;
             const actionable = actionableCounts[risk] ?? { groups: 0, occurrences: 0 };
@@ -274,7 +263,7 @@ export default function ScanFindingsPanel({
           <ul className="mt-3 space-y-2">
             {visibleFindings.map((finding) => {
               const open = openIds.has(finding.id);
-              const severity = normalizeSeverity(finding.severity);
+              const severity = normalizeSeverity(finding.severity, true);
               const riskStyle = RISK_STYLES[severity];
               const kind = verdictKind(finding.verdict);
               // `verdict` is the effective one (the reviewer's, once there is one); what the

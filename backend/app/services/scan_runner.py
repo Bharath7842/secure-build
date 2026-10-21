@@ -6,6 +6,7 @@ sleeping. Non-mock scans run `execute_scan` on a daemon thread so the
 triggering HTTP request returns immediately.
 """
 
+import logging
 import re
 import threading
 import traceback
@@ -19,7 +20,16 @@ from app.config import settings
 from app.models import DAST_SETTINGS_SNAPSHOT_KEY, UNVERIFIED_VERDICT, Finding, FindingDecision, Scan
 from app.dast.domain.identities import identity_from_public
 from app.dast.domain.redaction import redact_json, redact_text
-from app.services import agent_bridge, decisions, engine_adapter, git_token, git_workspace, scan_log, scan_versions
+from app.services import (
+    agent_bridge,
+    decisions,
+    engine_adapter,
+    git_token,
+    git_workspace,
+    scan_export,
+    scan_log,
+    scan_versions,
+)
 from app.services.credential_holder import InMemoryCredentialHolder
 from app.services.dast_findings import DastFindingsWriter
 from app.services.finding_rows import build_evidence_row, build_finding_row
@@ -440,6 +450,25 @@ def _record_decision_counts(scan_id: str) -> None:
         scan_log.log(scan_id, f"Decision history rows by stage: {detail}.")
 
 
+def _log_report_consistency(scan_id: str) -> None:
+    """Check that the scan's API counts, Excel export and PDF agree, and log any
+    contradiction as a warning naming the scan. Never fails the scan."""
+    db = db_module.SessionLocal()
+    try:
+        scan = db.get(Scan, scan_id)
+        if scan is None:
+            return
+        problems = scan_export.check_report_consistency(db, scan)
+    except Exception as exc:  # noqa: BLE001 - a diagnostic must not break a finished scan
+        logger.warning("report consistency check for scan %s could not run: %s", scan_id, exc)
+        return
+    finally:
+        db.close()
+    for problem in problems:
+        logger.warning("scan %s report inconsistency: %s", scan_id, problem)
+        scan_log.log(scan_id, f"Warning — report inconsistency: {problem}")
+
+
 def _log_identity_summary(scan_id: str) -> None:
     """One log line per scan: how many occurrence identities could only be
     resolved to the file. A high share means rescan joins are weak for it."""
@@ -505,6 +534,8 @@ def _mark_cancelled(db, scan_id: str) -> None:
 # The engine's parallel stages call the writers from several threads at once.
 # Each call has its own session, but SQLite takes one writer at a time — so
 # commits are serialized here instead of failing with "database is locked".
+logger = logging.getLogger(__name__)
+
 _DB_WRITE_LOCK = threading.Lock()
 
 
@@ -1347,6 +1378,8 @@ def execute_scan(scan_id: str) -> None:
                 _log_unresolved_summary(scan_id)
                 _log_identity_summary(scan_id)
                 _record_decision_counts(scan_id)
+                if not engine_adapter.mock_engine_enabled():
+                    _log_report_consistency(scan_id)
                 scan = db.get(Scan, scan_id)
                 if scan is None:
                     return

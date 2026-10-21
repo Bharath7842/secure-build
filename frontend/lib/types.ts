@@ -447,11 +447,16 @@ export interface ScanFindings {
   /** DAST: all findings in the scan, ignoring the request's filters. */
   total_count?: number;
   files_scanned: number;
-  /** SAST: actionable (true positive + unverified) groups and occurrences per
-   *  severity, and dismissed groups — the same basis as the PDF headline. */
+  /** SAST: the scan's counts from `scan_export.count_findings`, the same numbers the PDF cover
+   *  and Excel summary show. Groups and occurrences (rows behind a group), by verdict bucket and
+   *  severity (lower-case keys), by issue class, and actionable (confirmed + unresolved). */
   severity_group_counts?: {
+    by_verdict: Record<string, Record<string, { groups: number; occurrences: number }>>;
+    totals: Record<string, { groups: number; occurrences: number }>;
+    by_issue_class: Record<string, { groups: number; occurrences: number }>;
     actionable: Record<string, { groups: number; occurrences: number }>;
     dismissed: { groups: number; occurrences: number };
+    by_owasp: { category: string; groups: number; severe: number; occurrences: number }[];
   } | null;
   findings: Finding[];
 }

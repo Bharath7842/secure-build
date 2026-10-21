@@ -42,7 +42,7 @@ from app.services.ollama_check import DEFAULT_FALLBACK_OLLAMA_MODEL, ollama_mode
 from app.services.scan_export import (
     build_excel_report,
     build_pdf_report,
-    count_groups_by_severity,
+    count_findings,
     export_filenames,
     group_findings_by_issue,
 )
@@ -552,29 +552,23 @@ def get_scan_findings(
     all_findings = apply_effective_verdicts(
         db, scan, db.query(Finding).filter(Finding.scan_id == scan.id).order_by(Finding.file_path, Finding.line).all()
     )
-    findings = [f for f in all_findings if f.verdict == verdict] if verdict else all_findings
-    tp_count = sum(1 for f in all_findings if f.verdict == "true_positive")
-    fp_count = sum(1 for f in all_findings if f.verdict == "false_positive")
-    # Regex-only findings — counted separately so the confirmed total stays
-    # meaningful and they don't disappear from the summary entirely.
-    unverified_count = sum(1 for f in all_findings if f.verdict == UNVERIFIED_VERDICT)
     files_scanned = len({f.file_path for f in all_findings if f.file_path})
-    grouped_findings = group_findings_by_issue(findings)
-    # Counted over every finding, not the verdict-filtered page. Both queries
-    # return the same identity-mapped instances, and re-grouping them re-stamps
-    # the same values: a verdict filter selects whole groups (the group key
-    # leads with the verdict).
-    severity_group_counts = (
-        count_groups_by_severity(grouped_findings) if not verdict
-        else count_groups_by_severity(group_findings_by_issue(list(all_findings)))
-    )
+    # Grouped once (grouping stamps the ORM instances) and counted once, over every
+    # finding rather than the verdict-filtered page: `count_findings` is the single
+    # source of every number here and in the exports. A verdict filter selects whole
+    # groups — the group key leads with the verdict.
+    all_groups = group_findings_by_issue(all_findings)
+    counts = count_findings(all_groups)
+    grouped_findings = [g for g in all_groups if g.verdict == verdict] if verdict else all_groups
+    totals = counts["totals"]
     return ScanFindingsOut(
         scan_id=scan.id,
-        tp_count=tp_count,
-        fp_count=fp_count,
-        unverified_count=unverified_count,
+        tp_count=totals["true_positive"]["occurrences"],
+        fp_count=totals["false_positive"]["occurrences"],
+        # Not confirmed, not dismissed: nobody has decided these yet.
+        unverified_count=totals[UNVERIFIED_VERDICT]["occurrences"],
         files_scanned=files_scanned,
-        severity_group_counts=severity_group_counts,
+        severity_group_counts=counts,
         findings=[FindingOut.model_validate(f) for f in grouped_findings],
     )
 

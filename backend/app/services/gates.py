@@ -7,7 +7,9 @@ does not fail — the previous behaviour.
 
 Counts always match the findings list length — every finding is included in
 `vulnerabilities_found`, `total_findings`, and `by_severity` (not only
-TRUE_POSITIVE).
+TRUE_POSITIVE). They are not counted here: `scan_export.count_findings` is the one
+counting function and this reads its result, so the gate, the API, both exports
+and the UI chips cannot disagree.
 """
 
 from app.models import Finding, Project
@@ -22,35 +24,40 @@ def _finding_source(finding: Finding) -> str:
     return kind or "unknown"
 
 
-def build_gate_summary(project: Project, findings: list[Finding]) -> dict:
-    by_severity = {sev: 0 for sev in SEVERITIES}
-    by_verdict: dict[str, int] = {}
-    by_source: dict[str, int] = {}
+def build_gate_summary(project: Project, findings: list[Finding], counts: dict | None = None) -> dict:
+    """`findings` are grouped (or plain) findings; `counts` is their
+    `scan_export.count_findings`, passed in when the caller already has it."""
+    if counts is None:
+        # Lazy: scan_export imports this module.
+        from app.services.scan_export import count_findings
 
+        counts = count_findings(findings)
+
+    by_severity = {
+        sev: counts["actionable"][sev]["groups"] + counts["by_verdict"]["false_positive"][sev]["groups"]
+        for sev in SEVERITIES
+    }
+    by_verdict = {
+        bucket.upper(): cell["groups"] for bucket, cell in counts["totals"].items() if cell["groups"]
+    }
+    by_source: dict[str, int] = {}
     for finding in findings:
-        verdict = (finding.verdict or "UNVERIFIED").upper()
-        by_verdict[verdict] = by_verdict.get(verdict, 0) + 1
         source = _finding_source(finding)
         by_source[source] = by_source.get(source, 0) + 1
 
-        severity = (finding.severity or "info").lower()
-        if severity not in by_severity:
-            severity = "info"
-        by_severity[severity] += 1
-
-    total = len(findings)
-    gated = {sev: 0 for sev in SEVERITIES}
+    total = sum(by_verdict.values())
+    # Confirmed groups per severity, less those a reviewer resolved or risk-accepted
+    # (see services/feedback): no longer blocking.
+    gated = {sev: counts["by_verdict"]["true_positive"][sev]["groups"] for sev in SEVERITIES}
     for finding in findings:
-        verdict = (finding.verdict or "").lower()
-        if verdict in ("false_positive", "unverified"):
+        if (finding.verdict or "").lower() != "true_positive":
             continue
-        # Resolved or risk-accepted by a reviewer (see services/feedback): no longer blocking.
-        if (getattr(finding, "review", None) or {}).get("resolution_status") in ("resolved", "risk_accepted"):
+        if (getattr(finding, "review", None) or {}).get("resolution_status") not in ("resolved", "risk_accepted"):
             continue
         severity = (finding.severity or "info").lower()
         if severity not in gated:
             severity = "info"
-        gated[severity] += 1
+        gated[severity] -= 1
     max_critical = getattr(project, "gate_max_critical", None)
     max_high = getattr(project, "gate_max_high", None)
     reasons = []

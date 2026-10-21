@@ -45,7 +45,7 @@ psycopg[binary]==3.3.6
 # --- Testing ---
 pytest==9.1.1
 pytest-asyncio==1.4.0
-pypdf==6.19.0  # test-only: tests/test_scan_export.py reads the exported PDFs
+pypdf==6.19.0  # reads the exported PDFs back: scan_export.check_report_consistency and the export tests
 
 # --- SAST-only (unchanged) ---
 requests>=2.32.0

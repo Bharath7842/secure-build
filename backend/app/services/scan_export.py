@@ -60,7 +60,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from app.models import UNVERIFIED_VERDICT, Finding, Project, Scan
+from app.models import ISSUE_CLASSES, UNVERIFIED_VERDICT, Finding, Project, Scan
 from app.services.gates import build_gate_summary
 from app.services.git_workspace import redact_git_url
 from app.services.module_path import to_module_path
@@ -310,45 +310,114 @@ def _occurrences(finding: Finding) -> int:
     return getattr(finding, "occurrence_count", None) or 1
 
 
-def _is_dismissed(finding: Finding) -> bool:
-    return (finding.verdict or "").strip().lower() == "false_positive"
+# Machine-readable anchors in the exports that `check_report_consistency` reads back.
+BUCKET_ROW_PREFIX = "Groups — "          # XLSX summary rows: "Groups — confirmed" | groups | occurrences
+COUNTED_AS_PREFIX = "Counted as: "       # each PDF finding block: "... · Counted as: Confirmed"
 
+# The verdict buckets every headline count is split into, in report order. A
+# group's bucket is its effective verdict (the reviewer's, once there is one);
+# `_verdict_bucket` is the one place that decides it, and the seam where mixed
+# groups (EPIC-01) will extend counting.
+VERDICT_BUCKETS = ("true_positive", UNVERIFIED_VERDICT, "false_positive")
+UNKNOWN_BUCKET = "unknown"
+UNCLASSIFIED = "unclassified"
 
-def count_groups_by_severity(grouped: list[Finding]) -> dict[str, Any]:
-    """Headline counts over `group_findings_by_issue` output: actionable
-    (true_positive + unverified) groups and their occurrences per severity,
-    plus dismissed (false_positive) groups/occurrences on their own. Groups
-    never mix verdicts (the group key leads with the verdict), so a group is
-    wholly actionable or wholly dismissed."""
-    actionable = {sev: {"groups": 0, "occurrences": 0} for sev in SEVERITY_ORDER}
-    dismissed = {"groups": 0, "occurrences": 0}
-    for finding in grouped:
-        bucket = dismissed if _is_dismissed(finding) else actionable[_severity_bucket(finding.severity)]
-        bucket["groups"] += 1
-        bucket["occurrences"] += _occurrences(finding)
-    return {"actionable": actionable, "dismissed": dismissed}
-
-
-# Report names for the verdict buckets, by effective verdict.
+# Report names for the verdict buckets.
 _BUCKET_LABELS = {
     "true_positive": "Confirmed",
     UNVERIFIED_VERDICT: "Unresolved",
     "false_positive": "False Positive",
+    UNKNOWN_BUCKET: "Unknown",
 }
 
 
-def verdict_bucket_totals(grouped: list[Finding]) -> dict[str, dict[str, int]]:
-    """{bucket label: {groups, occurrences}} over `group_findings_by_issue` output,
-    by effective verdict, for the three verdict buckets plus "Unknown" when a
-    value outside the contract is present."""
-    totals = {label: {"groups": 0, "occurrences": 0} for label in _BUCKET_LABELS.values()}
+def _verdict_bucket(finding: Finding) -> str:
+    key = (finding.verdict or "").strip().lower()
+    return key if key in VERDICT_BUCKETS else UNKNOWN_BUCKET
+
+
+def _counted_as(finding: Finding) -> str:
+    """The report bucket this group is counted in, by name."""
+    return _BUCKET_LABELS[_verdict_bucket(finding)]
+
+
+def _empty_cell() -> dict[str, int]:
+    return {"groups": 0, "occurrences": 0}
+
+
+def count_findings(grouped: list[Finding]) -> dict[str, Any]:
+    """THE counting function. Every headline number in the API, the PDF, the
+    Excel export, the quality gate and the UI chips comes from here, over
+    `group_findings_by_issue` output (group once per request and pass the result
+    around — grouping mutates ORM instances).
+
+    Returns, all in groups and occurrences (rows behind the groups):
+
+    * `by_verdict`  — {bucket: {severity: cell}} for `true_positive`,
+      `unverified` and `false_positive`;
+    * `totals`      — {bucket: cell} over all severities (plus `unknown` when a
+      value outside the contract is present, so it cannot vanish);
+    * `by_issue_class` — {security|quality|inactive|unclassified: cell};
+    * `actionable`  — {severity: cell} for true positive + unverified groups
+      (the headline: what still needs attention), and `dismissed` — the
+      false-positive cell. Both keep the shape older clients read;
+    * `by_owasp`    — [{category, groups, severe, occurrences}] over actionable
+      groups, ordered by size.
+    """
+    by_verdict = {
+        bucket: {sev: _empty_cell() for sev in SEVERITY_ORDER} for bucket in VERDICT_BUCKETS
+    }
+    unknown = {sev: _empty_cell() for sev in SEVERITY_ORDER}
+    by_issue_class = {name: _empty_cell() for name in (*sorted(ISSUE_CLASSES), UNCLASSIFIED)}
     for finding in grouped:
-        key = (finding.verdict or "").strip().lower()
-        label = _BUCKET_LABELS.get(key, "Unknown")
-        bucket = totals.setdefault(label, {"groups": 0, "occurrences": 0})
-        bucket["groups"] += 1
-        bucket["occurrences"] += _occurrences(finding)
-    return totals
+        bucket = _verdict_bucket(finding)
+        severity = _severity_bucket(finding.severity)
+        occurrences = _occurrences(finding)
+        issue_class = getattr(finding, "issue_class", None)
+        issue_class = issue_class if issue_class in ISSUE_CLASSES else UNCLASSIFIED
+        for cell in ((by_verdict.get(bucket) or unknown)[severity], by_issue_class[issue_class]):
+            cell["groups"] += 1
+            cell["occurrences"] += occurrences
+
+    def total(per_severity: dict[str, dict[str, int]]) -> dict[str, int]:
+        return {
+            "groups": sum(c["groups"] for c in per_severity.values()),
+            "occurrences": sum(c["occurrences"] for c in per_severity.values()),
+        }
+
+    totals = {bucket: total(by_verdict[bucket]) for bucket in VERDICT_BUCKETS}
+    if total(unknown)["groups"]:
+        totals[UNKNOWN_BUCKET] = total(unknown)
+    actionable = {
+        sev: {
+            "groups": by_verdict["true_positive"][sev]["groups"] + by_verdict[UNVERIFIED_VERDICT][sev]["groups"]
+            + unknown[sev]["groups"],
+            "occurrences": by_verdict["true_positive"][sev]["occurrences"]
+            + by_verdict[UNVERIFIED_VERDICT][sev]["occurrences"] + unknown[sev]["occurrences"],
+        }
+        for sev in SEVERITY_ORDER
+    }
+    return {
+        "by_verdict": by_verdict,
+        "totals": totals,
+        "by_issue_class": by_issue_class,
+        "actionable": actionable,
+        "dismissed": dict(totals["false_positive"]),
+        "by_owasp": [
+            {"category": label, "groups": groups, "severe": severe, "occurrences": occurrences}
+            for label, groups, severe, occurrences in _count_by_owasp(grouped)
+        ],
+    }
+
+
+def verdict_bucket_totals(counts: dict[str, Any]) -> dict[str, dict[str, int]]:
+    """{bucket label: cell} from `count_findings`, in report order — the names the
+    PDF cover and Excel summary use (Confirmed / Unresolved / False Positive)."""
+    return {
+        _BUCKET_LABELS[bucket]: counts["totals"][bucket]
+        for bucket in (*VERDICT_BUCKETS, UNKNOWN_BUCKET)
+        if bucket in counts["totals"]
+    }
 
 
 def _count_by_owasp(findings: list[Finding]) -> list[tuple[str, int, int, int]]:
@@ -356,7 +425,7 @@ def _count_by_owasp(findings: list[Finding]) -> list[tuple[str, int, int, int]]:
     over grouped findings, dismissed groups left out; ordered by risk then size."""
     buckets: dict[str, list[int]] = {}
     for finding in findings:
-        if _is_dismissed(finding):
+        if _verdict_bucket(finding) == "false_positive":
             continue
         label = _owasp_header(finding)
         entry = buckets.setdefault(label, [0, 0, 0])
@@ -880,15 +949,14 @@ def _xl_header_row(sheet: Any, row: int, headers: list[str], *, widths: list[int
             sheet.column_dimensions[get_column_letter(idx)].width = width
 
 
-def _build_summary_sheet(sheet: Any, project: Project, scan: Scan, findings: list[Finding], gate: dict) -> None:
+def _build_summary_sheet(sheet: Any, project: Project, scan: Scan, gate: dict, counts: dict[str, Any]) -> None:
     """Row positions are computed as we go. The previous version hardcoded
     `A14` for the severity header while the metadata block above it had a
     conditional extra row — one more metadata field would have overwritten it.
 
-    `findings` are grouped (group_findings_by_issue); the headline counts are
-    actionable groups, with occurrences and dismissed groups alongside."""
-    summary = count_groups_by_severity(findings)
-    actionable, dismissed = summary["actionable"], summary["dismissed"]
+    `counts` is `count_findings` over the grouped findings: the headline counts
+    are actionable groups, with each verdict bucket and issue class alongside."""
+    actionable, dismissed = counts["actionable"], counts["dismissed"]
     title_font = Font(name="Calibri", size=18, bold=True, color="152238")
     section_font = Font(name="Calibri", size=13, bold=True, color="152238")
     label_font = Font(name="Calibri", size=11, color="64748B")
@@ -922,7 +990,6 @@ def _build_summary_sheet(sheet: Any, project: Project, scan: Scan, findings: lis
         ),
         ("Actionable issues (groups)", sum(v["groups"] for v in actionable.values())),
         ("Occurrences", sum(v["occurrences"] for v in actionable.values())),
-        ("False positive", f"{dismissed['groups']} groups ({dismissed['occurrences']} occurrences)"),
     ]
     status_note = _scan_status_banner(scan)
     if status_note:
@@ -932,6 +999,12 @@ def _build_summary_sheet(sheet: Any, project: Project, scan: Scan, findings: lis
     for label, value in meta_rows:
         sheet.cell(row, 1, label).font = label_font
         sheet.cell(row, 2, _excel_scalar(value)).font = value_font
+        row += 1
+    # Each verdict bucket on its own row: groups, then occurrences.
+    for bucket, cell in verdict_bucket_totals(counts).items():
+        sheet.cell(row, 1, f"{BUCKET_ROW_PREFIX}{bucket.lower()}").font = label_font
+        sheet.cell(row, 2, cell["groups"]).font = value_font
+        sheet.cell(row, 3, cell["occurrences"]).font = value_font
         row += 1
 
     row += 1
@@ -957,11 +1030,27 @@ def _build_summary_sheet(sheet: Any, project: Project, scan: Scan, findings: lis
     row += 1
 
     row += 1
+    sheet.cell(row, 1, "Issue class").font = section_font
+    row += 1
+    _xl_header_row(sheet, row, ["Issue class", "Groups", "Occurrences"])
+    row += 1
+    for name, cell in counts["by_issue_class"].items():
+        sheet.cell(row, 1, name).border = _THIN
+        for col, value in ((2, cell["groups"]), (3, cell["occurrences"])):
+            count_cell = sheet.cell(row, col, value)
+            count_cell.alignment = Alignment(horizontal="center")
+            count_cell.border = _THIN
+        row += 1
+
+    row += 1
     sheet.cell(row, 1, "OWASP distribution").font = section_font
     row += 1
     _xl_header_row(sheet, row, ["Category", "Groups", "Critical + High", "Occurrences"])
     row += 1
-    for label, total, severe, occurrences in _count_by_owasp(findings):
+    for entry in counts["by_owasp"]:
+        label, total, severe, occurrences = (
+            entry["category"], entry["groups"], entry["severe"], entry["occurrences"]
+        )
         sheet.cell(row, 1, label).border = _THIN
         for col, value in ((2, total), (3, severe), (4, occurrences)):
             cell = sheet.cell(row, col, value)
@@ -984,6 +1073,7 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
         "Issue Class",
         "Unresolved Reason",
         "Verdict (raw)",
+        "Counted As",
         "OWASP Category",
         "CWE",
         "CVSS",
@@ -997,7 +1087,7 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
         "Example Fix",
         "Occurrence ID",
     ]
-    widths = [5, 12, 24, 22, 12, 24, 16, 32, 12, 8, 12, 8, 42, 44, 36, 44, 44, 46, 68]
+    widths = [5, 12, 24, 22, 12, 24, 16, 14, 32, 12, 8, 12, 8, 42, 44, 36, 44, 44, 46, 68]
     _xl_header_row(sheet, 1, headers, widths=widths)
 
     sorted_findings = _sorted_findings(findings)
@@ -1016,6 +1106,7 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
             finding.issue_class or "",
             finding.unresolved_reason or "",
             _scanner_verdict(finding) or "",
+            _counted_as(finding),
             _owasp_display(finding),
             _cwe_display(finding),
             finding.cvss if finding.cvss is not None else "",
@@ -1289,12 +1380,13 @@ def build_excel_report(project: Project, scan: Scan, findings: list[Finding]) ->
     if _is_sbom_scan(scan):
         return _build_excel_sbom_report(project, scan)
 
-    gate = build_gate_summary(project, findings)
+    counts = count_findings(findings)
+    gate = build_gate_summary(project, findings, counts=counts)
     wb = Workbook()
 
     summary = wb.active
     summary.title = "Summary"
-    _build_summary_sheet(summary, project, scan, findings, gate)
+    _build_summary_sheet(summary, project, scan, gate, counts)
 
     _build_findings_sheet(wb.create_sheet("Findings"), findings)
 
@@ -1584,7 +1676,8 @@ def _finding_story_block(
     strips.append(_labelled_block(
         "Verdict",
         f"Scanner: {_display_verdict(scanner_verdict, finding.unresolved_reason)}"
-        f" · Review: {_review_state_label(finding)}",
+        f" · Review: {_review_state_label(finding)}"
+        f" · {COUNTED_AS_PREFIX}{_counted_as(finding)}",
         styles=styles, width=inner_width, label_color="#334155"))
 
     if description:
@@ -1722,8 +1815,7 @@ def _severity_strip(
     return strip
 
 
-def _owasp_table(findings: list[Finding], styles: Any, width: float) -> Table | None:
-    rows = _count_by_owasp(findings)
+def _owasp_table(rows: list[dict[str, Any]], styles: Any, width: float) -> Table | None:
     if not rows:
         return None
     data: list[list[Any]] = [[
@@ -1732,7 +1824,10 @@ def _owasp_table(findings: list[Finding], styles: Any, width: float) -> Table | 
         Paragraph("<b>CRITICAL + HIGH</b>", styles["TableHeadCenter"]),
         Paragraph("<b>OCCURRENCES</b>", styles["TableHeadCenter"]),
     ]]
-    for label, total, severe, occurrences in rows:
+    for entry in rows:
+        label, total, severe, occurrences = (
+            entry["category"], entry["groups"], entry["severe"], entry["occurrences"]
+        )
         data.append([
             Paragraph(_esc(label), styles["TableCell"]),
             Paragraph(str(total), styles["TableCellCenter"]),
@@ -2356,11 +2451,10 @@ def build_pdf_report(project: Project, scan: Scan, findings: list[Finding]) -> b
     if _is_sbom_scan(scan):
         return _build_pdf_sbom_report(project, scan)
 
-    summary = count_groups_by_severity(findings)
+    summary = count_findings(findings)
     group_counts = {sev: v["groups"] for sev, v in summary["actionable"].items()}
     occurrence_counts = {sev: v["occurrences"] for sev, v in summary["actionable"].items()}
-    dismissed = summary["dismissed"]
-    gate = build_gate_summary(project, findings)
+    gate = build_gate_summary(project, findings, counts=summary)
     buf = io.BytesIO()
     page = landscape(A4)
     left = right = 13 * mm
@@ -2401,7 +2495,7 @@ def build_pdf_report(project: Project, scan: Scan, findings: list[Finding]) -> b
     bucket_text = " · ".join(
         f"{label}: {t['groups']} {'group' if t['groups'] == 1 else 'groups'} "
         f"({t['occurrences']} {'occurrence' if t['occurrences'] == 1 else 'occurrences'})"
-        for label, t in verdict_bucket_totals(findings).items()
+        for label, t in verdict_bucket_totals(summary).items()
     )
     story.append(Paragraph(
         f'<font color="#64748b">Actionable issue groups (confirmed + unresolved) by severity. '
@@ -2409,7 +2503,7 @@ def build_pdf_report(project: Project, scan: Scan, findings: list[Finding]) -> b
         styles["FindingBody"]))
     story.append(Spacer(1, 6 * mm))
 
-    owasp_table = _owasp_table(findings, styles, content_width * 0.7)
+    owasp_table = _owasp_table(summary["by_owasp"], styles, content_width * 0.7)
     if owasp_table is not None:
         story.append(KeepTogether([
             Paragraph("OWASP DISTRIBUTION", styles["SectionHeading"]),
@@ -2443,3 +2537,148 @@ def build_pdf_report(project: Project, scan: Scan, findings: list[Finding]) -> b
     doc.build(story, canvasmaker=_make_canvas(project.name or "Application", scan.version,
                                               left, right, page))
     return buf.getvalue()
+
+
+# =============================================================================
+# Report consistency
+# =============================================================================
+
+_COVER_BUCKET_RE = re.compile(
+    r"(Confirmed|Unresolved|False Positive|Unknown): (\d+) groups? \((\d+) occurrences?\)"
+)
+
+
+def _recount_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, int]]]:
+    """Per-verdict, per-severity counts recomputed from serialized rows, without
+    `count_findings` — so a disagreement between the API's numbers and its own
+    rows cannot hide behind a shared bug."""
+    out: dict[str, dict[str, dict[str, int]]] = {}
+    for row in rows:
+        verdict = (row.get("verdict") or "").strip().lower()
+        bucket = verdict if verdict in VERDICT_BUCKETS else UNKNOWN_BUCKET
+        cell = out.setdefault(bucket, {}).setdefault(
+            _severity_bucket(row.get("severity")), {"groups": 0, "occurrences": 0}
+        )
+        cell["groups"] += 1
+        cell["occurrences"] += row.get("occurrence_count") or 1
+    return out
+
+
+def _check_api(counts: dict[str, Any], grouped: list[Finding]) -> list[str]:
+    from app.schemas import FindingOut  # lazy: keeps this module import-light
+
+    rows = [FindingOut.model_validate(f).model_dump() for f in grouped]
+    recomputed = _recount_rows(rows)
+    problems: list[str] = []
+    for bucket in (*VERDICT_BUCKETS, UNKNOWN_BUCKET):
+        for sev in SEVERITY_ORDER:
+            stated = (
+                counts["by_verdict"][bucket][sev] if bucket in counts["by_verdict"]
+                else {"groups": 0, "occurrences": 0}
+            )
+            if bucket == UNKNOWN_BUCKET:
+                stated = {"groups": 0, "occurrences": 0}  # counted in `actionable`, see below
+            actual = recomputed.get(bucket, {}).get(sev, {"groups": 0, "occurrences": 0})
+            if bucket != UNKNOWN_BUCKET and stated != actual:
+                problems.append(
+                    f"API counts: {_BUCKET_LABELS[bucket]} / {sev} says {stated}, its rows give {actual}"
+                )
+    for sev in SEVERITY_ORDER:
+        expected_groups = sum(
+            recomputed.get(b, {}).get(sev, {"groups": 0})["groups"]
+            for b in ("true_positive", UNVERIFIED_VERDICT, UNKNOWN_BUCKET)
+        )
+        if counts["actionable"][sev]["groups"] != expected_groups:
+            problems.append(
+                f"API counts: actionable {sev} says {counts['actionable'][sev]['groups']} groups, "
+                f"its rows give {expected_groups}"
+            )
+    return problems
+
+
+def _check_xlsx(data: bytes, counts: dict[str, Any]) -> list[str]:
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(io.BytesIO(data))
+    summary, findings_sheet = workbook["Summary"], workbook["Findings"]
+    stated: dict[str, tuple[int, int]] = {}
+    for row in summary.iter_rows(min_row=1, values_only=True):
+        label = row[0]
+        if isinstance(label, str) and label.startswith(BUCKET_ROW_PREFIX):
+            stated[label[len(BUCKET_ROW_PREFIX):]] = (row[1], row[2])
+    headers = [c.value for c in findings_sheet[1]]
+    column = headers.index("Counted As")
+    rows_by_bucket: dict[str, int] = {}
+    for row in findings_sheet.iter_rows(min_row=2, values_only=True):
+        rows_by_bucket[row[column]] = rows_by_bucket.get(row[column], 0) + 1
+
+    problems: list[str] = []
+    for label, cell in verdict_bucket_totals(counts).items():
+        summary_groups, summary_occurrences = stated.get(label.lower(), (None, None))
+        if (summary_groups, summary_occurrences) != (cell["groups"], cell["occurrences"]):
+            problems.append(
+                f"Excel summary: {label} says {summary_groups} groups / {summary_occurrences} "
+                f"occurrences, the counts say {cell['groups']} / {cell['occurrences']}"
+            )
+        listed = rows_by_bucket.get(label, 0)
+        if listed != cell["groups"]:
+            problems.append(f"Excel findings sheet: {label} lists {listed} rows, the summary says {cell['groups']}")
+    extra = set(rows_by_bucket) - set(verdict_bucket_totals(counts))
+    for label in sorted(extra):
+        problems.append(f"Excel findings sheet: {rows_by_bucket[label]} row(s) counted as {label!r}, which the summary has no bucket for")
+    return problems
+
+
+def _check_pdf(data: bytes, counts: dict[str, Any]) -> list[str]:
+    try:
+        from pypdf import PdfReader
+    except ImportError:  # pypdf is a runtime dependency now; if it is missing say so
+        logger.warning("pypdf is not installed; the PDF half of the consistency check was skipped")
+        return []
+    reader = PdfReader(io.BytesIO(data))
+    text = " ".join(" ".join(page.extract_text() or "" for page in reader.pages).split())
+    cover = {m.group(1): (int(m.group(2)), int(m.group(3))) for m in _COVER_BUCKET_RE.finditer(text)}
+    blocks: dict[str, int] = {}
+    for label in re.findall(re.escape(COUNTED_AS_PREFIX) + r"(Confirmed|Unresolved|False Positive|Unknown)", text):
+        blocks[label] = blocks.get(label, 0) + 1
+    headings = len(re.findall(r"FINDING \d+", text))
+
+    problems: list[str] = []
+    expected_total = sum(cell["groups"] for cell in verdict_bucket_totals(counts).values())
+    for label, cell in verdict_bucket_totals(counts).items():
+        shown = cover.get(label)
+        if shown != (cell["groups"], cell["occurrences"]):
+            problems.append(
+                f"PDF cover: {label} says {shown}, the counts say "
+                f"({cell['groups']}, {cell['occurrences']})"
+            )
+        if blocks.get(label, 0) != cell["groups"]:
+            problems.append(
+                f"PDF findings: {label} has {blocks.get(label, 0)} finding block(s), "
+                f"the cover says {cell['groups']}"
+            )
+    if headings != expected_total:
+        problems.append(f"PDF findings: {headings} finding heading(s), the cover totals {expected_total}")
+    return problems
+
+
+def check_report_consistency(db: Any, scan: Scan) -> list[str]:
+    """Contradictions between the numbers a scan reports in its API, its Excel
+    export and its PDF, as a list of messages; empty means consistent.
+
+    It groups the scan's findings once (as the API and exports do) and checks
+    (1) the API's counts against a recount of the API's own rows, (2) the Excel
+    summary against the rows of the Excel findings sheet, and (3) the PDF cover
+    against the finding blocks rendered in the PDF. A SAST scan only; other scan
+    types have their own reports and return no contradictions."""
+    if (getattr(scan, "scan_type", None) or "sast").strip().lower() != "sast":
+        return []
+    from app.services.feedback import effective_scan_findings  # lazy: feedback imports this module
+
+    grouped = group_findings_by_issue(effective_scan_findings(db, scan))
+    counts = count_findings(grouped)
+    project = scan.project
+    problems = _check_api(counts, grouped)
+    problems += _check_xlsx(build_excel_report(project, scan, grouped), counts)
+    problems += _check_pdf(build_pdf_report(project, scan, grouped), counts)
+    return problems
