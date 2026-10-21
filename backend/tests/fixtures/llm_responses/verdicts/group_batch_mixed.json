@@ -1,0 +1,5 @@
+{"decisions": [
+  {"group_index": 0, "verdict": "true_positive", "confidence": 0.9, "verdict_reason": "real"},
+  {"group_index": 1, "verdict": "n/a", "confidence": 0.5, "verdict_reason": "unclear"},
+  {"group_index": 2, "verdict": "false_positive", "confidence": 0.1, "verdict_reason": "fixture"}
+]}

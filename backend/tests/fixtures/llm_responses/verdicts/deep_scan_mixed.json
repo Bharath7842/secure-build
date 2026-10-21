@@ -1,0 +1,8 @@
+{"findings": [
+  {"line": 1, "verdict": "true_positive", "confidence": 0.9, "rule_id": "secret-password-assign",
+   "cwe": "CWE-798", "title": "Hardcoded password", "severity": "HIGH", "verdict_reason": "Hardcoded credential.", "snippet": "password = 'hunter2'"},
+  {"line": 2, "verdict": "", "confidence": 0.8, "rule_id": "md5-hash", "cwe": "CWE-328",
+   "severity": "MEDIUM", "title": "Weak hash", "snippet": "hashlib.md5(x)"},
+  {"line": 3, "verdict": 42, "confidence": 0.8, "rule_id": "eval-call", "cwe": "CWE-95",
+   "severity": "HIGH", "title": "eval", "snippet": "eval(x)"}
+]}

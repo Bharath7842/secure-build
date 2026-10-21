@@ -1,0 +1,9 @@
+{"findings": [{
+  "line": 3,
+  "verdict": "possibly",
+  "confidence": 0.9,
+  "rule_id": "secret-password-assign",
+  "severity": "HIGH",
+  "verdict_reason": "Looks like a hardcoded password.",
+  "snippet": "password = 'hunter2'"
+}]}

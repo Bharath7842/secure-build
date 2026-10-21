@@ -329,6 +329,8 @@ def _findings_for_flow(
     suppress_no_cwe: bool,
     suppress_http_findings: bool,
     suppress_low_confidence_false_positives: bool,
+    usage: Optional[Dict[str, Any]] = None,
+    step: str = "verify_flow_slices",
 ) -> List[Dict[str, Any]]:
     sink = flow.hops[-1]
     source_lines = sink.body.splitlines()
@@ -351,6 +353,8 @@ def _findings_for_flow(
             chunk_end=sink.end_line,
             source_lines=source_lines,
             kind="flow",
+            usage=usage,
+            step=step,
         )
         if finding is None:
             continue
@@ -458,6 +462,7 @@ def verify_flow(
         suppress_no_cwe=suppress_no_cwe,
         suppress_http_findings=suppress_http_findings,
         suppress_low_confidence_false_positives=suppress_low_confidence_false_positives,
+        usage=usage,
     )
     return {
         "findings": findings, "skipped": False, "skip_reason": parse_err,
@@ -487,6 +492,8 @@ def verify_flows(
         "suppress_no_cwe": suppress_no_cwe,
         "suppress_http_findings": suppress_http_findings,
         "suppress_low_confidence_false_positives": suppress_low_confidence_false_positives,
+        "usage": usage,
+        "step": llm_step,
     }
     outcomes: List[Optional[Dict[str, Any]]] = [None] * len(selected)
     prepared: List[Tuple[int, Flow, List[Tuple[Tuple[str, str, int], str]]]] = []

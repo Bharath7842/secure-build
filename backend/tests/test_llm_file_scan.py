@@ -648,8 +648,9 @@ def test_normalize_finding_reanchors_by_snippet(llm_file_scan):
     assert norm["line"] == 42
 
 
-def test_normalize_verdict_treats_negation_as_false_positive(llm_file_scan):
-    assert llm_file_scan._normalize_verdict("not a true positive") == "false_positive"
+def test_an_ambiguous_negation_does_not_dismiss(llm_file_scan):
+    # Used to be read as false_positive; an ambiguous answer must stay unresolved.
+    assert llm_file_scan.parse_verdict("not a true positive") == (None, "llm_unrecognised_verdict")
 
 
 # --- scan_file: LLM-primary, no zero-regex-hit skip gate ---------------------
@@ -987,11 +988,9 @@ def test_regex_only_is_the_default_mode(tmp_path, llm_file_scan, rules):
 
 
 def test_unverified_verdict_survives_normalization(llm_file_scan):
-    """_normalize_verdict falls through to false_positive for anything it does
-    not recognize. If "unverified" were not in _VALID_VERDICTS, every
-    regex-only finding would be silently rewritten to false_positive and
-    disappear from the report."""
-    assert llm_file_scan._normalize_verdict("unverified") == "unverified"
+    """"unverified" must stay a recognised verdict: regex-only findings carry it,
+    and nothing downstream may rewrite it to false_positive."""
+    assert llm_file_scan.parse_verdict("unverified")[0] == "unverified"
     assert llm_file_scan.VERDICT_UNVERIFIED in llm_file_scan._VALID_VERDICTS
 
 

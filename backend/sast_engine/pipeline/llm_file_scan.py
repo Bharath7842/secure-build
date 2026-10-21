@@ -48,6 +48,7 @@ from llm_client import (
     LlmBudgetExhausted,
     call_llm,
     parse_llm_json_array,
+    record_verdict_event,
     should_cache_system_prompt,
 )
 
@@ -1017,10 +1018,9 @@ def trim_catalog(catalog: List[Dict[str, Any]], *, drop_patterns_over: int = 60)
 
 # --- normalization / anchoring / dedupe -------------------------------------
 
-# "unverified" is never produced by an LLM — it is what regex-only triage
-# records, and it must round-trip through _normalize_verdict untouched. Without
-# it here the fallthrough at the end of _normalize_verdict would silently
-# rewrite every regex-only finding to false_positive.
+# "unverified" is what regex-only triage records (and what an unusable LLM
+# answer becomes, see parse_verdict); it must stay a recognised verdict so
+# nothing downstream rewrites it to false_positive.
 VERDICT_UNVERIFIED = "unverified"
 _VALID_VERDICTS = {"true_positive", "false_positive", VERDICT_UNVERIFIED}
 
@@ -1047,26 +1047,72 @@ def unresolved_reason_for_exception(exc: BaseException) -> str:
     return "llm_budget_exhausted" if isinstance(exc, LlmBudgetExhausted) else "llm_call_failed"
 _VALID_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"}
 _SEVERITY_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
-_NEGATION_RE = re.compile(r"\b(not|no|isn'?t|non)\b")
 
 
-def _normalize_verdict(raw: Any) -> str:
-    """Tolerate other vocabularies (e.g. "TRUE_POSITIVE", "confirmed") seen
-    elsewhere in this codebase's LLM prompts, without the old bug where
-    "not a true positive" resolved to true_positive."""
-    text = str(raw or "").strip().lower().replace("-", "_")
-    if text in _VALID_VERDICTS:
-        return text
-    if "false" in text or text.startswith("fp"):
-        return "false_positive"
-    if _NEGATION_RE.search(text):
-        return "false_positive"
-    if "true" in text or "confirm" in text or text.startswith("tp"):
-        return "true_positive"
-    return "false_positive"
+# The only spellings besides the exact enums that count as a decision. Anything
+# else — "not sure", "maybe", "not a true positive" — is ambiguous, and an
+# ambiguous answer must never dismiss a finding.
+_VERDICT_ALIASES = {
+    "tp": "true_positive",
+    "fp": "false_positive",
+    "true positive": "true_positive",
+    "false positive": "false_positive",
+    "confirmed": "true_positive",
+    "dismissed": "false_positive",
+}
+VERDICT_REASON_MAX_CHARS = 200
 
 
-def _normalize_confidence(raw: Any, verdict: str) -> float:
+def parse_verdict(raw: Any) -> Tuple[Optional[str], Optional[str]]:
+    """(verdict, unresolved_reason) for one LLM verdict value. Pure.
+
+    Accepts the exact enums (case-insensitive, `-` read as `_`) and the fixed
+    aliases above. Everything else is `(None, reason)` and the caller records the
+    finding as `unverified`: `llm_missing_verdict` when nothing usable was
+    returned, `llm_unrecognised_verdict` when something was but is not a
+    decision. There are no substring or negation heuristics, and nothing
+    defaults to false_positive. A literal "unverified" is a real answer, but an
+    undecided one, so it carries `evidence_missing`."""
+    if raw is None:
+        return None, "llm_missing_verdict"
+    if not isinstance(raw, str):
+        return None, "llm_unrecognised_verdict"
+    text = " ".join(raw.split())
+    if not text:
+        return None, "llm_missing_verdict"
+    key = text.lower().replace("-", "_")
+    if key in ("true_positive", "false_positive"):
+        return key, None
+    if key == VERDICT_UNVERIFIED:
+        return VERDICT_UNVERIFIED, "evidence_missing"
+    alias = _VERDICT_ALIASES.get(key.replace("_", " "))
+    if alias:
+        return alias, None
+    return None, "llm_unrecognised_verdict"
+
+
+def _record_verdict_problem(usage: Optional[Dict[str, Any]], step: Optional[str], reason: Optional[str]) -> None:
+    """Count a model answer that was not a usable verdict, per LLM step."""
+    if usage is None or step is None:
+        return
+    if reason == "llm_unrecognised_verdict":
+        record_verdict_event(usage, step, "unrecognised_verdicts")
+    elif reason == "llm_missing_verdict":
+        record_verdict_event(usage, step, "missing_verdicts")
+
+
+def _unresolved_verdict_reason(raw: Any, reason: str) -> str:
+    """Human text for a finding left unverified because of its verdict value:
+    the raw answer (bounded) when there was one."""
+    if reason == "llm_missing_verdict":
+        return "The model returned no verdict for this finding."
+    text = raw if isinstance(raw, str) else repr(raw)
+    return f"The model returned an unrecognised verdict: {' '.join(text.split())[:VERDICT_REASON_MAX_CHARS]}"
+
+
+def _normalize_confidence(raw: Any, verdict: Optional[str]) -> Optional[float]:
+    if verdict not in ("true_positive", "false_positive"):
+        return None  # an unresolved verdict has no confidence to invent
     try:
         value = float(raw)
     except (TypeError, ValueError):
@@ -1126,8 +1172,13 @@ def normalize_finding(
     kind: str = "llm",
     rule_owasp: Optional[Dict[str, str]] = None,
     rule_meta: Optional[Dict[str, Dict[str, str]]] = None,
+    usage: Optional[Dict[str, Any]] = None,
+    step: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """`rule_owasp` (catalog id -> OWASP label) fills the category for a
+    """`usage` + `step`, when given, count verdicts that were missing or not
+    recognised (see `parse_verdict`) against that LLM step.
+
+    `rule_owasp` (catalog id -> OWASP label) fills the category for a
     finding that cites a catalog rule without restating its label;
     `rule_meta` (`catalog_rule_index`) does the same for title and CWE, which
     the deep-scan schema also lets the model omit for a catalog rule_id."""
@@ -1144,7 +1195,8 @@ def normalize_finding(
     else:
         line = max(chunk_start, min(chunk_end, line))
 
-    verdict = _normalize_verdict(raw.get("verdict"))
+    verdict, unresolved_reason = parse_verdict(raw.get("verdict"))
+    _record_verdict_problem(usage, step, unresolved_reason)
     severity = str(raw.get("severity") or "MEDIUM").strip().upper()
     if severity not in _VALID_SEVERITIES:
         severity = "MEDIUM"
@@ -1158,11 +1210,16 @@ def normalize_finding(
         )
     title = str(raw.get("title") or "").strip() or meta.get("title") or "Untitled finding"
     reason = str(raw.get("verdict_reason") or "").strip() or "No reason provided by the model."
+    if verdict is None:
+        # Not a decision: unresolved, never a dismissal. The raw answer goes in
+        # the reason so a reviewer can see what the model actually said.
+        verdict = VERDICT_UNVERIFIED
+        reason = _unresolved_verdict_reason(raw.get("verdict"), unresolved_reason or "")
     ai_fix = raw.get("ai_fix")
     ai_fix = str(ai_fix).strip() if verdict == "true_positive" and ai_fix else None
 
     kind = str(raw.get("kind") or kind).strip() or "llm"
-    return {
+    finding_out = {
         "verdict": verdict,
         "confidence": _normalize_confidence(raw.get("confidence"), verdict),
         "owasp_category": owasp_category,
@@ -1180,6 +1237,9 @@ def normalize_finding(
         "ai_fix": ai_fix,
         "kind": kind,
     }
+    if verdict == VERDICT_UNVERIFIED:
+        finding_out["unresolved_reason"] = unresolved_reason or "evidence_missing"
+    return finding_out
 
 
 # Re-anchoring can shift one issue's reported line by a line or two between
@@ -1197,15 +1257,21 @@ def _dedupe_key(finding: Dict[str, Any]) -> tuple:
     return (int(cwe.group()) if cwe else topic, bool(cwe))
 
 
+# Between duplicates of one issue a confirmation beats an undecided answer, and
+# an undecided answer beats a dismissal (so an ambiguous verdict is never
+# silently replaced by a duplicate that said false_positive).
+_VERDICT_PREFERENCE = {"true_positive": 0, VERDICT_UNVERIFIED: 1, "false_positive": 2}
+
+
 def _is_better(new: Dict[str, Any], current: Dict[str, Any]) -> bool:
-    cur_tp = current["verdict"] == "true_positive"
-    new_tp = new["verdict"] == "true_positive"
-    if new_tp != cur_tp:
-        return new_tp
+    cur_pref = _VERDICT_PREFERENCE.get(current["verdict"], 2)
+    new_pref = _VERDICT_PREFERENCE.get(new["verdict"], 2)
+    if new_pref != cur_pref:
+        return new_pref < cur_pref
     cur_rank = _SEVERITY_RANK.get(current["severity"], 9)
     new_rank = _SEVERITY_RANK.get(new["severity"], 9)
     return new_rank < cur_rank or (
-        new_rank == cur_rank and new.get("confidence", 0) > current.get("confidence", 0)
+        new_rank == cur_rank and (new.get("confidence") or 0) > (current.get("confidence") or 0)
     )
 
 
@@ -1327,8 +1393,10 @@ def should_publish_finding(
         return False
 
     if _is_noisy_rule(finding.get("rule_id", "")):
-        if finding.get("verdict") != "true_positive":
+        if finding.get("verdict") == "false_positive":
             return False  # generic catalog echo marked FP — no tuning value
+        if finding.get("verdict") != "true_positive":
+            return True  # undecided: nobody has judged it, so nothing may be dropped on a guess
         has_source = bool((finding.get("source") or "").strip())
         confident = float(finding.get("confidence") or 0.0) >= UNEVIDENCED_CONFIDENCE_FLOOR
         return builds_sql or has_source or confident
@@ -1489,6 +1557,7 @@ def scan_chunk(
             item, file_path=file_path,
             chunk_start=chunk["start_line"], chunk_end=chunk["end_line"],
             source_lines=source_lines, kind=kind, rule_meta=rule_meta,
+            usage=usage, step=llm_step,
         )
         if norm is not None:
             findings.append(norm)
@@ -1641,7 +1710,7 @@ def scan_file(
         "findings": merged,
         "tp_count": tp_count,
         "fp_count": fp_count,
-        "unverified_count": len(unverified),
+        "unverified_count": sum(1 for f in merged if f["verdict"] == VERDICT_UNVERIFIED),
         "read_error": False,
         "chunk_errors": chunk_errors,
     }
@@ -1726,6 +1795,7 @@ def scan_file_batch(
         norm = normalize_finding(
             item, file_path=path, chunk_start=1, chunk_end=max(1, len(lines)),
             source_lines=lines, kind="llm", rule_meta=rule_meta,
+            usage=usage, step=llm_step,
         )
         if norm is not None:
             by_path[path].append(norm)
@@ -1738,9 +1808,11 @@ def scan_file_batch(
             suppress_low_confidence_false_positives=suppress_low_confidence_false_positives,
         )
         tp_count = sum(1 for f in merged if f["verdict"] == "true_positive")
+        fp_count = sum(1 for f in merged if f["verdict"] == "false_positive")
         results.append({
             "file_path": path, "chunks": 1, "findings": merged,
-            "tp_count": tp_count, "fp_count": len(merged) - tp_count,
+            "tp_count": tp_count, "fp_count": fp_count,
+            "unverified_count": sum(1 for f in merged if f["verdict"] == VERDICT_UNVERIFIED),
             "read_error": False, "batched_with": len(files),
             "chunk_errors": [f"{unrouted} finding(s) in a {len(files)}-file batch named no known file"]
             if unrouted else [],
@@ -1967,6 +2039,7 @@ def scan_deep_files(
         "files_scanned": len(final),
         "tp_count": sum(r["tp_count"] for r in final),
         "fp_count": sum(r["fp_count"] for r in final),
+        "unverified_count": sum(r.get("unverified_count") or 0 for r in final),
         "chunk_errors": sum(len(r.get("chunk_errors") or []) for r in final),
         "files": final,
     }
@@ -2179,34 +2252,30 @@ def build_triage_prompts(
     )
 
 
-def _strict_verdict(raw: Any) -> Optional[str]:
-    """Like _normalize_verdict, but an empty or unrecognised verdict is None
-    (no decision) instead of silently becoming false_positive."""
-    text = str(raw or "").strip().lower().replace("-", "_")
-    if not text:
-        return None
-    if text in ("true_positive", "false_positive"):
-        return text
-    if "false" in text or text.startswith("fp") or _NEGATION_RE.search(text):
-        return "false_positive"
-    if "true" in text or "confirm" in text or text.startswith("tp"):
-        return "true_positive"
-    return None
-
-
 def resolve_triage_decisions(
-    items: Sequence[Any], candidates: Sequence[Dict[str, Any]],
+    items: Sequence[Any],
+    candidates: Sequence[Dict[str, Any]],
+    *,
+    rejected: Optional[Dict[str, Tuple[str, Any]]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """{candidate id: decision item} for every candidate the response actually
     decided. Items are matched by id; an item without a usable id (older
     array-of-findings shape, or a model ignoring the schema) is matched to the
     nearest undecided candidate of the same rule within the context window.
-    Items with no usable verdict, and items matching no candidate (invented
-    findings), are ignored."""
+    Items matching no candidate (invented findings) are ignored, and so are
+    items with no usable verdict (`parse_verdict`): those candidates stay
+    undecided. When `rejected` is given, an unusable verdict on an item matched
+    by id is recorded there as `{candidate id: (reason, raw verdict)}`."""
     by_id = {c["id"]: c for c in candidates}
     decided: Dict[str, Dict[str, Any]] = {}
     for item in items:
-        if not isinstance(item, dict) or _strict_verdict(item.get("verdict")) is None:
+        if not isinstance(item, dict):
+            continue
+        verdict, reason = parse_verdict(item.get("verdict"))
+        if verdict not in ("true_positive", "false_positive"):
+            cid = str(item.get("id") or "").strip().lower()
+            if rejected is not None and cid in by_id:
+                rejected.setdefault(cid, (reason or "evidence_missing", item.get("verdict")))
             continue
         cid = str(item.get("id") or "").strip().lower()
         if cid in by_id:
@@ -2239,10 +2308,12 @@ def _triage_finding(
     source_text: str,
     rules_by_id: Dict[str, RegexRule],
     unresolved_reason: str = "llm_missing_verdict",
+    raw_verdict: Any = None,
 ) -> Dict[str, Any]:
     """Build the finding locally from the candidate and rule; the model only
-    contributes the decision fields. `unresolved_reason` applies only when
-    there is no decision (`item is None`)."""
+    contributes the decision fields. `unresolved_reason` (and the model's
+    `raw_verdict`, when it gave an unusable one) apply only when there is no
+    decision (`item is None`)."""
     rule = rules_by_id.get(cand.get("rule_id") or "")
     cwe = ((rule.cwe if rule else "") or "").strip() or None
     severity = str((rule.severity if rule else cand.get("severity")) or "LOW").upper()
@@ -2269,11 +2340,17 @@ def _triage_finding(
             "snippet": build_code_context(source_text, int(cand["line"]), cand["matched_text"]),
             "verdict": VERDICT_UNVERIFIED,
             "unresolved_reason": unresolved_reason,
-            "verdict_reason": TRIAGE_NO_DECISION_REASON,
+            "verdict_reason": (
+                _unresolved_verdict_reason(raw_verdict, unresolved_reason)
+                if unresolved_reason == "llm_unrecognised_verdict"
+                else TRIAGE_NO_DECISION_REASON
+            ),
             "confidence": None,
             "ai_fix": None,
         }
-    verdict = _strict_verdict(item.get("verdict")) or VERDICT_UNVERIFIED
+    verdict = parse_verdict(item.get("verdict"))[0]
+    if verdict not in ("true_positive", "false_positive"):
+        verdict = VERDICT_UNVERIFIED
     override = str(item.get("severity") or "").strip().upper()
     ai_fix = item.get("ai_fix")
     return {
@@ -2321,6 +2398,7 @@ def triage_regex_hits(
     candidates = group_triage_candidates(triage_candidates(hits), rules_by_id)
     errors: List[str] = []
     call_failure: List[str] = []  # reason of the last call that raised, if any
+    rejected: Dict[str, Tuple[str, Any]] = {}  # candidate id -> (reason, raw verdict)
 
     def _ask(subset: Sequence[Dict[str, Any]]) -> Tuple[Dict[str, Dict[str, Any]], bool]:
         """(decisions, call_raised)."""
@@ -2343,7 +2421,7 @@ def triage_regex_hits(
         items, err = parse_llm_json_array(raw_text)
         if err and not items:
             errors.append(err)
-        return resolve_triage_decisions(items, subset), False
+        return resolve_triage_decisions(items, subset, rejected=rejected), False
 
     decided, raised = _ask(candidates)
     missing = [c for c in candidates if c["id"] not in decided]
@@ -2367,14 +2445,20 @@ def triage_regex_hits(
     merged = finalize_findings(merge_dedupe(reviewed), source_text)
     # Undecided candidates bypass suppression, exactly like regex-only
     # findings: no one has judged them, so nothing may be dropped on a guess.
-    undecided_reason = call_failure[-1] if call_failure else "llm_missing_verdict"
-    unverified = [
-        _triage_finding(m, None, file_path=file_path,
-                        source_text=source_text, rules_by_id=rules_by_id,
-                        unresolved_reason=undecided_reason)
-        for c in missing
-        for m in c["members"]
-    ]
+    unverified = []
+    for c in missing:
+        if c["id"] in rejected:
+            undecided_reason, raw_verdict = rejected[c["id"]]
+        else:
+            undecided_reason = call_failure[-1] if call_failure else "llm_missing_verdict"
+            raw_verdict = None
+        _record_verdict_problem(usage, "scan_triage_files", undecided_reason)
+        unverified.extend(
+            _triage_finding(m, None, file_path=file_path, source_text=source_text,
+                            rules_by_id=rules_by_id, unresolved_reason=undecided_reason,
+                            raw_verdict=raw_verdict)
+            for m in c["members"]
+        )
     findings = merged + unverified
     for finding in findings:
         finding["kind"] = "regex"
@@ -2731,15 +2815,24 @@ def build_group_confirm_prompt(
     return system, user
 
 
-def _confirm_result_from_item(item: Dict[str, Any]) -> Dict[str, Any]:
-    if not str(item.get("verdict") or "").strip():
-        # No verdict is not a dismissal — leave the group unverified.
+def _confirm_result_from_item(
+    item: Dict[str, Any], *, usage: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    verdict, problem = parse_verdict(item.get("verdict"))
+    if verdict not in ("true_positive", "false_positive"):
+        # A missing, unrecognised or literally "unverified" verdict is not a
+        # dismissal — leave the group unverified and say why.
+        _record_verdict_problem(usage, "group_confirm_triage_findings", problem)
+        raw = item.get("verdict")
         return {
             "verdict": VERDICT_UNVERIFIED, "confidence": None,
-            "verdict_reason": "", "ai_fix": None, "error": "missing verdict",
-            "unresolved_reason": "llm_missing_verdict",
+            "verdict_reason": "", "ai_fix": None,
+            "error": (
+                "missing verdict" if problem == "llm_missing_verdict"
+                else f"unrecognised verdict: {' '.join(str(raw).split())[:VERDICT_REASON_MAX_CHARS]}"
+            ),
+            "unresolved_reason": problem or "evidence_missing",
         }
-    verdict = _normalize_verdict(item.get("verdict"))
     confidence = _normalize_confidence(item.get("confidence"), verdict)
     reason = str(item.get("verdict_reason") or "").strip() or "No reason provided by the model."
     ai_fix = item.get("ai_fix")
@@ -2813,7 +2906,7 @@ def confirm_finding_group(
             "unresolved_reason": "llm_call_failed",
         }
 
-    return _confirm_result_from_item(item)
+    return _confirm_result_from_item(item, usage=usage)
 
 
 _GROUP_CONFIRM_BATCH_SYSTEM = (
@@ -2946,7 +3039,7 @@ def confirm_finding_group_batch(
             if item is None:
                 unresolved.append(entry)
                 continue
-            results[entry["group_index"]] = _confirm_result_from_item(item)
+            results[entry["group_index"]] = _confirm_result_from_item(item, usage=usage)
     except Exception:
         pass  # whole batch failed to call/parse — every entry falls back below
 

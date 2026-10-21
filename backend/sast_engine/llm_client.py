@@ -462,6 +462,18 @@ def record_result_cache_hit(
         stats["by_step"][step] = stats["by_step"].get(step, 0) + 1
 
 
+def record_verdict_event(usage: Optional[Dict[str, Any]], step: str, key: str) -> None:
+    """Count a model answer whose verdict was unusable, per LLM step. `key` is
+    `unrecognised_verdicts` (something that is not a decision) or
+    `missing_verdicts` (nothing at all). A prompt or model change that degrades
+    the output format shows up here before it shows up as lost findings."""
+    if usage is None:
+        return
+    with _USAGE_LOCK:
+        bucket = usage.setdefault("verdict_stats", {}).setdefault(step, {})
+        bucket[key] = bucket.get(key, 0) + 1
+
+
 def record_system_prompt(usage: Optional[Dict[str, Any]], step: str, system: str) -> None:
     """Remember the sha256 of each distinct system prompt a step used, so a
     scan's recorded versions say exactly which prompts produced its findings.
@@ -587,6 +599,14 @@ def usage_cost_summary(usage: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             step_name, {"calls": 0, "input_tokens": 0, "output_tokens": 0}
         )
         bucket["result_cache_hits"] = hits
+    verdict_totals = {"unrecognised_verdicts": 0, "missing_verdicts": 0}
+    for step_name, counters in (usage.get("verdict_stats") or {}).items():
+        bucket = by_step.setdefault(
+            step_name, {"calls": 0, "input_tokens": 0, "output_tokens": 0}
+        )
+        for key, count in counters.items():
+            bucket[key] = count
+            verdict_totals[key] = verdict_totals.get(key, 0) + count
     # Prefer accumulated per-call cost (correct after mid-scan Bedrock→Ollama switch).
     cost = usage.get("cost_usd")
     if cost is None:
@@ -617,6 +637,8 @@ def usage_cost_summary(usage: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "result_cache_hits": int(result_cache.get("hits") or 0),
         "result_cache_saved_tokens": int(result_cache.get("saved_input_tokens") or 0)
         + int(result_cache.get("saved_output_tokens") or 0),
+        # Model answers whose verdict was not usable (see parse_verdict).
+        **verdict_totals,
         # Which system prompts each step ran with (sha256, sorted).
         "system_prompt_sha256": {
             step_name: sorted(hashes)
@@ -770,7 +792,7 @@ def call_llm(
 
 # Bump whenever prompt construction or response handling changes in a way that
 # should invalidate previously cached responses even if the prompt bytes match.
-RESULT_CACHE_VERSION = "1"
+RESULT_CACHE_VERSION = "2"
 # The cache object rides on the shared scan usage dict — the one object every
 # LLM-calling stage already threads through — rather than a new parameter on
 # every call site. It must expose get(key) -> {text, input_tokens,
