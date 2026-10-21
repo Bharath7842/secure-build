@@ -20,6 +20,22 @@ RG = rg_runner.find_rg_binary()
 needs_rg = pytest.mark.skipif(RG is None, reason="ripgrep (rg) is not installed")
 
 
+@needs_rg
+def test_literal_batch_preserves_metacharacters_and_argument_boundaries(tmp_path):
+    (tmp_path / "A.txt").write_text("dangerCall(x)\n", encoding="utf-8")
+    (tmp_path / "B.txt").write_text("--hidden\n", encoding="utf-8")
+    (tmp_path / "C.txt").write_text("dangerCallx\n", encoding="utf-8")
+    runner = RgRunner(tmp_path)
+    result = runner.files_with_matches(
+        ["dangerCall(", "--hidden"], fixed_strings=True, trusted=True,
+    )
+    assert result.ok
+    assert set(result.files) == {"A.txt", "B.txt"}
+    assert not runner.files_with_matches(["dangerCall("], fixed_strings=True).ok
+    assert not runner.files_with_matches(["dangerCall("], trusted=True).ok
+    assert not runner.files_with_matches([], fixed_strings=True, trusted=True).ok
+
+
 def _repo(tmp_path: Path) -> Path:
     files = {
         "src/main/java/com/acme/UserDao.java": (

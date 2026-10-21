@@ -250,8 +250,16 @@ tests/test_joern.py`).
 default for API scans; `--catalog-prefilter` on the CLI): rg narrows which
 (file, rule) pairs the Python catalog pass checks, using a literal every match
 must contain (taken from Python's own regex parse). Python stays the authority,
-so findings are identical either way. On a ~1k-file repo it was slower
-(4.2s vs 1.8s), because one rg process per literal outweighs the saved work.
+so findings are identical either way. Searches batch up to eight literals
+with the same case mode per invocation. Each rule receives the union of its
+batch's candidate files; Python checks the actual pattern. A failed or
+truncated batch leaves every rule in that batch on the full Python pass.
+This trades broader candidate sets for fewer process launches and directory
+walks. On a local 1,000-file / 9 MB sample, the 185-rule catalog needed 15
+searches instead of 111: prefilter time fell from 3.4–4.3s to 0.6–0.7s,
+and prefilter plus regex time from 5.2–5.7s to 2.5–4.3s with identical hits.
+These are local sample timings, not full-scan estimates; the plain regex
+pass can still be faster on small repositories.
 
 rg runs through `pipeline/rg_runner.py`: patterns go in as `--regexp=`, globs
 are repo-confined and relative, results are post-filtered to the inventory,

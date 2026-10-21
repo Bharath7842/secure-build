@@ -156,6 +156,47 @@ def test_failed_search_falls_back_to_full_scan(tmp_path, monkeypatch):
 
 
 @needs_rg
+def test_batched_literals_keep_all_hits_and_separate_case_modes(tmp_path):
+    rules = [RegexRule({"id": str(i), "pattern": rf"dangerCall{i}\("}) for i in range(17)]
+    rules.append(RegexRule({"id": "folded", "pattern": r"(?i)secret_token="}))
+    paths = []
+    for i in range(17):
+        path = f"File{i}.java"
+        paths.append(path)
+        (tmp_path / path).write_text(f"dangerCall{i}(x);\nSECRET_TOKEN=value\n", encoding="utf-8")
+    pre = build_prefilter(tmp_path, paths, rules)
+    assert pre.rg_calls == 4  # three case-sensitive batches, one insensitive
+    hits = _python_hit_files(tmp_path, paths, rules)
+    for rule in rules:
+        assert rule.id in pre.eligible
+        assert hits[rule.id] <= pre.candidates[rule.id]
+    assert hits["folded"] == set(paths)
+
+
+@needs_rg
+@pytest.mark.parametrize("failure", ["timed_out", "output_truncated", "error"])
+def test_failed_batch_falls_back_for_every_rule(tmp_path, monkeypatch, failure):
+    rules = [RegexRule({"id": str(i), "pattern": rf"dangerCall{i}\("}) for i in range(3)]
+    (tmp_path / "A.java").write_text("dangerCall2(x);\n", encoding="utf-8")
+    runner = RgRunner(tmp_path, allowed_files=["A.java"])
+    original = runner.search
+
+    def failed(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if failure == "error":
+            result.ok = False
+        else:
+            setattr(result, failure, True)
+        return result
+
+    monkeypatch.setattr(runner, "search", failed)
+    pre = build_prefilter(tmp_path, ["A.java"], rules, runner=runner)
+    assert pre.rg_calls == 1
+    assert pre.ineligible == {r.id for r in rules}
+    assert pre.rules_for("A.java", rules) == rules
+
+
+@needs_rg
 def test_triage_findings_identical_with_and_without_prefilter():
     root = _BACKEND / "tests" / "fixtures" / "java_corpus"
     paths = _corpus_files(root)

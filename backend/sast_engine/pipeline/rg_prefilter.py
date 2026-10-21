@@ -42,6 +42,10 @@ from pipeline.rg_runner import RgRunner
 from pipeline.regex_scan import RegexRule
 
 MIN_LITERAL_CHARS = 4
+# Share process startup and directory traversal across a small set of literals.
+# Every rule in a batch gets the union of candidate files; Python still checks
+# its own pattern, so broader candidates cost work but cannot change findings.
+LITERALS_PER_SEARCH = 8
 # Characters Python's IGNORECASE matches against more code points than
 # Rust's simple case folding does (U+0130/U+0131 for i/I).
 _UNSAFE_FOLD_CHARS = frozenset("iI")
@@ -160,24 +164,31 @@ def build_prefilter(
         result.literals[rule.id] = lit
         by_literal.setdefault(lit, []).append(rule.id)
 
-    def _search(key: Tuple[str, bool]) -> Tuple[Tuple[str, bool], Optional[Set[str]]]:
-        literal, icase = key
+    batches = []
+    for icase in (False, True):
+        keys = [key for key in by_literal if key[1] == icase]
+        batches.extend(keys[i:i + LITERALS_PER_SEARCH] for i in range(0, len(keys), LITERALS_PER_SEARCH))
+
+    def _search(keys: List[Tuple[str, bool]]) -> Tuple[List[Tuple[str, bool]], Optional[Set[str]]]:
+        # One --regexp argument per fixed string; keep case modes separate.
+        literals = [key[0] for key in keys]
         res = runner.files_with_matches(
-            literal, fixed_strings=True, ignore_case=icase, trusted=True, exhaustive=True,
+            literals, fixed_strings=True, ignore_case=keys[0][1], trusted=True, exhaustive=True,
         )
         if not res.ok or res.timed_out or res.output_truncated:
-            return key, None
-        return key, set(res.files)
+            return keys, None
+        return keys, set(res.files)
 
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        for key, files in pool.map(_search, list(by_literal)):
+        for keys, files in pool.map(_search, batches):
             result.rg_calls += 1
-            for rule_id in by_literal[key]:
-                if files is None:
-                    result.ineligible.add(rule_id)
-                else:
-                    result.eligible.add(rule_id)
-                    result.candidates[rule_id] = files
+            for key in keys:
+                for rule_id in by_literal[key]:
+                    if files is None:
+                        result.ineligible.add(rule_id)
+                    else:
+                        result.eligible.add(rule_id)
+                        result.candidates[rule_id] = files
     result.elapsed_ms = int((time.monotonic() - started) * 1000)
     return result
 

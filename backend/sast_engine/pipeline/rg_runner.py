@@ -248,7 +248,7 @@ class RgRunner:
 
     # -- validation --------------------------------------------------------
 
-    def _compile_error(self, pattern: str, *, pcre2: bool, fixed: bool = False) -> Optional[str]:
+    def _compile_error(self, pattern: str | Sequence[str], *, pcre2: bool, fixed: bool = False) -> Optional[str]:
         """rg's own compile error for `pattern`, or None if it compiles.
         Searching empty stdin exits 1 (no match) when valid, 2 when not."""
         cmd = [self.binary, "--no-config", "--quiet", *self._regex_limits()]
@@ -256,7 +256,8 @@ class RgRunner:
             cmd.append("--pcre2")
         if fixed:
             cmd.append("--fixed-strings")
-        cmd += [f"--regexp={pattern}", "-"]
+        patterns = [pattern] if isinstance(pattern, str) else pattern
+        cmd += [f"--regexp={p}" for p in patterns] + ["-"]
         try:
             proc = subprocess.run(
                 self._argv(cmd), stdin=subprocess.DEVNULL, capture_output=True, timeout=10,
@@ -270,7 +271,7 @@ class RgRunner:
         return None
 
     def validate_pattern(
-        self, pattern: str, *, fixed: bool = False, trusted: bool = False,
+        self, pattern: str | Sequence[str], *, fixed: bool = False, trusted: bool = False,
     ) -> Tuple[bool, str, Optional[str], Optional[str]]:
         """(ok, engine, error, hint). Picks PCRE2 only when the default
         engine rejects the pattern for a feature PCRE2 provides. `trusted`
@@ -278,6 +279,15 @@ class RgRunner:
         size/alternation policy; rg still compiles it with the same limits."""
         if not self.binary:
             return False, ENGINE_DEFAULT, "ripgrep is not installed", None
+        if not isinstance(pattern, str):
+            # Only engine-authored literal batches may use this path. Compile
+            # all literals together, preserving resource limits and argv slots.
+            if not (fixed and trusted):
+                return False, ENGINE_DEFAULT, "pattern batches require trusted fixed strings", None
+            if not pattern or any(not isinstance(p, str) or not p for p in pattern):
+                return False, ENGINE_DEFAULT, "empty or invalid literal batch", None
+            error = self._compile_error(pattern, pcre2=False, fixed=True)
+            return error is None, ENGINE_DEFAULT, error, None
         try:
             if not trusted:
                 check_pattern_policy(pattern, pcre2=False)
@@ -311,7 +321,7 @@ class RgRunner:
 
     def search(
         self,
-        pattern: str,
+        pattern: str | Sequence[str],
         *,
         globs: Sequence[str] = (),
         paths: Optional[Sequence[str]] = None,
@@ -370,7 +380,8 @@ class RgRunner:
                 cmd.append(f"--iglob=!**/{d}/**")
         for g in safe_globs:
             cmd.append(f"--glob={g}")
-        cmd.append(f"--regexp={pattern}")
+        patterns = [pattern] if isinstance(pattern, str) else pattern
+        cmd.extend(f"--regexp={p}" for p in patterns)
         cmd.append("--")
         cmd.extend(safe_paths or ["."])
 
@@ -401,7 +412,7 @@ class RgRunner:
         result.elapsed_ms = int((time.monotonic() - started) * 1000)
         return result
 
-    def files_with_matches(self, pattern: str, **kwargs) -> RgResult:
+    def files_with_matches(self, pattern: str | Sequence[str], **kwargs) -> RgResult:
         return self.search(pattern, files_only=True, **kwargs)
 
     # -- internals ---------------------------------------------------------
