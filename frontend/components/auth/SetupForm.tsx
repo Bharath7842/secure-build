@@ -70,7 +70,7 @@ export default function SetupForm() {
       </div>
       <div>
         <label htmlFor="setup-email" className={styles.label}>
-          Your work email
+          Email
         </label>
         <input
           id="setup-email"
@@ -80,7 +80,6 @@ export default function SetupForm() {
           autoCapitalize="none"
           spellCheck={false}
           required
-          placeholder="you@company.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           className={styles.input}

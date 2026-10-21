@@ -106,7 +106,7 @@ export default function ScanForm({ project, scanType = "sast", onSubmit }: ScanF
       )}
       <div>
         <p className="block text-sm font-medium text-[var(--ink)]">Project</p>
-        <p className="mt-1 text-sm text-[var(--ink)]">{project.name}</p>
+        <p className="mt-1 font-display text-2xl text-[var(--ink)]">{project.name}</p>
         <p className="mt-1 text-xs text-[var(--muted)]">Change the project from the selector in the sidebar.</p>
       </div>
 

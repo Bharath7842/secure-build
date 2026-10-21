@@ -151,7 +151,7 @@ export default function LoginForm() {
 
         <div>
           <label htmlFor="email" className={styles.label}>
-            Work email
+            Email
           </label>
           <input
             ref={emailRef}
@@ -163,7 +163,6 @@ export default function LoginForm() {
             autoCapitalize="none"
             spellCheck={false}
             required
-            placeholder="you@company.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             onBlur={() => setTouched((t) => ({ ...t, email: true }))}
