@@ -47,6 +47,7 @@ from llm_client import (
     PROVIDER_BEDROCK,
     LlmBudgetExhausted,
     call_llm,
+    last_call_was_cache_hit,
     parse_llm_json_array,
     record_verdict_event,
     should_cache_system_prompt,
@@ -1223,6 +1224,7 @@ def normalize_finding(
     finding_out = {
         # What kind of issue it is: the cited catalog rule's class, else security.
         "issue_class": meta.get("issue_class") or DEFAULT_ISSUE_CLASS,
+        "decision_stage": "flow_verify" if kind == "flow" else "deep_scan",
         "verdict": verdict,
         "confidence": _normalize_confidence(raw.get("confidence"), verdict),
         "owasp_category": owasp_category,
@@ -1554,6 +1556,7 @@ def scan_chunk(
             "budget_exhausted": isinstance(exc, LlmBudgetExhausted),
         }
 
+    cache_hit = last_call_was_cache_hit()  # same thread, right after the call parsed above
     findings: List[Dict[str, Any]] = []
     for item in items:
         norm = normalize_finding(
@@ -1563,6 +1566,7 @@ def scan_chunk(
             usage=usage, step=llm_step,
         )
         if norm is not None:
+            norm["result_cache_hit"] = cache_hit
             findings.append(norm)
     return {"findings": findings, "error": err if (err and not items) else None}
 
@@ -1787,6 +1791,7 @@ def scan_file_batch(
         return None
 
     rule_meta = catalog_rule_index(catalog)
+    cache_hit = last_call_was_cache_hit()
     by_path: Dict[str, List[Dict[str, Any]]] = {p: [] for p in paths}
     unrouted = 0
     for item in items:
@@ -1801,6 +1806,7 @@ def scan_file_batch(
             usage=usage, step=llm_step,
         )
         if norm is not None:
+            norm["result_cache_hit"] = cache_hit
             by_path[path].append(norm)
 
     results = []
@@ -2334,6 +2340,7 @@ def _triage_finding(
         "group_by_rule": bool(rule.group_by_rule) if rule else False,
         "derived": bool(rule.derived) if rule else False,
         "issue_class": rule.issue_class if rule else DEFAULT_ISSUE_CLASS,
+        "decision_stage": "triage_llm",
         "kind": "regex",
     }
     if item is None:
@@ -2402,6 +2409,7 @@ def triage_regex_hits(
     errors: List[str] = []
     call_failure: List[str] = []  # reason of the last call that raised, if any
     rejected: Dict[str, Tuple[str, Any]] = {}  # candidate id -> (reason, raw verdict)
+    answer_cache_hits: List[bool] = []  # one per call that returned an answer
 
     def _ask(subset: Sequence[Dict[str, Any]]) -> Tuple[Dict[str, Dict[str, Any]], bool]:
         """(decisions, call_raised)."""
@@ -2421,6 +2429,7 @@ def triage_regex_hits(
             errors.append(f"{type(exc).__name__}: {exc}")
             call_failure.append(unresolved_reason_for_exception(exc))
             return {}, True
+        answer_cache_hits.append(last_call_was_cache_hit())
         items, err = parse_llm_json_array(raw_text)
         if err and not items:
             errors.append(err)
@@ -2446,6 +2455,9 @@ def triage_regex_hits(
     ]
     reviewed = [f for f in reviewed if f["verdict"] != VERDICT_UNVERIFIED]
     merged = finalize_findings(merge_dedupe(reviewed), source_text)
+    replayed = bool(answer_cache_hits) and all(answer_cache_hits)
+    for finding in merged:
+        finding["result_cache_hit"] = replayed
     # Undecided candidates bypass suppression, exactly like regex-only
     # findings: no one has judged them, so nothing may be dropped on a guess.
     unverified = []
@@ -2521,6 +2533,7 @@ def findings_from_hits(
             "group_by_rule": bool(rule.group_by_rule) if rule else False,
             "derived": bool(rule.derived) if rule else False,
             "issue_class": (rule.issue_class if rule else DEFAULT_ISSUE_CLASS),
+            "decision_stage": "triage_regex",
             "verdict": VERDICT_UNVERIFIED,
             "unresolved_reason": "not_reviewed_regex",
             "verdict_reason": UNVERIFIED_REASON,
@@ -2909,7 +2922,9 @@ def confirm_finding_group(
             "unresolved_reason": "llm_call_failed",
         }
 
-    return _confirm_result_from_item(item, usage=usage)
+    result = _confirm_result_from_item(item, usage=usage)
+    result["result_cache_hit"] = last_call_was_cache_hit()
+    return result
 
 
 _GROUP_CONFIRM_BATCH_SYSTEM = (
@@ -3031,6 +3046,7 @@ def confirm_finding_group_batch(
             raw_text = _call(retry_user)
             items, err = parse_llm_json_array(raw_text)
 
+        batch_cache_hit = last_call_was_cache_hit()
         by_index = {
             item.get("group_index"): item
             for item in items or []
@@ -3042,7 +3058,9 @@ def confirm_finding_group_batch(
             if item is None:
                 unresolved.append(entry)
                 continue
-            results[entry["group_index"]] = _confirm_result_from_item(item, usage=usage)
+            result = _confirm_result_from_item(item, usage=usage)
+            result["result_cache_hit"] = batch_cache_hit
+            results[entry["group_index"]] = result
     except Exception:
         pass  # whole batch failed to call/parse — every entry falls back below
 
@@ -3212,6 +3230,7 @@ def group_confirm_unverified_findings(
             return
         for m in members:
             m["unresolved_reason"] = None
+            m["result_cache_hit"] = bool(result.get("result_cache_hit"))
             m["verdict"] = result["verdict"]
             m["confidence"] = result["confidence"]
             m["verdict_reason"] = (
@@ -3301,6 +3320,7 @@ def group_confirm_unverified_findings(
                         "verdict_reason": m.get("verdict_reason"),
                         "ai_fix": m.get("ai_fix"),
                         "unresolved_reason": None,
+                        "result_cache_hit": bool(m.get("result_cache_hit")),
                     }
                 updates_by_file.setdefault(path, []).append(update)
         for key in skipped_keys:

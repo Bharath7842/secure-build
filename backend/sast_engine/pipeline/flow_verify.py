@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from llm_client import call_llm, parse_llm_json_array
+from llm_client import call_llm, last_call_was_cache_hit, parse_llm_json_array
 
 from pipeline import reachability
 from pipeline.call_graph import Flow, FLOW_VERIFY_CAP, flow_to_dict
@@ -334,6 +334,7 @@ def _findings_for_flow(
 ) -> List[Dict[str, Any]]:
     sink = flow.hops[-1]
     source_lines = sink.body.splitlines()
+    cache_hit = last_call_was_cache_hit()  # the call whose answer is being converted
     findings: List[Dict[str, Any]] = []
     flow_path = _flow_path_payload(flow)
     affected = list(flow.files)
@@ -359,6 +360,7 @@ def _findings_for_flow(
         if finding is None:
             continue
         finding["kind"] = "flow"
+        finding["result_cache_hit"] = cache_hit
         finding["file_path"] = sink.file
         finding["line"] = finding.get("line") or sink.line
         finding["snippet"] = sink.body

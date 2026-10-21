@@ -14,6 +14,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy import event
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -372,6 +373,53 @@ class DastRequestAudit(Base):
     # Redacted, size-capped bodies. Older rows leave these null.
     request_body: Mapped[str | None] = mapped_column(Text, nullable=True)
     response_body: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class FindingDecision(Base):
+    """One machine decision on a finding, append-only (SAST-00-050).
+
+    `Finding.verdict` is the *current* value and is updated in place; this table
+    keeps every verdict the scanner ever gave the occurrence, with the stage that
+    decided it and the evidence version (rule catalog, prompts, model) it was made
+    under, so the original verdict survives a later stage or reviewer changing it.
+    The latest row always equals `Finding.verdict`. Human decisions stay in
+    `FindingReviewEvent`; the history endpoint merges the two streams.
+
+    Rows are never updated or deleted — the only removal is the database cascade
+    when the finding goes with its scan. The ORM refuses an UPDATE or DELETE
+    outright (see the listeners below) and `app/services/decisions.py` exposes
+    inserts only."""
+
+    __tablename__ = "finding_decisions"
+    __table_args__ = (Index("ix_finding_decisions_finding_at", "finding_id", "at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    finding_id: Mapped[str] = mapped_column(ForeignKey("findings.id", ondelete="CASCADE"))
+    scan_id: Mapped[str] = mapped_column(String(36), index=True)
+    occurrence_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # deep_scan | triage_regex | triage_llm | group_confirm | flow_verify |
+    # reachability_floor | joern_confirm | reconcile | sca_match
+    stage: Mapped[str] = mapped_column(String(30))
+    verdict: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    unresolved_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    verdict_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The scan's `versions` block plus `result_cache_hit` (was the model answer replayed).
+    evidence_version: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AppendOnlyError(RuntimeError):
+    """Something tried to change or delete a row of an append-only table."""
+
+
+@event.listens_for(FindingDecision, "before_update")
+def _decisions_are_append_only_on_update(*_args) -> None:
+    raise AppendOnlyError("finding_decisions rows are append-only and cannot be updated")
+
+
+@event.listens_for(FindingDecision, "before_delete")
+def _decisions_are_append_only_on_delete(*_args) -> None:
+    raise AppendOnlyError("finding_decisions rows are append-only and cannot be deleted")
 
 
 class FindingTriageEvent(Base):

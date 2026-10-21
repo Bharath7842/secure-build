@@ -16,10 +16,10 @@ from sqlalchemy import func, or_
 
 from app import db as db_module
 from app.config import settings
-from app.models import DAST_SETTINGS_SNAPSHOT_KEY, UNVERIFIED_VERDICT, Finding, Scan
+from app.models import DAST_SETTINGS_SNAPSHOT_KEY, UNVERIFIED_VERDICT, Finding, FindingDecision, Scan
 from app.dast.domain.identities import identity_from_public
 from app.dast.domain.redaction import redact_json, redact_text
-from app.services import agent_bridge, engine_adapter, git_token, git_workspace, scan_log, scan_versions
+from app.services import agent_bridge, decisions, engine_adapter, git_token, git_workspace, scan_log, scan_versions
 from app.services.credential_holder import InMemoryCredentialHolder
 from app.services.dast_findings import DastFindingsWriter
 from app.services.finding_rows import build_evidence_row, build_finding_row
@@ -362,7 +362,7 @@ def reconcile_unverified_findings(scan_id: str, *, capped: bool = False) -> None
                 llm_model=scan.llm_model,
                 group_cap=group_cap,
                 groups_per_call=agent.llm_file_scan.DEFAULT_GROUPS_PER_CALL,
-                verdict_updates_writer=_make_verdict_updates_writer(scan_id),
+                verdict_updates_writer=_make_verdict_updates_writer(scan_id, stage="reconcile"),
             )
             sync_findings_report_to_metadata(db, scan_id)
             scan_log.log(
@@ -405,6 +405,39 @@ def unresolved_counts(db, scan_id: str) -> dict[str, int]:
         .all()
     )
     return {(reason or "unknown"): count for reason, count in rows}
+
+
+def decision_counts(db, scan_id: str) -> dict[str, int]:
+    """Decision rows of a scan by stage. A stage that silently stops writing
+    decisions shows up as a count that is missing or far too low."""
+    rows = (
+        db.query(FindingDecision.stage, func.count(FindingDecision.id))
+        .filter(FindingDecision.scan_id == scan_id)
+        .group_by(FindingDecision.stage)
+        .all()
+    )
+    return {stage: count for stage, count in rows}
+
+
+def _record_decision_counts(scan_id: str) -> None:
+    """Put the per-stage decision counts in the scan's `usage_summary`, and log them."""
+    db = db_module.SessionLocal()
+    try:
+        counts = decision_counts(db, scan_id)
+        scan = db.get(Scan, scan_id)
+        if scan is None:
+            return
+        metadata = dict(scan.metadata_json or {})
+        summary = dict(metadata.get("usage_summary") or {})
+        summary["decisions_by_stage"] = counts
+        metadata["usage_summary"] = summary
+        scan.metadata_json = metadata
+        db.commit()
+    finally:
+        db.close()
+    if counts:
+        detail = ", ".join(f"{stage}={count}" for stage, count in sorted(counts.items()))
+        scan_log.log(scan_id, f"Decision history rows by stage: {detail}.")
 
 
 def _log_identity_summary(scan_id: str) -> None:
@@ -493,6 +526,7 @@ def _make_findings_writer(scan_id: str):
             with _DB_WRITE_LOCK:
                 session.add_all(rows)
                 session.flush()  # assign finding ids so evidence rows can reference them
+                decisions.record_initial(session, rows, findings, scan)
                 for finding_row, f in zip(rows, findings):
                     evidence = f.get("evidence")
                     if evidence:
@@ -529,27 +563,26 @@ def _make_reachability_updates_writer(scan_id: str):
         try:
             changed = 0
             with _DB_WRITE_LOCK:
+                scan = session.get(Scan, scan_id)
                 for update in updates:
                     rule_id = update.get("rule_id")
                     line = update.get("line")
                     if rule_id is None or line is None:
                         continue
-                    changed += (
-                        session.query(Finding)
-                        .filter(
-                            Finding.scan_id == scan_id,
-                            Finding.file_path == file_path,
-                            Finding.rule_id == rule_id,
-                            Finding.line == line,
-                        )
-                        .update(
-                            {
-                                "reachability": update.get("reachability"),
-                                "confidence": update.get("confidence"),
-                            },
-                            synchronize_session=False,
-                        )
-                    )
+                    for row in _matching_findings(session, scan_id, file_path, rule_id, line):
+                        before_verdict, before_confidence = row.verdict, row.confidence
+                        row.reachability = update.get("reachability")
+                        row.confidence = update.get("confidence")
+                        changed += 1
+                        # A path can lift a confirmed finding's confidence to the
+                        # reachability floor; that is a decision. Evidence that leaves
+                        # confidence where it was is not.
+                        if (row.confidence or 0) > (before_confidence or 0):
+                            decisions.record_change(
+                                session, row, before_verdict=before_verdict,
+                                before_confidence=before_confidence, stage="reachability_floor",
+                                scan=scan,
+                            )
                 session.commit()
             if changed:
                 scan_log.log(scan_id, f"  Attached code property graph dataflow evidence to {changed} finding(s) in {file_path}.")
@@ -559,10 +592,27 @@ def _make_reachability_updates_writer(scan_id: str):
     return write_reachability_updates
 
 
-def _make_verdict_updates_writer(scan_id: str):
+def _matching_findings(session, scan_id: str, file_path: str, rule_id: str, line: int) -> list[Finding]:
+    """The rows an update keyed (scan, file, rule, line) applies to."""
+    return (
+        session.query(Finding)
+        .filter(
+            Finding.scan_id == scan_id,
+            Finding.file_path == file_path,
+            Finding.rule_id == rule_id,
+            Finding.line == line,
+        )
+        .all()
+    )
+
+
+def _make_verdict_updates_writer(scan_id: str, stage: str | None = None):
     """One short-lived DB session per file — updates existing Finding rows in
     place after grouped confirmation of unverified findings (never a fresh
-    insert, unlike `_make_findings_writer`)."""
+    insert, unlike `_make_findings_writer`). Each change of verdict or confidence
+    also appends a `FindingDecision`, under the same lock and transaction; the
+    stage is the update's own `decision_stage`, else `stage`, else group_confirm
+    (the reconcile sweep passes `stage="reconcile"`)."""
 
     def write_verdict_updates(file_path: str, updates: list[dict]) -> None:
         if not updates:
@@ -571,6 +621,7 @@ def _make_verdict_updates_writer(scan_id: str):
         try:
             changed = 0
             with _DB_WRITE_LOCK:
+                scan = session.get(Scan, scan_id)
                 for update in updates:
                     rule_id = update.get("rule_id")
                     line = update.get("line")
@@ -590,16 +641,17 @@ def _make_verdict_updates_writer(scan_id: str):
                         values["unresolved_reason"] = None
                     if not values:
                         continue
-                    changed += (
-                        session.query(Finding)
-                        .filter(
-                            Finding.scan_id == scan_id,
-                            Finding.file_path == file_path,
-                            Finding.rule_id == rule_id,
-                            Finding.line == line,
+                    for row in _matching_findings(session, scan_id, file_path, rule_id, line):
+                        before_verdict, before_confidence = row.verdict, row.confidence
+                        for column, value in values.items():
+                            setattr(row, column, value)
+                        changed += 1
+                        decisions.record_change(
+                            session, row, before_verdict=before_verdict,
+                            before_confidence=before_confidence,
+                            stage=stage or update.get("decision_stage") or decisions.DEFAULT_CONFIRM_STAGE,
+                            scan=scan, result_cache_hit=bool(update.get("result_cache_hit")),
                         )
-                        .update(values, synchronize_session=False)
-                    )
                 session.commit()
             if changed:
                 scan_log.log(scan_id, f"  Confirmed {changed} finding(s) for {file_path} via grouped review.")
@@ -1294,6 +1346,7 @@ def execute_scan(scan_id: str) -> None:
                 reconcile_unverified_findings(scan_id)
                 _log_unresolved_summary(scan_id)
                 _log_identity_summary(scan_id)
+                _record_decision_counts(scan_id)
                 scan = db.get(Scan, scan_id)
                 if scan is None:
                     return

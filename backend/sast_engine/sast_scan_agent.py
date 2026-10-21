@@ -1568,6 +1568,17 @@ def _resolve_active_surfaces(state: SastState, rules_path: Path):
     )
 
 
+def _staged_verdict_writer(writer, stage: str):
+    """`writer` with every update tagged as decided by `stage` (decision history)."""
+    if writer is None:
+        return None
+
+    def write(file_path: str, updates: List[Dict[str, Any]]) -> None:
+        writer(file_path, [{**update, "decision_stage": stage} for update in updates])
+
+    return write
+
+
 def _findings_writer(state: SastState):
     """`state["findings_writer"]`, stamped with each finding's occurrence
     identity (sink expression, enclosing method, ordinal) on the way through.
@@ -2461,7 +2472,7 @@ def node_joern_scan(state: SastState) -> dict:
             llm_provider=state.get("llm_provider"), llm_model=state.get("llm_model"),
             group_cap=state.get("triage_confirm_group_cap", llm_file_scan.TRIAGE_CONFIRM_GROUP_CAP),
             groups_per_call=state.get("triage_confirm_groups_per_call", llm_file_scan.DEFAULT_GROUPS_PER_CALL),
-            verdict_updates_writer=state.get("verdict_updates_writer"),
+            verdict_updates_writer=_staged_verdict_writer(state.get("verdict_updates_writer"), "joern_confirm"),
         )
         tracer.log(12, "joern_scan",
                     f"Confirmed {confirm_result['confirm_group_count']} code property graph group(s): "

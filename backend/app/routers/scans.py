@@ -18,6 +18,7 @@ from app.schemas import (
     DastAuthzMatrixOut,
     DastRequestAuditPageOut,
     DastScanFindingsOut,
+    FindingHistoryOut,
     FindingOut,
     ScanCreate,
     ScanFindingsOut,
@@ -35,6 +36,7 @@ from app.services.dast_report import build_dast_report
 from app.services.dast_summary import build_summary
 from app.services.dast_findings_query import build_dast_findings
 from app.services.dast_scan_setup import DastSetupError, prepare_dast_scan
+from app.services.decision_history import finding_history
 from app.services.feedback import apply_effective_verdicts, effective_scan_findings
 from app.services.ollama_check import DEFAULT_FALLBACK_OLLAMA_MODEL, ollama_model_error
 from app.services.scan_export import (
@@ -575,6 +577,23 @@ def get_scan_findings(
         severity_group_counts=severity_group_counts,
         findings=[FindingOut.model_validate(f) for f in grouped_findings],
     )
+
+
+@router.get("/{scan_id}/findings/{finding_id}/history", response_model=FindingHistoryOut)
+def get_finding_history(
+    scan_id: str,
+    finding_id: str,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require("scans.view_own")),
+):
+    """Every machine and human decision on one finding, in time order: the scanner's
+    verdict at each stage (and the evidence version it was made under) merged with
+    the reviewers' events."""
+    scan = _get_scan_or_404(db, scan_id, principal)
+    finding = db.get(Finding, finding_id)
+    if finding is None or finding.scan_id != scan.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found")
+    return {"scan_id": scan.id, "finding_id": finding.id, "entries": finding_history(db, finding)}
 
 
 @router.get("/{scan_id}/requests", response_model=DastRequestAuditPageOut)

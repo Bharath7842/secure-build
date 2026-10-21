@@ -75,6 +75,41 @@ export function formatWhen(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
+/** Where in the pipeline a machine decision was made (`FindingDecision.stage`). */
+export const STAGE_LABEL: Record<string, string> = {
+  deep_scan: "Deep scan",
+  triage_regex: "Regex match",
+  triage_llm: "LLM triage",
+  group_confirm: "Grouped review",
+  flow_verify: "Flow verification",
+  reachability_floor: "Reachability evidence",
+  joern_confirm: "Code-graph review",
+  reconcile: "Final sweep",
+  sca_match: "Dependency match",
+};
+
+/** "Unresolved → Confirmed (90% confidence)" for a machine decision, or the reviewer's change. */
+export function describeVerdictChange(entry: {
+  source: string;
+  from_verdict: string | null;
+  to_verdict: string | null;
+  confidence: number | null;
+  action: string | null;
+}): string {
+  if (entry.source === "human") {
+    const label = (v: string | null) => REVIEWER_VERDICT_LABEL[v as ReviewerVerdict] ?? v ?? "none";
+    return entry.from_verdict && entry.from_verdict !== entry.to_verdict
+      ? `${label(entry.from_verdict)} → ${label(entry.to_verdict)}`
+      : label(entry.to_verdict);
+  }
+  const label = (v: string | null) =>
+    v === "true_positive" ? "Confirmed" : v === "false_positive" ? "False positive" : v === "unverified" ? "Unresolved" : "—";
+  const confidence = entry.confidence == null ? "" : ` (${Math.round(entry.confidence * 100)}% confidence)`;
+  return entry.from_verdict && entry.from_verdict !== entry.to_verdict
+    ? `${label(entry.from_verdict)} → ${label(entry.to_verdict)}${confidence}`
+    : `${label(entry.to_verdict)}${confidence}`;
+}
+
 /** One line for a history entry, e.g. "alice changed the verdict: Confirmed Issue → False Positive". */
 export function describeEvent(event: ReviewEvent): string {
   const verdict = (v: string | null) => REVIEWER_VERDICT_LABEL[v as ReviewerVerdict] ?? v ?? "none";

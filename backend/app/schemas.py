@@ -597,6 +597,30 @@ class DastScanFindingsOut(BaseModel):
     findings: list[DastFindingOut]
 
 
+class DecisionHistoryEntryOut(BaseModel):
+    """One decision in a finding's history: the scanner's (`machine`, `actor` is the
+    stage that decided) or a reviewer's (`human`, `actor` is the user)."""
+
+    source: str
+    actor: str | None = None
+    at: datetime | None = None
+    from_verdict: str | None = None
+    to_verdict: str | None = None
+    confidence: float | None = None
+    unresolved_reason: str | None = None
+    reason: str | None = None
+    # The scan's `versions` block plus `result_cache_hit`; machine entries only.
+    evidence_version: dict | None = None
+    # The reviewer action (e.g. "reviewed"); human entries only.
+    action: str | None = None
+
+
+class FindingHistoryOut(BaseModel):
+    scan_id: str
+    finding_id: str
+    entries: list[DecisionHistoryEntryOut]
+
+
 class ScanFindingsOut(BaseModel):
     scan_id: str
     tp_count: int

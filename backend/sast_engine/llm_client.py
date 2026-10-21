@@ -462,6 +462,17 @@ def record_result_cache_hit(
         stats["by_step"][step] = stats["by_step"].get(step, 0) + 1
 
 
+_CALL_STATE = threading.local()
+
+
+def last_call_was_cache_hit() -> bool:
+    """Whether the most recent `call_llm` on *this thread* returned a replayed
+    answer from the cross-scan result cache. Read right after the call whose
+    response is being parsed, in the same thread, to record how a decision was
+    produced (`FindingDecision.evidence_version["result_cache_hit"]`)."""
+    return bool(getattr(_CALL_STATE, "cache_hit", False))
+
+
 def record_verdict_event(usage: Optional[Dict[str, Any]], step: str, key: str) -> None:
     """Count a model answer whose verdict was unusable, per LLM step. `key` is
     `unrecognised_verdicts` (something that is not a decision) or
@@ -700,6 +711,7 @@ def call_llm(
                     "provider": provider, "model": model,
                     "input_tokens": 0, "output_tokens": 0, "result_cache_hit": True,
                 })
+            _CALL_STATE.cache_hit = True
             return hit["text"]
 
     caller_meta = meta_out
@@ -787,6 +799,7 @@ def call_llm(
     if caller_meta is not None:
         caller_meta.update(meta_out)
         caller_meta.update({"provider": provider, "model": model})
+    _CALL_STATE.cache_hit = False
     return text
 
 

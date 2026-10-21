@@ -41,6 +41,7 @@ import type {
   ReviewInput,
   Scan,
   ScanCreateInput,
+  FindingHistory,
   ScanFindings,
   ScanLimitation,
   DastNarration,
@@ -264,6 +265,9 @@ export const api = {
       const search = verdict ? `?verdict=${encodeURIComponent(verdict)}` : "";
       return request(`/api/scans/${id}/findings${search}`);
     },
+    /** Every machine and human decision on one finding, in time order. */
+    findingHistory: (id: string, findingId: string): Promise<FindingHistory> =>
+      request(`/api/scans/${id}/findings/${findingId}/history`),
     logs: (id: string, after = 0): Promise<ScanLogs> =>
       request(`/api/scans/${id}/logs?after=${after}`),
     narration: (id: string): Promise<DastNarration> => request(`/api/scans/${id}/narration`),

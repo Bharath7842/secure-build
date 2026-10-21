@@ -417,6 +417,28 @@ export interface FlowHop {
   snippet: string;
 }
 
+/** One decision in a finding's history: the scanner's (`machine`; `actor` is the stage that
+ *  decided) or a reviewer's (`human`; `actor` is the user). */
+export interface FindingHistoryEntry {
+  source: "machine" | "human";
+  actor: string | null;
+  at: string | null;
+  from_verdict: string | null;
+  to_verdict: string | null;
+  confidence: number | null;
+  unresolved_reason: string | null;
+  reason: string | null;
+  /** The scan's recorded versions plus `result_cache_hit`; machine entries only. */
+  evidence_version: Record<string, unknown> | null;
+  action: string | null;
+}
+
+export interface FindingHistory {
+  scan_id: string;
+  finding_id: string;
+  entries: FindingHistoryEntry[];
+}
+
 export interface ScanFindings {
   scan_id: string;
   tp_count: number;

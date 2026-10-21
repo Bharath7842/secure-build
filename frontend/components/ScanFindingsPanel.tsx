@@ -25,6 +25,7 @@ import {
   ISSUE_STATUS_LABEL,
   llmVerdictLabel,
 } from "@/lib/review";
+import FindingDecisionHistory from "@/components/FindingDecisionHistory";
 import FindingReviewForm from "@/components/FindingReviewForm";
 import FlowTracePanel, { hopsForFinding } from "@/components/FlowTracePanel";
 import ReachabilityEvidence from "@/components/ReachabilityEvidence";
@@ -451,6 +452,7 @@ export default function ScanFindingsPanel({
                       </span>
                     ) : null}
                   </div>
+                  <FindingDecisionHistory scanId={scanId} findingId={finding.id} />
                   <FindingReviewForm
                     scanId={scanId}
                     findingId={finding.id}
