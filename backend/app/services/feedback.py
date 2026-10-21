@@ -131,6 +131,31 @@ def effective_verdict(llm_verdict: str | None, review: FindingReview | None) -> 
     return llm_verdict
 
 
+REVIEW_STATES = ("pending", "agreed", "overridden", "resolved")
+
+
+def review_state(review: FindingReview | None, scanner_verdict: str | None) -> str:
+    """Where human review of a finding stands, apart from what the scanner decided:
+
+    * `pending`    — no review yet (or only a "needs more info" note);
+    * `agreed`     — the reviewer's verdict equals the scanner's;
+    * `overridden` — the reviewer decided differently (`is_override`);
+    * `resolved`   — someone closed the issue as fixed or accepted its risk.
+
+    It is a workflow state and is never encoded in `verdict`: a finding the
+    scanner dismissed with no reviewer yet is "Scanner: False Positive · Review:
+    pending", not "Needs Review"."""
+    if review is None:
+        return "pending"
+    if review.resolution_status in (RESOLUTION_RESOLVED, RESOLUTION_RISK_ACCEPTED):
+        return "resolved"
+    if review.is_override:
+        return "overridden"
+    if _LLM_EQUIVALENT.get(review.reviewer_verdict) == scanner_verdict:
+        return "agreed"
+    return "pending"
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -396,6 +421,7 @@ def apply_effective_verdicts(db: Session, scan: Scan, findings: list[Finding]) -
         review = by_member.get(finding.id)
         finding.llm_verdict = finding.verdict
         finding.review = review_summary(review) if review else None
+        finding.review_state = review_state(review, finding.verdict)
         if review is not None:
             set_committed_value(finding, "verdict", effective_verdict(finding.verdict, review))
     return findings

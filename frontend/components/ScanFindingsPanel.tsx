@@ -14,11 +14,15 @@ import {
   VERDICT_TEXT,
   normalizeSeverity,
 } from "@/lib/findingStyles";
-import { verdictKind, type VerdictKind } from "@/lib/verdict";
+import {
+  reviewStateLabel,
+  unresolvedReasonLabel,
+  verdictKind,
+  type VerdictKind,
+} from "@/lib/verdict";
 import {
   ISSUE_STATUS_CHIP,
   ISSUE_STATUS_LABEL,
-  OVERRIDE_CHIP,
   llmVerdictLabel,
 } from "@/lib/review";
 import FindingReviewForm from "@/components/FindingReviewForm";
@@ -47,7 +51,8 @@ function ChevronIcon() {
 const VERDICT_SHORT: Record<VerdictKind, string> = {
   confirmed: "Confirmed",
   dismissed: "False positive",
-  unverified: "Unverified",
+  unverified: "Unresolved",
+  unknown: "Unknown",
 };
 
 const AFFECTED_FILES_PREVIEW = 5;
@@ -271,6 +276,12 @@ export default function ScanFindingsPanel({
               const severity = normalizeSeverity(finding.severity);
               const riskStyle = RISK_STYLES[severity];
               const kind = verdictKind(finding.verdict);
+              // `verdict` is the effective one (the reviewer's, once there is one); what the
+              // scanner decided is `llm_verdict`. Both are shown, by their real names.
+              const scannerKind = verdictKind(finding.llm_verdict ?? finding.verdict);
+              const reviewState = reviewStateLabel(finding.review_state);
+              const unresolvedWhy =
+                scannerKind === "unverified" ? unresolvedReasonLabel(finding.unresolved_reason) : null;
               const hasTaintFlow = Boolean(
                 finding.source?.trim() || finding.sink?.trim() || finding.data_flow?.trim(),
               );
@@ -308,17 +319,16 @@ export default function ScanFindingsPanel({
                           />
                           {severity}
                         </span>
-                        <span className={`text-xs font-medium ${VERDICT_TEXT[kind]}`}>
-                          {VERDICT_SHORT[kind]}
+                        <span
+                          className={`text-xs font-medium ${VERDICT_TEXT[scannerKind]}`}
+                          title={unresolvedWhy ? `Unresolved: ${unresolvedWhy}` : undefined}
+                        >
+                          Scanner: {VERDICT_SHORT[scannerKind]}
+                          <span className="font-normal text-[var(--muted)]"> · Review: {reviewState}</span>
                         </span>
                         {finding.review?.reviewer_verdict ? (
                           <span className={ISSUE_STATUS_CHIP[finding.review.issue_status]}>
                             {ISSUE_STATUS_LABEL[finding.review.issue_status]}
-                          </span>
-                        ) : null}
-                        {finding.review?.is_override ? (
-                          <span className={OVERRIDE_CHIP} title="The reviewer changed the LLM verdict">
-                            Overridden
                           </span>
                         ) : null}
                         {(finding.occurrence_count ?? 1) > 1 && (
@@ -424,8 +434,17 @@ export default function ScanFindingsPanel({
                     </pre>
                   ) : null}
                   <div className="mt-1.5 text-xs">
-                    <span className="font-medium text-[var(--muted)]">Verdict: </span>
-                    <span className={`font-medium ${VERDICT_TEXT[kind]}`}>{VERDICT_LABEL[kind]}</span>
+                    <span className="font-medium text-[var(--muted)]">Scanner verdict: </span>
+                    <span className={`font-medium ${VERDICT_TEXT[scannerKind]}`}>
+                      {VERDICT_LABEL[scannerKind]}
+                    </span>
+                    {unresolvedWhy ? (
+                      <span className="ml-1 text-[var(--muted)]">({unresolvedWhy})</span>
+                    ) : null}
+                    <span className="ml-2 text-[var(--muted)]">
+                      · Review: {reviewState}
+                      {kind !== scannerKind ? ` (effective verdict: ${VERDICT_LABEL[kind]})` : ""}
+                    </span>
                     {finding.review?.reviewer_verdict ? (
                       <span className="ml-2 text-[var(--muted)]">
                         (LLM said {llmVerdictLabel(finding.llm_verdict)}; reviewed by {finding.review.reviewer})

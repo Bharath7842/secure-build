@@ -350,6 +350,8 @@ export interface Finding {
   identity_quality?: "exact" | "file_level" | null;
   /** A grouped row's member occurrence ids. */
   member_occurrence_ids?: string[] | null;
+  /** The human review workflow, apart from `verdict` (what the scanner decided). */
+  review_state?: "pending" | "agreed" | "overridden" | "resolved" | null;
   /** Raw rows this grouped finding stands for (1 when ungrouped). */
   occurrence_count?: number | null;
   /** The literal text the regex matched — findings group by rule + this. */

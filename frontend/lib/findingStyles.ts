@@ -33,19 +33,23 @@ export const VERDICT_ROW: Record<VerdictKind, string> = {
   confirmed: "border-red-100 bg-red-50/40",
   dismissed: "border-emerald-100 bg-emerald-50/30",
   unverified: "border-amber-100 bg-amber-50/30",
+  unknown: "border-slate-300 bg-slate-100/60",
 };
 
 export const VERDICT_TEXT: Record<VerdictKind, string> = {
   confirmed: "text-red-700",
   dismissed: "text-emerald-700",
   unverified: "text-amber-700",
+  unknown: "text-slate-700",
 };
 
-/** The SAST wording: an unverified finding there is a regex match nobody reviewed. */
+/** The SAST wording: the scanner's verdict by its real name. An unverified finding is
+ *  unresolved; `unresolvedReasonLabel` says why. */
 export const VERDICT_LABEL: Record<VerdictKind, string> = {
   confirmed: "Confirmed",
   dismissed: "False positive",
-  unverified: "Unverified — regex match, not reviewed",
+  unverified: "Unresolved",
+  unknown: "Unknown verdict",
 };
 
 /** DAST wording: confirmed is the model's FAIL, dismissed is the model's PASS. */
@@ -53,6 +57,7 @@ export const DAST_VERDICT_LABEL: Record<VerdictKind, string> = {
   confirmed: "Confirmed",
   dismissed: "Dismissed",
   unverified: "Dismissed",
+  unknown: "Dismissed",
 };
 
 export function formatConfidence(value: number | null | undefined): string | null {

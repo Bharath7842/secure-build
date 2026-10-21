@@ -230,12 +230,14 @@ def test_group_findings_by_issue_llm_findings_unaffected_by_matched_text():
 
 
 def test_display_verdict_labels_unverified_distinctly():
-    """An unverified finding must not read as confirmed or as dismissed."""
+    """An unresolved finding must not read as confirmed or as dismissed, and a
+    dismissed one is a False Positive — never "Needs Review"."""
     from app.services.scan_export import _display_verdict
 
-    assert _display_verdict("unverified") == "Unverified (regex)"
+    assert _display_verdict("unverified", "not_reviewed_regex") == "Unresolved (regex, not reviewed)"
+    assert _display_verdict("unverified") == "Unresolved"
     assert _display_verdict("true_positive") == "True Positive"
-    assert _display_verdict("false_positive") == "Needs Review"
+    assert _display_verdict("false_positive") == "False Positive"
 
 
 def test_group_findings_by_issue_singleton_unchanged():
@@ -309,6 +311,10 @@ def test_build_excel_report_returns_xlsx_bytes():
     assert len(data) > 500
 
 
+def headers_row(sheet):
+    return [cell.value for cell in sheet[1]]
+
+
 def test_excel_findings_use_expected_columns():
     project, scan, findings = _sample()
     data = build_excel_report(project, scan, findings)
@@ -318,7 +324,11 @@ def test_excel_findings_use_expected_columns():
     assert headers == [
         "#",
         "Severity",
-        "Verdict",
+        "Scanner Verdict",
+        "Review State",
+        "Issue Class",
+        "Unresolved Reason",
+        "Verdict (raw)",
         "OWASP Category",
         "CWE",
         "CVSS",
@@ -332,20 +342,22 @@ def test_excel_findings_use_expected_columns():
         "Example Fix",
         "Occurrence ID",
     ]
-    row = [cell.value for cell in sheet[2]]
-    assert row[1] == "HIGH"
-    assert row[2] == "True Positive"
-    assert row[3] == "A03:2021 – Injection"
-    assert row[4] == "CWE-89"
-    assert row[6] == "91%"
-    assert row[8] == "SQL injection via concatenated user input"
-    assert "app/db.py" in (row[9] or "")
-    assert "SELECT * FROM users" in (row[9] or "")
-    assert "request.getParameter" in (row[10] or "")
-    assert "executeQuery" in (row[10] or "")
-    assert "Attackers can read" in (row[11] or "")
-    assert row[12] == "Use parameterized queries."
-    assert "cursor.execute" in (row[13] or "")
+    by_header = dict(zip(headers_row(sheet), [cell.value for cell in sheet[2]]))
+    assert by_header["Severity"] == "HIGH"
+    assert by_header["Scanner Verdict"] == "True Positive"
+    assert by_header["Review State"] == "pending"
+    assert by_header["Verdict (raw)"] == "TRUE_POSITIVE"
+    assert by_header["OWASP Category"] == "A03:2021 – Injection"
+    assert by_header["CWE"] == "CWE-89"
+    assert by_header["Confidence"] == "91%"
+    assert by_header["Issue"] == "SQL injection via concatenated user input"
+    assert "app/db.py" in (by_header["Location(s)"] or "")
+    assert "SELECT * FROM users" in (by_header["Location(s)"] or "")
+    assert "request.getParameter" in (by_header["Data Flow"] or "")
+    assert "executeQuery" in (by_header["Data Flow"] or "")
+    assert "Attackers can read" in (by_header["Risk"] or "")
+    assert by_header["Recommendation"] == "Use parameterized queries."
+    assert "cursor.execute" in (by_header["Example Fix"] or "")
 
 
 def test_excel_summary_includes_gate_and_owasp_distribution():
@@ -388,7 +400,7 @@ def test_excel_strips_illegal_control_chars_from_binary_snippets():
     data = build_excel_report(project, scan, findings)
     assert data[:2] == b"PK"
     wb = load_workbook(BytesIO(data))
-    location_cell = wb["Findings"].cell(2, 10).value or ""
+    location_cell = wb["Findings"].cell(2, 14).value or ""
     assert "\x00" not in location_cell
     assert "visible text" in location_cell
 
@@ -425,7 +437,7 @@ def test_excel_truncates_oversized_cells():
     data = build_excel_report(project, scan, findings)
     wb = load_workbook(BytesIO(data))
     sheet = wb["Findings"]
-    cell = sheet.cell(2, 14).value or ""
+    cell = sheet.cell(2, 18).value or ""
     assert len(cell) <= _EXCEL_CELL_MAX
     assert "truncated" in cell.lower()
 
@@ -623,7 +635,7 @@ def test_excel_summary_reports_groups_occurrences_and_dismissed():
     assert rows["Actionable issues (groups)"][0] == 1
     assert rows["Occurrences"][0] == 3
     assert rows["HIGH"][:2] == [1, 3]
-    assert rows["Dismissed (false positive)"][:2] == [1, 2]
+    assert rows["False positive"][:2] == [1, 2]
     # The OWASP table leaves the dismissed category out entirely.
     from app.services.scan_export import OWASP_NAMES
 
@@ -638,7 +650,11 @@ def test_pdf_headline_names_groups_and_dismissed():
     data = build_pdf_report(project, scan, group_findings_by_issue(_construct_rows()))
     text = "".join(page.extract_text() for page in PdfReader(BytesIO(data)).pages[:1])
     assert "group · 3 occurrences" in text
-    assert "Dismissed: 1 group (2 occurrences)" in text
+    flat = " ".join(text.split())  # the note wraps across lines
+    assert "Confirmed: 1 group (3 occurrences)" in flat
+    assert "Unresolved: 0 groups (0 occurrences)" in flat
+    assert "False Positive: 1 group (2 occurrences)" in flat
+    assert "Dismissed" not in text
 
 
 def _llm(fid, cwe, title, path, line, rule_id="llm-extra", verdict="true_positive", kind="llm"):

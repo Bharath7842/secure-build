@@ -33,6 +33,7 @@ the only export formats for SBOM — the CycloneDX/SPDX JSON documents in
 from __future__ import annotations
 
 import io
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -63,6 +64,8 @@ from app.models import UNVERIFIED_VERDICT, Finding, Project, Scan
 from app.services.gates import build_gate_summary
 from app.services.git_workspace import redact_git_url
 from app.services.module_path import to_module_path
+
+logger = logging.getLogger(__name__)
 
 SEVERITY_ORDER = ("critical", "high", "medium", "low", "info")
 
@@ -190,18 +193,65 @@ def _severity_bucket(value: str | None) -> str:
     return key if key in SEVERITY_ORDER else "info"
 
 
-def _display_verdict(value: str | None) -> str:
-    """UI/report label — FALSE_POSITIVE is shown as Needs Review."""
-    key = (value or "").strip().upper()
-    if not key:
+# How an `unresolved_reason` reads after "Unresolved (" in a report.
+_UNRESOLVED_LABELS = {
+    "not_reviewed_regex": "regex, not reviewed",
+    "not_reviewed_joern": "code-graph query, not reviewed",
+    "not_reviewed_sca": "dependency match, not reviewed",
+    "llm_missing_verdict": "model gave no verdict",
+    "llm_unrecognised_verdict": "model verdict not recognised",
+    "llm_call_failed": "model call failed",
+    "llm_budget_exhausted": "LLM budget reached",
+    "cap_reached": "review cap reached",
+    "evidence_missing": "evidence missing",
+}
+
+
+def _display_verdict(value: str | None, unresolved_reason: str | None = None) -> str:
+    """The scanner's verdict by its real name. FALSE_POSITIVE is "False Positive" —
+    never "Needs Review", which is a review *state*, not a verdict (see
+    `_review_state_label`). An `unverified` verdict reads "Unresolved" and, when
+    the reason is known, says why. A value outside the contract reads
+    "Unknown (<raw>)" and is logged: it means a non-enum verdict reached the
+    export layer."""
+    raw = (value or "").strip()
+    if not raw:
         return "—"
-    if key in ("FALSE_POSITIVE", "NEEDS_REVIEW"):
-        return "Needs Review"
-    if key == "TRUE_POSITIVE":
+    key = raw.lower().replace("-", "_").replace(" ", "_")
+    if key == "true_positive":
         return "True Positive"
-    if key == UNVERIFIED_VERDICT.upper():
-        return "Unverified (regex)"
-    return value.replace("_", " ") if value else "—"
+    if key == "false_positive":
+        return "False Positive"
+    if key == UNVERIFIED_VERDICT:
+        if unresolved_reason:
+            return f"Unresolved ({_UNRESOLVED_LABELS.get(unresolved_reason, unresolved_reason)})"
+        return "Unresolved"
+    logger.warning("export saw a verdict outside the contract: %r", value)
+    return f"Unknown ({raw})"
+
+
+def _scanner_verdict(finding: Finding) -> str | None:
+    """The verdict the scanner stored. Reading a finding through
+    `apply_effective_verdicts` overwrites `verdict` with the reviewer's and keeps
+    the scanner's in `llm_verdict`; exports must show the scanner's."""
+    return getattr(finding, "llm_verdict", None) or finding.verdict
+
+
+_REVIEWER_VERDICT_LABELS = {"confirmed_issue": "True Positive", "false_positive": "False Positive"}
+
+
+def _review_state(finding: Finding) -> str:
+    return getattr(finding, "review_state", None) or "pending"
+
+
+def _review_state_label(finding: Finding) -> str:
+    """`pending`, `agreed`, `overridden → <reviewer verdict>` or `resolved`."""
+    state = _review_state(finding)
+    if state == "overridden":
+        reviewer = (getattr(finding, "review", None) or {}).get("reviewer_verdict")
+        if reviewer in _REVIEWER_VERDICT_LABELS:
+            return f"overridden → {_REVIEWER_VERDICT_LABELS[reviewer]}"
+    return state
 
 
 def _fmt_dt(value: datetime | None) -> str:
@@ -277,6 +327,28 @@ def count_groups_by_severity(grouped: list[Finding]) -> dict[str, Any]:
         bucket["groups"] += 1
         bucket["occurrences"] += _occurrences(finding)
     return {"actionable": actionable, "dismissed": dismissed}
+
+
+# Report names for the verdict buckets, by effective verdict.
+_BUCKET_LABELS = {
+    "true_positive": "Confirmed",
+    UNVERIFIED_VERDICT: "Unresolved",
+    "false_positive": "False Positive",
+}
+
+
+def verdict_bucket_totals(grouped: list[Finding]) -> dict[str, dict[str, int]]:
+    """{bucket label: {groups, occurrences}} over `group_findings_by_issue` output,
+    by effective verdict, for the three verdict buckets plus "Unknown" when a
+    value outside the contract is present."""
+    totals = {label: {"groups": 0, "occurrences": 0} for label in _BUCKET_LABELS.values()}
+    for finding in grouped:
+        key = (finding.verdict or "").strip().lower()
+        label = _BUCKET_LABELS.get(key, "Unknown")
+        bucket = totals.setdefault(label, {"groups": 0, "occurrences": 0})
+        bucket["groups"] += 1
+        bucket["occurrences"] += _occurrences(finding)
+    return totals
 
 
 def _count_by_owasp(findings: list[Finding]) -> list[tuple[str, int, int, int]]:
@@ -850,7 +922,7 @@ def _build_summary_sheet(sheet: Any, project: Project, scan: Scan, findings: lis
         ),
         ("Actionable issues (groups)", sum(v["groups"] for v in actionable.values())),
         ("Occurrences", sum(v["occurrences"] for v in actionable.values())),
-        ("Dismissed", f"{dismissed['groups']} groups ({dismissed['occurrences']} occurrences)"),
+        ("False positive", f"{dismissed['groups']} groups ({dismissed['occurrences']} occurrences)"),
     ]
     status_note = _scan_status_banner(scan)
     if status_note:
@@ -877,7 +949,7 @@ def _build_summary_sheet(sheet: Any, project: Project, scan: Scan, findings: lis
             count_cell.alignment = Alignment(horizontal="center")
             count_cell.border = _THIN
         row += 1
-    sheet.cell(row, 1, "Dismissed (false positive)").border = _THIN
+    sheet.cell(row, 1, "False positive").border = _THIN
     for col, value in ((2, dismissed["groups"]), (3, dismissed["occurrences"])):
         count_cell = sheet.cell(row, col, value)
         count_cell.alignment = Alignment(horizontal="center")
@@ -907,7 +979,11 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
     headers = [
         "#",
         "Severity",
-        "Verdict",
+        "Scanner Verdict",
+        "Review State",
+        "Issue Class",
+        "Unresolved Reason",
+        "Verdict (raw)",
         "OWASP Category",
         "CWE",
         "CVSS",
@@ -921,7 +997,7 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
         "Example Fix",
         "Occurrence ID",
     ]
-    widths = [5, 12, 15, 32, 12, 8, 12, 8, 42, 44, 36, 44, 44, 46, 68]
+    widths = [5, 12, 24, 22, 12, 24, 16, 32, 12, 8, 12, 8, 42, 44, 36, 44, 44, 46, 68]
     _xl_header_row(sheet, 1, headers, widths=widths)
 
     sorted_findings = _sorted_findings(findings)
@@ -935,7 +1011,11 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
         row_values = [
             idx,
             sev.upper(),
-            _display_verdict(finding.verdict),
+            _display_verdict(_scanner_verdict(finding), finding.unresolved_reason),
+            _review_state_label(finding),
+            finding.issue_class or "",
+            finding.unresolved_reason or "",
+            _scanner_verdict(finding) or "",
             _owasp_display(finding),
             _cwe_display(finding),
             finding.cvss if finding.cvss is not None else "",
@@ -1419,17 +1499,19 @@ def _finding_story_block(
     sev = _severity_bucket(finding.severity)
     sev_color = SEVERITY_COLORS[sev]
     tint = SEVERITY_TINTS[sev]
-    verdict = _display_verdict(finding.verdict)
-    verdict_key = (finding.verdict or "").upper()
-    # An unrecognized verdict used to fall through to the red "confirmed"
-    # colour, which would have painted every unreviewed regex match as a
-    # verified vulnerability. Each verdict now picks its colour explicitly.
-    if verdict_key in ("FALSE_POSITIVE", "NEEDS_REVIEW"):
-        verdict_bg = colors.HexColor("#b45309")   # amber — reviewed, dismissed
-    elif verdict_key == UNVERIFIED_VERDICT.upper():
-        verdict_bg = colors.HexColor("#4b5563")   # slate — nobody has reviewed it
-    else:
+    scanner_verdict = _scanner_verdict(finding)
+    verdict = _display_verdict(scanner_verdict)  # the pill is short: "Unresolved", not its reason
+    verdict_key = (scanner_verdict or "").strip().lower().replace("-", "_")
+    # Each verdict picks its colour explicitly; an unrecognized one must never
+    # fall through to the red "confirmed" colour.
+    if verdict_key == "false_positive":
+        verdict_bg = colors.HexColor("#64748b")   # slate — the scanner dismissed it
+    elif verdict_key == UNVERIFIED_VERDICT:
+        verdict_bg = colors.HexColor("#b45309")   # amber — nobody has decided it
+    elif verdict_key == "true_positive":
         verdict_bg = colors.HexColor("#b91c1c")   # red — confirmed
+    else:
+        verdict_bg = colors.HexColor("#334155")   # dark slate — outside the contract
 
     title = finding.title or "Untitled finding"
     description = _description_text(finding)
@@ -1499,6 +1581,11 @@ def _finding_story_block(
     ]))
 
     strips: list[Any] = [head_inner]
+    strips.append(_labelled_block(
+        "Verdict",
+        f"Scanner: {_display_verdict(scanner_verdict, finding.unresolved_reason)}"
+        f" · Review: {_review_state_label(finding)}",
+        styles=styles, width=inner_width, label_color="#334155"))
 
     if description:
         strips.append(_labelled_block("Description", description, styles=styles,
@@ -1700,7 +1787,7 @@ def _findings_index(findings: list[Finding], styles: Any, width: float) -> Table
             Paragraph(_esc(_truncate_text(finding.title or "Untitled finding", 150)), styles["TableCell"]),
             Paragraph(_esc(_owasp_header(finding)), styles["TableCell"]),
             Paragraph(_esc(_primary_location(finding)), styles["TableCellMono"]),
-            Paragraph(_esc(_display_verdict(finding.verdict)), styles["TableCell"]),
+            Paragraph(_esc(_display_verdict(_scanner_verdict(finding))), styles["TableCell"]),
         ])
         if idx % 2 == 0:
             cmds.append(("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#f8fafc")))
@@ -2311,10 +2398,14 @@ def build_pdf_report(project: Project, scan: Scan, findings: list[Finding]) -> b
     story.append(Spacer(1, 5 * mm))
     story.append(_severity_strip(group_counts, styles, content_width, occurrences=occurrence_counts))
     story.append(Spacer(1, 2 * mm))
+    bucket_text = " · ".join(
+        f"{label}: {t['groups']} {'group' if t['groups'] == 1 else 'groups'} "
+        f"({t['occurrences']} {'occurrence' if t['occurrences'] == 1 else 'occurrences'})"
+        for label, t in verdict_bucket_totals(findings).items()
+    )
     story.append(Paragraph(
-        f'<font color="#64748b">Actionable issue groups (true positive + unverified) by severity. '
-        f"Dismissed: {dismissed['groups']} {'group' if dismissed['groups'] == 1 else 'groups'} "
-        f"({dismissed['occurrences']} {'occurrence' if dismissed['occurrences'] == 1 else 'occurrences'}).</font>",
+        f'<font color="#64748b">Actionable issue groups (confirmed + unresolved) by severity. '
+        f"{_esc(bucket_text)}.</font>",
         styles["FindingBody"]))
     story.append(Spacer(1, 6 * mm))
 

@@ -524,6 +524,9 @@ class FindingOut(BaseModel):
     # original stays here. `review` is None until a reviewer has decided.
     llm_verdict: str | None = None
     review: ReviewSummaryOut | None = None
+    # pending | agreed | overridden | resolved — the human review workflow, kept
+    # apart from `verdict` (what the scanner decided).
+    review_state: str | None = None
 
 
 class DastTrafficOut(BaseModel):

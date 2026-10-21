@@ -517,9 +517,9 @@ export default function ScanDetailPage() {
                   findingsSummary.fp_count +
                   findingsSummary.unverified_count}{" "}
                 finding(s) saved so far ({findingsSummary.tp_count} confirmed,{" "}
-                {findingsSummary.fp_count} dismissed
+                {findingsSummary.fp_count} false positive
                 {findingsSummary.unverified_count
-                  ? `, ${findingsSummary.unverified_count} unverified`
+                  ? `, ${findingsSummary.unverified_count} unresolved`
                   : ""}
                 ).
               </>
