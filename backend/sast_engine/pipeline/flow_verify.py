@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from llm_client import call_llm, last_call_was_cache_hit, parse_llm_json_array
 
 from pipeline import reachability
+from pipeline.finding_facts import prepare_findings
 from pipeline.call_graph import Flow, FLOW_VERIFY_CAP, flow_to_dict
 from pipeline.llm_file_scan import (
     SINGLE_CALL_CHAR_BUDGET,
@@ -331,6 +332,8 @@ def _findings_for_flow(
     suppress_low_confidence_false_positives: bool,
     usage: Optional[Dict[str, Any]] = None,
     step: str = "verify_flow_slices",
+    read_text: Optional[Callable[[str], Optional[str]]] = None,
+    occurrence_validators: bool = True,
 ) -> List[Dict[str, Any]]:
     sink = flow.hops[-1]
     source_lines = sink.body.splitlines()
@@ -374,6 +377,15 @@ def _findings_for_flow(
         if evidence is not None:
             finding["reachability"] = evidence
             reachability.apply_confidence(finding)
+        # Occurrence facts and validators need the sink file as a whole (the
+        # hop bodies are method slices); without a loader the finding simply
+        # has none, and is judged exactly as before.
+        sink_text = read_text(sink.file) if read_text is not None else None
+        if sink_text:
+            prepare_findings(
+                [finding], sink_text, file_path=sink.file, usage=usage,
+                validators=occurrence_validators,
+            )
         if should_publish_finding(
             finding, sink.body,
             suppress_no_cwe=suppress_no_cwe,
@@ -450,6 +462,8 @@ def verify_flow(
     suppress_no_cwe: bool = True,
     suppress_http_findings: bool = False,
     suppress_low_confidence_false_positives: bool = False,
+    read_text: Optional[Callable[[str], Optional[str]]] = None,
+    occurrence_validators: bool = True,
 ) -> Dict[str, Any]:
     """LLM-verify one flow. Returns {findings, skipped, skip_reason, failed}."""
     slice_text = build_flow_slice(flow)
@@ -464,7 +478,7 @@ def verify_flow(
         suppress_no_cwe=suppress_no_cwe,
         suppress_http_findings=suppress_http_findings,
         suppress_low_confidence_false_positives=suppress_low_confidence_false_positives,
-        usage=usage,
+        usage=usage, read_text=read_text, occurrence_validators=occurrence_validators,
     )
     return {
         "findings": findings, "skipped": False, "skip_reason": parse_err,
@@ -488,9 +502,13 @@ def verify_flows(
     on_flow: Optional[Callable[[Flow, Dict[str, Any]], None]] = None,
     flows_per_call: int = FLOWS_PER_CALL,
     llm_step: str = "verify_flow_slices",
+    read_text: Optional[Callable[[str], Optional[str]]] = None,
+    occurrence_validators: bool = True,
 ) -> Dict[str, Any]:
     selected = flows[: max(0, cap)]
     suppress = {
+        "read_text": read_text,
+        "occurrence_validators": occurrence_validators,
         "suppress_no_cwe": suppress_no_cwe,
         "suppress_http_findings": suppress_http_findings,
         "suppress_low_confidence_false_positives": suppress_low_confidence_false_positives,

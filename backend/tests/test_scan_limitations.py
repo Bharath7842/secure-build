@@ -52,6 +52,7 @@ def test_scan_limitations_expected_ids():
         "cwe-less-findings-suppressed",
         "https-enforced-suppress-http",
         "low-confidence-fp-suppressed",
+        "occurrence-validators",
         "vendored-minified-files-skipped",
         "sbom-direct-deps-only",
         "sbom-license-best-effort",

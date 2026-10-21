@@ -184,6 +184,7 @@ def run_real_scan(
     suppress_no_cwe_findings = enabled("cwe-less-findings-suppressed")
     suppress_http_findings = enabled("https-enforced-suppress-http")
     suppress_low_confidence_false_positives = enabled("low-confidence-fp-suppressed")
+    occurrence_validators = enabled("occurrence-validators")
     inter_file_flow = use_llm and enabled("inter-file-call-graph")
     derive_runtime_rules = enabled("runtime-derived-regex")
     joern_dataflow = enabled("joern-dataflow")
@@ -222,6 +223,7 @@ def run_real_scan(
         "suppress_no_cwe_findings": suppress_no_cwe_findings,
         "suppress_http_findings": suppress_http_findings,
         "suppress_low_confidence_false_positives": suppress_low_confidence_false_positives,
+        "occurrence_validators": occurrence_validators,
         "inter_file_flow": inter_file_flow,
         "derive_runtime_rules": derive_runtime_rules,
         "joern_dataflow": joern_dataflow,

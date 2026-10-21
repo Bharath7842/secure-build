@@ -665,6 +665,7 @@ def _make_verdict_updates_writer(scan_id: str, stage: str | None = None):
                         column: update[column]
                         for column in (
                             "verdict", "confidence", "verdict_reason", "ai_fix", "unresolved_reason",
+                            "reason_tag", "review_coverage",
                         )
                         if column in update
                     }
@@ -682,6 +683,11 @@ def _make_verdict_updates_writer(scan_id: str, stage: str | None = None):
                             before_confidence=before_confidence,
                             stage=stage or update.get("decision_stage") or decisions.DEFAULT_CONFIRM_STAGE,
                             scan=scan, result_cache_hit=bool(update.get("result_cache_hit")),
+                            actor=update.get("decision_actor"),
+                            detail=update.get("decision_detail") or (
+                                {"review_coverage": update["review_coverage"]}
+                                if update.get("review_coverage") else None
+                            ),
                         )
                 session.commit()
             if changed:

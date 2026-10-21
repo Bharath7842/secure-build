@@ -503,6 +503,11 @@ class FindingOut(BaseModel):
     issue_class: str | None = None
     # Why an `unverified` verdict is undecided (app.models.UNRESOLVED_REASONS).
     unresolved_reason: str | None = None
+    # Short tag of the deterministic proof behind the verdict (e.g.
+    # `match_is_declaration`); null when no validator decided it.
+    reason_tag: str | None = None
+    # {"reviewed": k, "total": n}: members of its group the confirmation looked at.
+    review_coverage: dict | None = None
     affected_files: list[str] | None = None
     # Every file:line a merged group stands for ({file_path, line}); None for a single row.
     affected_lines: list[dict] | None = None
@@ -613,6 +618,9 @@ class DecisionHistoryEntryOut(BaseModel):
     evidence_version: dict | None = None
     # The reviewer action (e.g. "reviewed"); human entries only.
     action: str | None = None
+    # Structured evidence for machine entries that carry some: a validator's
+    # proof, a conflict's two sides, a group's reviewed/total members.
+    detail: dict | None = None
 
 
 class FindingHistoryOut(BaseModel):

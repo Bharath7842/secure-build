@@ -1,0 +1,33 @@
+id: declaration-not-call
+area: aggregation
+polarity: negative
+seed_findings: [37]
+adjudication: dev_label_only
+# A derived runtime-sink rule looks for call sites of a wrapper method. Its text
+# also appears where the wrapper is declared, and a declaration is not a call.
+# The validator dismisses that one occurrence with a structural proof; the real
+# call site of the same method is left to the model and stays a finding.
+limitations:
+  inter-file-call-graph: true
+  runtime-derived-regex: true
+expected:
+  - rule_id: runtime-sink-jdbc_template-deleteJob
+    cwe: CWE-89
+    file: src/main/java/com/acme/util/JobCleaner.java
+    sink_line: 8
+    verdict: false_positive
+    reason_tag: match_is_declaration
+  - rule_id: runtime-sink-jdbc_template-deleteJob
+    cwe: CWE-89
+    file: src/main/java/com/acme/util/Scheduler.java
+    sink_line: 7
+    verdict: true_positive
+scripted:
+  - step: group_confirm_triage_findings
+    response:
+      decisions:
+        - group_index: 0
+          verdict: true_positive
+          confidence: 0.7
+          verdict_reason: The id reaches the wrapper's DELETE statement from a scheduled job.
+          ai_fix: Validate the id before calling the wrapper.

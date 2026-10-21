@@ -229,7 +229,7 @@ def test_finding_verdict_always_equals_its_latest_decision(SessionLocal):
 
 def test_the_decisions_module_exposes_inserts_only():
     names = {n for n, f in inspect.getmembers(decisions, inspect.isfunction) if f.__module__ == decisions.__name__}
-    assert names == {"stage_for_new_finding", "evidence_version", "record_initial", "record_change", "_decision"}
+    assert names == {"stage_for_new_finding", "evidence_version", "record_initial", "record_change", "_decision", "_step_decision"}
     assert not [n for n in names if n.lstrip("_").startswith(("update", "delete", "remove", "edit", "set"))]
 
 
@@ -415,3 +415,31 @@ def test_decision_counts_by_stage_land_in_the_usage_summary(SessionLocal, monkey
         summary = db.get(Scan, "s1").metadata_json["usage_summary"]
     assert summary["decisions_by_stage"] == {"triage_regex": 2, "group_confirm": 1}
     assert lines == ["Decision history rows by stage: group_confirm=1, triage_regex=2."]
+
+
+# --- steps between the model's answer and the stored verdict (EPIC-01) --------
+
+def test_engine_recorded_steps_are_written_before_the_final_decision(SessionLocal):
+    _seed_scan(SessionLocal)
+    finding = _regex_finding()
+    finding["verdict"] = "false_positive"
+    finding["confidence"] = None
+    finding["verdict_reason"] = "the match is a method declaration"
+    finding["reason_tag"] = "match_is_declaration"
+    finding["decisions"] = [{
+        "stage": "validator", "actor": "declaration_not_call@1",
+        "verdict": "false_positive", "verdict_reason": "the match is a method declaration",
+        "detail": {"reason_tag": "match_is_declaration"},
+    }]
+    _make_findings_writer("s1")("app/config.py", [finding])
+    with SessionLocal() as db:
+        row = db.query(Finding).one()
+        history = (
+            db.query(FindingDecision).filter(FindingDecision.finding_id == row.id)
+            .order_by(FindingDecision.at, FindingDecision.id).all()
+        )
+        assert [h.stage for h in history] == ["validator", "triage_regex"]
+        assert history[0].actor == "declaration_not_call@1"
+        assert history[0].detail == {"reason_tag": "match_is_declaration"}
+        assert row.reason_tag == "match_is_declaration"
+        assert history[-1].verdict == row.verdict

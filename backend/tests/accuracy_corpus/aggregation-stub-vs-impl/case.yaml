@@ -1,0 +1,45 @@
+id: aggregation-stub-vs-impl
+area: aggregation
+polarity: negative
+seed_findings: [39]
+adjudication: dev_label_only
+# One derived runtime-sink rule matches a stub (`return false`), the real
+# implementation and a call site. Each occurrence is judged on its own facts:
+# the stub reaches no sink and the real method's declaration is not a call; the
+# call site of the real wrapper stays a finding.
+limitations:
+  inter-file-call-graph: true
+  runtime-derived-regex: true
+expected:
+  - rule_id: runtime-sink-jdbc_template-isPortable
+    cwe: CWE-89
+    file: src/main/java/com/acme/util/PortApi.java
+    sink_line: 4
+    verdict: false_positive
+    reason_tag: match_is_declaration
+  - rule_id: runtime-sink-jdbc_template-isPortable
+    cwe: CWE-89
+    file: src/main/java/com/acme/util/PortStub.java
+    sink_line: 4
+    verdict: false_positive
+    reason_tag: stub_no_sink
+  - rule_id: runtime-sink-jdbc_template-isPortable
+    cwe: CWE-89
+    file: src/main/java/com/acme/util/PortDao.java
+    sink_line: 8
+    verdict: false_positive
+    reason_tag: match_is_declaration
+  - rule_id: runtime-sink-jdbc_template-isPortable
+    cwe: CWE-89
+    file: src/main/java/com/acme/util/PortService.java
+    sink_line: 7
+    verdict: true_positive
+scripted:
+  - step: group_confirm_triage_findings
+    response:
+      decisions:
+        - group_index: 0
+          verdict: true_positive
+          confidence: 0.7
+          verdict_reason: The number reaches the wrapper's query from the service layer.
+          ai_fix: Bind the number as a parameter and validate its format.

@@ -54,6 +54,7 @@ from llm_client import (
 )
 
 from . import reachability
+from .finding_facts import prepare_findings
 from .owasp_map import OWASP_TOP_10_2021, owasp_for_rule
 from .regex_scan import (
     PROCESS_POOL_MIN_FILES,
@@ -1041,6 +1042,9 @@ UNRESOLVED_REASONS = frozenset({
     "llm_budget_exhausted",
     "cap_reached",
     "evidence_missing",
+    "conflict",
+    "not_in_sample",
+    "explanation_contradiction",
 })
 
 
@@ -1464,6 +1468,31 @@ def finalize_findings(
     return out
 
 
+def dedupe_and_finalize(
+    findings: List[Dict[str, Any]],
+    source_text: str,
+    *,
+    file_path: str = "",
+    usage: Optional[Dict[str, Any]] = None,
+    occurrence_validators: bool = True,
+    suppress_no_cwe: bool = True,
+    suppress_http_findings: bool = False,
+    suppress_low_confidence_false_positives: bool = False,
+) -> List[Dict[str, Any]]:
+    """One file's findings from raw to publishable: attach occurrence facts and
+    run the deterministic validators on each occurrence (EPIC-01), then dedupe,
+    enrich and filter. The order is the point — facts and proofs exist before
+    anything merges two findings or decides whether one is published."""
+    prepare_findings(
+        findings, source_text, file_path=file_path, usage=usage, validators=occurrence_validators,
+    )
+    return finalize_findings(
+        merge_dedupe(findings), source_text,
+        suppress_no_cwe=suppress_no_cwe, suppress_http_findings=suppress_http_findings,
+        suppress_low_confidence_false_positives=suppress_low_confidence_false_positives,
+    )
+
+
 # --- LLM plumbing -----------------------------------------------------------
 
 def files_for_risk_levels(
@@ -1605,8 +1634,9 @@ def _budget_fallback_findings(
     )
     for finding in out:
         finding["file_path"] = rel_path
-        finding["unresolved_reason"] = "llm_budget_exhausted"
-        finding["verdict_reason"] = BUDGET_EXHAUSTED_REASON
+        if finding["verdict"] == VERDICT_UNVERIFIED:
+            finding["unresolved_reason"] = "llm_budget_exhausted"
+            finding["verdict_reason"] = BUDGET_EXHAUSTED_REASON
     return out
 
 
@@ -1631,6 +1661,7 @@ def scan_file(
     suppress_no_cwe: bool = True,
     suppress_http_findings: bool = False,
     suppress_low_confidence_false_positives: bool = False,
+    occurrence_validators: bool = True,
 ) -> Dict[str, Any]:
     text = _read_text(repo_root, rel_path)
     if text is None:
@@ -1698,8 +1729,9 @@ def scan_file(
             chunk = chunks[idx - 1]
             budget_spans.append((chunk["start_line"], chunk["end_line"]))
 
-    merged = finalize_findings(
-        merge_dedupe(all_findings), text,
+    merged = dedupe_and_finalize(
+        all_findings, text, file_path=rel_path, usage=usage,
+        occurrence_validators=occurrence_validators,
         suppress_no_cwe=suppress_no_cwe, suppress_http_findings=suppress_http_findings,
         suppress_low_confidence_false_positives=suppress_low_confidence_false_positives,
     )
@@ -1758,6 +1790,7 @@ def scan_file_batch(
     suppress_no_cwe: bool = True,
     suppress_http_findings: bool = False,
     suppress_low_confidence_false_positives: bool = False,
+    occurrence_validators: bool = True,
 ) -> Optional[List[Dict[str, Any]]]:
     """Deep-scan several small, single-chunk files ((path, text) each) in one
     call. Returns one scan_file-shaped result per file, in order, or None when
@@ -1811,8 +1844,9 @@ def scan_file_batch(
 
     results = []
     for path, text in files:
-        merged = finalize_findings(
-            merge_dedupe(by_path[path]), text,
+        merged = dedupe_and_finalize(
+            by_path[path], text, file_path=path, usage=usage,
+            occurrence_validators=occurrence_validators,
             suppress_no_cwe=suppress_no_cwe, suppress_http_findings=suppress_http_findings,
             suppress_low_confidence_false_positives=suppress_low_confidence_false_positives,
         )
@@ -1922,6 +1956,7 @@ def scan_deep_files(
     suppress_http_findings: bool = False,
     suppress_low_confidence_false_positives: bool = False,
     batch_small_files: bool = True,
+    occurrence_validators: bool = True,
 ) -> Dict[str, Any]:
     """LLM-primary scan of every CRITICAL / HIGH file — no regex gate. MEDIUM
     and LOW (and, past DEEP_SCAN_FILE_CAP, overflow CRITICAL/HIGH) are handled
@@ -1980,6 +2015,7 @@ def scan_deep_files(
             system_prompt=system_prompt, llm_step="scan_deep_files",
             suppress_no_cwe=suppress_no_cwe, suppress_http_findings=suppress_http_findings,
             suppress_low_confidence_false_positives=suppress_low_confidence_false_positives,
+            occurrence_validators=occurrence_validators,
         )
         results[position] = result
         with _CALLBACK_LOCK:
@@ -2003,6 +2039,7 @@ def scan_deep_files(
             call_llm_fn=call_llm_fn, llm_step="scan_deep_files",
             suppress_no_cwe=suppress_no_cwe, suppress_http_findings=suppress_http_findings,
             suppress_low_confidence_false_positives=suppress_low_confidence_false_positives,
+            occurrence_validators=occurrence_validators,
         )
         if batch_results is None:
             for position, path, _text in batch:
@@ -2120,6 +2157,8 @@ def triage_candidates(hits: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "line": line,
             "matched_text": (hit.get("matched_text") or "").strip(),
             "severity": hit.get("severity"),
+            "col_start": hit.get("col_start"),
+            "col_end": hit.get("col_end"),
         })
     return out
 
@@ -2342,6 +2381,8 @@ def _triage_finding(
         "issue_class": rule.issue_class if rule else DEFAULT_ISSUE_CLASS,
         "decision_stage": "triage_llm",
         "kind": "regex",
+        "col_start": cand.get("col_start"),
+        "col_end": cand.get("col_end"),
     }
     if item is None:
         return {
@@ -2389,6 +2430,7 @@ def triage_regex_hits(
     llm_provider: Optional[str] = None,
     llm_model: Optional[str] = None,
     call_llm_fn: Callable[..., str] = call_llm,
+    occurrence_validators: bool = True,
 ) -> Dict[str, Any]:
     """One LLM call to TP/FP-triage the regex hits in a MEDIUM/LOW-risk file.
 
@@ -2454,7 +2496,10 @@ def triage_regex_hits(
         for m in c["members"]
     ]
     reviewed = [f for f in reviewed if f["verdict"] != VERDICT_UNVERIFIED]
-    merged = finalize_findings(merge_dedupe(reviewed), source_text)
+    merged = dedupe_and_finalize(
+        reviewed, source_text, file_path=file_path, usage=usage,
+        occurrence_validators=occurrence_validators,
+    )
     replayed = bool(answer_cache_hits) and all(answer_cache_hits)
     for finding in merged:
         finding["result_cache_hit"] = replayed
@@ -2497,6 +2542,8 @@ def findings_from_hits(
     source_text: str,
     hits: List[Dict[str, Any]],
     rules_by_id: Dict[str, RegexRule],
+    usage: Optional[Dict[str, Any]] = None,
+    occurrence_validators: bool = True,
 ) -> List[Dict[str, Any]]:
     """Turn regex hits straight into findings — no LLM, no verdict guessing.
 
@@ -2539,7 +2586,15 @@ def findings_from_hits(
             "verdict_reason": UNVERIFIED_REASON,
             "kind": "regex",
             "confidence": None,
+            "col_start": hit.get("col_start"),
+            "col_end": hit.get("col_end"),
         })
+    # Occurrence facts, then the validators: a regex hit one of them proves is
+    # not what its rule says is still written, as a false positive with the
+    # proof — the report shows the scanner looked at it.
+    prepare_findings(
+        out, source_text, file_path=file_path, usage=usage, validators=occurrence_validators,
+    )
     return out
 
 
@@ -2565,6 +2620,7 @@ def scan_triage_files(
     rules_for_path: Optional[Callable[[str], List[RegexRule]]] = None,
     on_file_done: Optional[Callable[[int, Dict[str, Any]], None]] = None,
     regex_processes: Optional[bool] = None,
+    occurrence_validators: bool = True,
 ) -> Dict[str, Any]:
     """Regex-scan every MEDIUM/LOW-risk file (plus any CRITICAL/HIGH overflow
     the caller routes here past DEEP_SCAN_FILE_CAP).
@@ -2675,6 +2731,7 @@ def scan_triage_files(
             findings = findings_from_hits(
                 file_path=path, source_text=text,
                 hits=scanned["hits"], rules_by_id=rules_by_id,
+                usage=usage, occurrence_validators=occurrence_validators,
             )
             # Deliberately NOT run through should_publish_finding: that gate
             # drops non-true_positive findings on noisy catalog rules, which
@@ -2683,8 +2740,9 @@ def scan_triage_files(
             # matched, so the human reviewer gets to decide instead.
             result = {
                 "file_path": path, "chunks": 0, "findings": findings,
-                "tp_count": 0, "fp_count": 0,
-                "unverified_count": len(findings),
+                "tp_count": 0,
+                "fp_count": sum(1 for f in findings if f.get("verdict") == "false_positive"),
+                "unverified_count": sum(1 for f in findings if f.get("verdict") == VERDICT_UNVERIFIED),
                 "read_error": False, "chunk_errors": [],
             }
         else:
@@ -2692,7 +2750,7 @@ def scan_triage_files(
                 file_path=path, source_text=text, hits=scanned["hits"],
                 rules=rules, stack_context=stack_context, usage=usage,
                 llm_provider=llm_provider, llm_model=llm_model,
-                call_llm_fn=call_llm_fn,
+                call_llm_fn=call_llm_fn, occurrence_validators=occurrence_validators,
             )
         results[position] = result
         with _CALLBACK_LOCK:

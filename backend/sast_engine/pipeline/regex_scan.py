@@ -354,14 +354,24 @@ def _snippet(match: re.Match) -> str:
     return text
 
 
+def _match_columns(match: re.Match, line_start: int) -> Dict[str, int]:
+    """Column span of a match within its first line, past any leading blanks the
+    pattern swallowed — what the occurrence-facts extractor anchors on."""
+    raw = match.group(0)
+    start = match.start() - line_start + (len(raw) - len(raw.lstrip()))
+    return {"col_start": start, "col_end": start + len(raw.strip())}
+
+
 def _hit(rule: RegexRule, match: re.Match, text: str) -> Dict[str, Any]:
     lineno = text.count("\n", 0, match.start()) + 1
+    line_start = text.rfind("\n", 0, match.start()) + 1
     return {
         "line": lineno,
         "rule": rule.id,
         "category": rule.category,
         "severity": rule.severity,
         "matched_text": _snippet(match),
+        **_match_columns(match, line_start),
     }
 
 
@@ -431,6 +441,7 @@ def scan_text_by_rule(
             "category": rule.category,
             "severity": rule.severity,
             "matched_text": _snippet(match),
+            **_match_columns(match, 0),
         })
     return hits
 

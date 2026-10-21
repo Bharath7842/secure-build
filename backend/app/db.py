@@ -127,6 +127,9 @@ def _run_light_migrations(engine) -> None:
             ("unresolved_reason", "ALTER TABLE findings ADD COLUMN unresolved_reason VARCHAR(40)"),
             ("occurrence_id", "ALTER TABLE findings ADD COLUMN occurrence_id VARCHAR(64)"),
             ("identity_quality", "ALTER TABLE findings ADD COLUMN identity_quality VARCHAR(20)"),
+            ("facts", "ALTER TABLE findings ADD COLUMN facts JSON"),
+            ("reason_tag", "ALTER TABLE findings ADD COLUMN reason_tag VARCHAR(60)"),
+            ("review_coverage", "ALTER TABLE findings ADD COLUMN review_coverage JSON"),
             # DAST evidence fields (DAST-00-040); the new dast_evidence / dast_request_audit
             # tables are created by Base.metadata.create_all, so only columns need ALTER.
             ("target", "ALTER TABLE findings ADD COLUMN target VARCHAR(300)"),
@@ -158,6 +161,19 @@ def _run_light_migrations(engine) -> None:
         if "owasp_category" in finding_cols and engine.dialect.name != "sqlite":
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE findings ALTER COLUMN owasp_category TYPE VARCHAR(64)"))
+
+    # finding_decisions is created by create_all; the columns added after it
+    # first shipped (EPIC-01: which validator decided, and its evidence) need
+    # an ALTER on databases that already have the table.
+    if "finding_decisions" in table_names:
+        decision_cols = {col["name"] for col in inspector.get_columns("finding_decisions")}
+        for col_name, col_sql in (
+            ("actor", "ALTER TABLE finding_decisions ADD COLUMN actor VARCHAR(80)"),
+            ("detail", "ALTER TABLE finding_decisions ADD COLUMN detail JSON"),
+        ):
+            if col_name not in decision_cols:
+                with engine.begin() as conn:
+                    conn.execute(text(col_sql))
 
     if "dast_evidence" in table_names:
         evidence_cols = {col["name"] for col in inspector.get_columns("dast_evidence")}

@@ -171,6 +171,13 @@ UNRESOLVED_REASONS = frozenset(
         "llm_budget_exhausted",
         "cap_reached",
         "evidence_missing",
+        # EPIC-01: two checks disagree and neither outranks the other
+        # ("conflict"); a group member the confirmer never saw
+        # ("not_in_sample"); an explanation that contradicts its own code
+        # or verdict and could not be repaired ("explanation_contradiction").
+        "conflict",
+        "not_in_sample",
+        "explanation_contradiction",
     }
 )
 
@@ -236,6 +243,17 @@ class Finding(Base):
     # method could be resolved (so the join is weaker for that row).
     occurrence_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     identity_quality: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # The resolved AST facts of this occurrence (enclosing method, call, receiver
+    # type, argument kinds; sast_engine/pipeline/occurrence_facts.py) plus the
+    # outcomes of the deterministic validators that ran on it. NULL when the
+    # file could not be parsed and on rows from before the column.
+    facts: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Short machine tag of the deterministic proof behind a verdict, e.g.
+    # `match_is_declaration` or `stub_no_sink` (validators/); NULL otherwise.
+    reason_tag: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    # {"reviewed": k, "total": n}: how many members of its group the grouped
+    # confirmation actually looked at. NULL for findings never group-confirmed.
+    review_coverage: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     owasp_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
     exploitability: Mapped[float | None] = mapped_column(Float, nullable=True)
     root_cause_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -397,7 +415,8 @@ class FindingDecision(Base):
     scan_id: Mapped[str] = mapped_column(String(36), index=True)
     occurrence_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # deep_scan | triage_regex | triage_llm | group_confirm | flow_verify |
-    # reachability_floor | joern_confirm | reconcile | sca_match
+    # reachability_floor | joern_confirm | reconcile | sca_match | validator |
+    # dedupe | publish_filter | explanation_retry
     stage: Mapped[str] = mapped_column(String(30))
     verdict: Mapped[str | None] = mapped_column(String(40), nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -405,6 +424,11 @@ class FindingDecision(Base):
     verdict_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The scan's `versions` block plus `result_cache_hit` (was the model answer replayed).
     evidence_version: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # What decided it when that is not just the stage: a validator's name and
+    # version ("declaration_not_call@1"). `detail` holds the structured
+    # evidence — a conflict's two sides, a group's reviewed/total members.
+    actor: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

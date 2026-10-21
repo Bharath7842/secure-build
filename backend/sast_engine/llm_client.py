@@ -485,6 +485,55 @@ def record_verdict_event(usage: Optional[Dict[str, Any]], step: str, key: str) -
         bucket[key] = bucket.get(key, 0) + 1
 
 
+# Scan-level counters the accuracy checks report in `usage_summary` (validator
+# outcomes, publish-filter drops, dedupe conflicts, group coverage, ...). One
+# bucket per section, lock-guarded because the parallel stages share `usage`.
+COUNTER_SECTIONS = (
+    "validators",
+    "publish_filter",
+    "dedupe_conflicts",
+    "explanation_contradictions",
+    "group_confirm_coverage",
+    "facts_coverage",
+)
+MAX_RECORDS_PER_SECTION = 500
+
+
+def bump_counter(usage: Optional[Dict[str, Any]], section: str, key: str, n: int = 1) -> None:
+    """Add `n` to `usage["_counters"][section][key]`; a no-op without a usage dict."""
+    if usage is None:
+        return
+    with _USAGE_LOCK:
+        bucket = usage.setdefault("_counters", {}).setdefault(section, {})
+        bucket[key] = bucket.get(key, 0) + n
+
+
+def append_record(usage: Optional[Dict[str, Any]], section: str, record: Dict[str, Any]) -> None:
+    """Append a small dict to a section's list (e.g. `publish_filter_drops`),
+    bounded so a pathological scan cannot grow `usage` without limit."""
+    if usage is None:
+        return
+    with _USAGE_LOCK:
+        records = usage.setdefault("_records", {}).setdefault(section, [])
+        if len(records) < MAX_RECORDS_PER_SECTION:
+            records.append(record)
+
+
+def stage_has_budget(usage: Optional[Dict[str, Any]], step: str) -> bool:
+    """Whether another call for `step` would be allowed right now, without
+    making it or switching provider. For optional extras (a retry) that must
+    never be the thing that exhausts a stage."""
+    if usage is None:
+        return True
+    cutoff = usage.get("cost_cutoff_usd")
+    if cutoff is None:
+        return True
+    with _USAGE_LOCK:
+        if float(usage.get("cost_usd") or 0.0) >= float(cutoff):
+            return False
+        return not _stage_over_budget(usage, step, float(cutoff))
+
+
 def record_system_prompt(usage: Optional[Dict[str, Any]], step: str, system: str) -> None:
     """Remember the sha256 of each distinct system prompt a step used, so a
     scan's recorded versions say exactly which prompts produced its findings.
@@ -650,6 +699,17 @@ def usage_cost_summary(usage: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         + int(result_cache.get("saved_output_tokens") or 0),
         # Model answers whose verdict was not usable (see parse_verdict).
         **verdict_totals,
+        # EPIC-01 accuracy counters (see COUNTER_SECTIONS); a section with
+        # nothing recorded is absent, so older summaries keep their shape.
+        **{
+            section: dict(usage["_counters"][section])
+            for section in COUNTER_SECTIONS
+            if (usage.get("_counters") or {}).get(section)
+        },
+        **(
+            {"publish_filter_drops": list(usage["_records"]["publish_filter_drops"])}
+            if (usage.get("_records") or {}).get("publish_filter_drops") else {}
+        ),
         # Which system prompts each step ran with (sha256, sorted).
         "system_prompt_sha256": {
             step_name: sorted(hashes)
@@ -805,7 +865,9 @@ def call_llm(
 
 # Bump whenever prompt construction or response handling changes in a way that
 # should invalidate previously cached responses even if the prompt bytes match.
-RESULT_CACHE_VERSION = "2"
+#   "3": EPIC-01 — validator precedence is applied to a model verdict (a proof
+#        can overrule it, a proven fact turns a dismissal into a conflict).
+RESULT_CACHE_VERSION = "3"
 # The cache object rides on the shared scan usage dict — the one object every
 # LLM-calling stage already threads through — rather than a new parameter on
 # every call site. It must expose get(key) -> {text, input_tokens,

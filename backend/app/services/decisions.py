@@ -13,11 +13,12 @@ commit; this module only adds rows to the session.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any, Iterable, Mapping
 
 from sqlalchemy.orm import Session
 
-from app.models import Finding, FindingDecision, Scan
+from app.models import Finding, FindingDecision, Scan, utcnow
 
 STAGES = (
     "deep_scan",
@@ -29,6 +30,11 @@ STAGES = (
     "joern_confirm",
     "reconcile",
     "sca_match",
+    # EPIC-01: steps between the model's answer and the stored verdict.
+    "validator",
+    "dedupe",
+    "publish_filter",
+    "explanation_retry",
 )
 _STAGE_BY_KIND = {
     "regex": "triage_regex",
@@ -57,7 +63,15 @@ def evidence_version(scan: Scan | None, *, result_cache_hit: bool = False) -> di
     return versions
 
 
-def _decision(finding: Finding, *, stage: str, scan: Scan | None, result_cache_hit: bool) -> FindingDecision:
+def _decision(
+    finding: Finding,
+    *,
+    stage: str,
+    scan: Scan | None,
+    result_cache_hit: bool,
+    actor: str | None = None,
+    detail: Mapping[str, Any] | None = None,
+) -> FindingDecision:
     return FindingDecision(
         finding_id=finding.id,
         scan_id=finding.scan_id,
@@ -68,20 +82,58 @@ def _decision(finding: Finding, *, stage: str, scan: Scan | None, result_cache_h
         unresolved_reason=finding.unresolved_reason,
         verdict_reason=finding.verdict_reason,
         evidence_version=evidence_version(scan, result_cache_hit=result_cache_hit),
+        actor=actor,
+        detail=dict(detail) if detail else None,
+    )
+
+
+def _step_decision(
+    finding: Finding, step: Mapping[str, Any], *, scan: Scan | None, result_cache_hit: bool
+) -> FindingDecision:
+    """A decision the engine recorded on the finding dict (`decisions`), as it
+    stood at that step: its own verdict/confidence/reason, not the final ones."""
+    stage = step.get("stage")
+    return FindingDecision(
+        finding_id=finding.id,
+        scan_id=finding.scan_id,
+        occurrence_id=finding.occurrence_id,
+        stage=stage if stage in STAGES else "deep_scan",
+        verdict=step.get("verdict"),
+        confidence=step.get("confidence"),
+        unresolved_reason=step.get("unresolved_reason"),
+        verdict_reason=step.get("verdict_reason"),
+        evidence_version=evidence_version(scan, result_cache_hit=result_cache_hit),
+        actor=step.get("actor"),
+        detail=dict(step["detail"]) if step.get("detail") else None,
     )
 
 
 def record_initial(
     db: Session, rows: Iterable[Finding], dicts: Iterable[Mapping[str, Any]], scan: Scan | None
 ) -> int:
-    """One decision per newly inserted finding (ids already assigned by a flush)."""
+    """The decisions of newly inserted findings (ids already assigned by a flush).
+
+    A finding the engine altered after the model answered — a validator's proof,
+    a dedupe that discarded a conflicting duplicate, a publish filter that held
+    it back — carries those steps in `decisions`, oldest first. They are written
+    before the final row, with timestamps a microsecond apart so the history
+    orders them as they happened and the latest row still equals
+    `Finding.verdict`."""
     added = 0
     for row, f in zip(rows, dicts):
-        db.add(_decision(
-            row, stage=stage_for_new_finding(f), scan=scan,
-            result_cache_hit=bool(f.get("result_cache_hit")),
+        hit = bool(f.get("result_cache_hit"))
+        steps = [s for s in (f.get("decisions") or []) if isinstance(s, Mapping)]
+        base = utcnow()
+        built = [_step_decision(row, s, scan=scan, result_cache_hit=hit) for s in steps]
+        built.append(_decision(
+            row, stage=stage_for_new_finding(f), scan=scan, result_cache_hit=hit,
+            actor=f.get("decision_actor"),
+            detail=f.get("decision_detail"),
         ))
-        added += 1
+        for offset, decision in enumerate(built):
+            decision.at = base + timedelta(microseconds=offset)
+            db.add(decision)
+            added += 1
     return added
 
 
@@ -94,10 +146,15 @@ def record_change(
     stage: str,
     scan: Scan | None,
     result_cache_hit: bool = False,
+    actor: str | None = None,
+    detail: Mapping[str, Any] | None = None,
 ) -> bool:
     """Append a decision for `finding` (already updated) if its verdict or
     confidence differs from `before_*`. Returns whether a row was added."""
     if finding.verdict == before_verdict and finding.confidence == before_confidence:
         return False
-    db.add(_decision(finding, stage=stage, scan=scan, result_cache_hit=result_cache_hit))
+    db.add(_decision(
+        finding, stage=stage, scan=scan, result_cache_hit=result_cache_hit,
+        actor=actor, detail=detail,
+    ))
     return True

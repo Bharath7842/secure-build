@@ -37,7 +37,7 @@ def finding_history(db: Session, finding: Finding) -> list[dict[str, Any]]:
     for row in machine:
         entries.append({
             "source": "machine",
-            "actor": row.stage,
+            "actor": row.actor or row.stage,
             "at": row.at,
             "from_verdict": previous_verdict,
             "to_verdict": row.verdict,
@@ -46,6 +46,7 @@ def finding_history(db: Session, finding: Finding) -> list[dict[str, Any]]:
             "reason": row.verdict_reason,
             "evidence_version": row.evidence_version,
             "action": None,
+            "detail": row.detail,
         })
         previous_verdict = row.verdict
 
@@ -63,6 +64,7 @@ def finding_history(db: Session, finding: Finding) -> list[dict[str, Any]]:
                 "reason": event.comment,
                 "evidence_version": None,
                 "action": event.action,
+                "detail": None,
             })
 
     entries.sort(key=lambda entry: _aware(entry["at"]))

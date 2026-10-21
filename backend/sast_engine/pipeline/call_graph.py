@@ -525,23 +525,27 @@ def _resolve_simple(
     package: str,
     imports: Dict[str, str],
     stars: Set[str],
-    graph: CallGraph,
+    graph: Optional[CallGraph],
 ) -> Optional[str]:
+    """`graph` may be None (one file, no repo index): the lookups that need the
+    project's types are then skipped and only imports, well-known types and
+    JDK/framework star imports resolve."""
     if not simple:
         return None
     if simple in imports:
         return imports[simple]
     if simple in _WELL_KNOWN_TYPES:
         return _WELL_KNOWN_TYPES[simple]
-    same_pkg = f"{package}.{simple}" if package else simple
-    if same_pkg in graph.types:
-        return same_pkg
-    matches = graph.types_by_simple.get(simple) or []
-    if len(matches) == 1:
-        return matches[0]
+    if graph is not None:
+        same_pkg = f"{package}.{simple}" if package else simple
+        if same_pkg in graph.types:
+            return same_pkg
+        matches = graph.types_by_simple.get(simple) or []
+        if len(matches) == 1:
+            return matches[0]
     for star in stars:
         candidate = f"{star}.{simple}"
-        if candidate in graph.types or candidate in _WELL_KNOWN_TYPES.values():
+        if (graph is not None and candidate in graph.types) or candidate in _WELL_KNOWN_TYPES.values():
             return candidate
         if candidate.startswith(("java.", "javax.", "jakarta.", "org.springframework.")):
             return candidate

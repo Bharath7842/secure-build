@@ -153,7 +153,7 @@ def evaluate_expected(
             )
         if expected.reason_tag and expected.reason_tag.lower() not in (
             finding["verdict_reason"] or ""
-        ).lower():
+        ).lower() and expected.reason_tag != finding.get("reason_tag"):
             outcome["problems"].append("reason_tag")
             mismatches.append(
                 f"reason_tag mismatch: {label} reason does not mention {expected.reason_tag!r}"
@@ -237,7 +237,7 @@ def _summarize(finding: Any) -> dict[str, Any]:
         "file_path": finding.file_path, "line": finding.line, "rule_id": finding.rule_id,
         "cwe": finding.cwe, "verdict": finding.verdict, "issue_class": finding.issue_class,
         "unresolved_reason": finding.unresolved_reason, "verdict_reason": finding.verdict_reason,
-        "kind": finding.kind, "confidence": finding.confidence,
+        "reason_tag": finding.reason_tag, "kind": finding.kind, "confidence": finding.confidence,
         "occurrence_id": finding.occurrence_id,
     }
 

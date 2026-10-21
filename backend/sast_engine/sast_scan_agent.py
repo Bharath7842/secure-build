@@ -429,6 +429,10 @@ class SastState(TypedDict, total=False):
     # Default True in agent_bridge via scan_limitations id
     # "low-confidence-fp-suppressed"; default False here/CLI.
     suppress_low_confidence_false_positives: bool
+    # Attach occurrence facts and run the deterministic per-occurrence
+    # validators (pipeline/validators) before grouping and publishing. Default
+    # True in agent_bridge via scan_limitations id "occurrence-validators".
+    occurrence_validators: bool
     # Java inter-file call-graph flows (off when use_llm is false, tree-sitter
     # missing, or the stack is not maven-java). Default True when use_llm.
     inter_file_flow: bool
@@ -1979,6 +1983,8 @@ def node_verify_flow_slices(state: SastState) -> dict:
         suppress_low_confidence_false_positives=state.get(
             "suppress_low_confidence_false_positives", False
         ),
+        read_text=lambda rel: llm_file_scan._read_text(_resolve_scan_root(state), rel),
+        occurrence_validators=state.get("occurrence_validators", True),
     )
     tracer.log(6, "verify_flow_slices",
                 f"Flow verification complete: {results['flows_verified']} verified "
@@ -2158,6 +2164,7 @@ def node_scan_deep_files(state: SastState) -> dict:
             "suppress_low_confidence_false_positives", False
         ),
         batch_small_files=state.get("deep_scan_batch_small_files", True),
+        occurrence_validators=state.get("occurrence_validators", True),
     )
 
     tracer.log(7, "scan_deep_files",
@@ -2373,6 +2380,7 @@ def node_scan_triage_files(state: SastState) -> dict:
         triage_mode=triage_mode,
         rules_for_path=rules_for_path,
         regex_processes=state.get("triage_regex_processes"),
+        occurrence_validators=state.get("occurrence_validators", True),
     )
     for key in ("files_scanned", "files_regex_scanned", "files_skipped_generated",
                 "files_skipped_vendored",
@@ -2987,6 +2995,9 @@ def main() -> None:
     parser.add_argument("--triage-confirm-groups-per-call", type=int, default=None,
                          help="Override how many groups are packed into one LLM call (default: "
                               "llm_file_scan.DEFAULT_GROUPS_PER_CALL)")
+    parser.add_argument("--no-occurrence-validators", action="store_true",
+                         help="Skip occurrence facts and the deterministic per-occurrence "
+                              "validators (on by default)")
     parser.add_argument("--allow-no-cwe-findings", action="store_true",
                          help="Do not drop deep-scan findings with no CWE mapping "
                               "(suppressed by default)")
@@ -3059,6 +3070,7 @@ def main() -> None:
         "suppress_no_cwe_findings": not args.allow_no_cwe_findings,
         "suppress_http_findings": args.suppress_http_findings,
         "suppress_low_confidence_false_positives": args.suppress_low_confidence_false_positives,
+        "occurrence_validators": not args.no_occurrence_validators,
         "backfill_deep_scan": not args.no_backfill_deep_scan,
         "deep_scan_batch_small_files": not args.no_batch_small_files,
         "deep_scan_critical_only": args.critical_only_deep_scan,
