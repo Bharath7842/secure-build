@@ -1,0 +1,70 @@
+{
+  "cases": {
+    "log-credential-renamed-logger": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/service/AuthService.java",
+          "issue_class": "security",
+          "line": 10,
+          "occurrence_id": "19276fb231b2da599578905cd7bb8770b6e0b420c5e092e475b1816c143ee4ca",
+          "rule_id": "java-sensitive-data-in-logs",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "sql-soap-bound": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/SoapDao.java",
+          "issue_class": "security",
+          "line": 11,
+          "occurrence_id": "6170070f2d684478e8997a499b79ebac688ec0edf334c106ce81c00d6d105827",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "sql-soap-concat": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/SoapDao.java",
+          "issue_class": "security",
+          "line": 12,
+          "occurrence_id": "43db4cbeb9b74fd6db7558581649b19732c0472c1fb8f7f87f8a877c3df76bf9",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "verdict-not-sure": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/service/BackupService.java",
+          "issue_class": "security",
+          "line": 5,
+          "occurrence_id": "ecc3584e42efe5b7770fc1a7e87ca216c6a7cf2f5b5704033f17f9e8c891270e",
+          "rule_id": "llm-extra",
+          "unresolved_reason": "llm_unrecognised_verdict",
+          "verdict": "unverified"
+        }
+      ]
+    },
+    "xxe-jms-hardened": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/service/OrderMessageService.java",
+          "issue_class": "security",
+          "line": 14,
+          "occurrence_id": "5c27df048d398f9d34a788a4c3877048e31e4a0f7826485bcf4c4ed9f25ba119",
+          "rule_id": "java-xxe-documentbuilder",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    }
+  },
+  "version": 1
+}

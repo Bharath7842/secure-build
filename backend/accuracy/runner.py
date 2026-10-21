@@ -60,6 +60,7 @@ class CaseResult:
     error: str | None = None
     findings: list[dict[str, Any]] = field(default_factory=list)
     consistency: list[str] = field(default_factory=list)
+    outcomes: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def problems(self) -> list[str]:
@@ -94,17 +95,29 @@ def _identifies(expected: Expected, finding: dict[str, Any]) -> bool:
     return bool(expected.cwe and (finding["cwe"] or "").upper() == expected.cwe.upper())
 
 
-def compare(case: Case, findings: list[dict[str, Any]]) -> tuple[list[str], list[str], list[str]]:
-    """(missing, unexpected, mismatches) for one case's persisted findings."""
+def evaluate_expected(
+    case: Case, findings: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[str], list[str], list[str]]:
+    """Compare a case's persisted findings with what it expects.
+
+    Returns (outcomes, missing, unexpected, mismatches). `outcomes` is one dict per
+    expected entry — `{expected, label, found, actual, problems}` where `problems`
+    holds codes (`missing`, `verdict`, `issue_class`, `unresolved_reason`,
+    `reason_tag`) — which the release gate reads; the three string lists are the
+    human report."""
     missing: list[str] = []
     mismatches: list[str] = []
+    outcomes: list[dict[str, Any]] = []
     claimed: set[int] = set()
     for expected in case.expected:
         label = f"{expected.rule_id or expected.cwe} {expected.file}:{expected.sink_line}"
+        outcome: dict[str, Any] = {"expected": expected, "label": label, "found": False, "actual": None, "problems": []}
+        outcomes.append(outcome)
         candidates = [
             (i, f) for i, f in enumerate(findings) if i not in claimed and _identifies(expected, f)
         ]
         if not candidates:
+            outcome["problems"].append("missing")
             if not (case.allow_absent and expected.verdict == "false_positive"):
                 missing.append(f"missing expected finding: {label} ({expected.verdict})")
             continue
@@ -119,17 +132,21 @@ def compare(case: Case, findings: list[dict[str, Any]]) -> tuple[list[str], list
             ),
         )
         claimed.add(index)
+        outcome["found"], outcome["actual"] = True, finding
         if finding["verdict"] != expected.verdict:
+            outcome["problems"].append("verdict")
             mismatches.append(
                 f"verdict mismatch: {label} expected {expected.verdict}, got {finding['verdict']}"
             )
             continue
         if expected.issue_class and finding["issue_class"] != expected.issue_class:
+            outcome["problems"].append("issue_class")
             mismatches.append(
                 f"issue_class mismatch: {label} expected {expected.issue_class}, "
                 f"got {finding['issue_class']}"
             )
         if expected.unresolved_reason and finding["unresolved_reason"] != expected.unresolved_reason:
+            outcome["problems"].append("unresolved_reason")
             mismatches.append(
                 f"unresolved_reason mismatch: {label} expected {expected.unresolved_reason}, "
                 f"got {finding['unresolved_reason']}"
@@ -137,6 +154,7 @@ def compare(case: Case, findings: list[dict[str, Any]]) -> tuple[list[str], list
         if expected.reason_tag and expected.reason_tag.lower() not in (
             finding["verdict_reason"] or ""
         ).lower():
+            outcome["problems"].append("reason_tag")
             mismatches.append(
                 f"reason_tag mismatch: {label} reason does not mention {expected.reason_tag!r}"
             )
@@ -144,6 +162,12 @@ def compare(case: Case, findings: list[dict[str, Any]]) -> tuple[list[str], list
         f"unexpected finding: {f['rule_id']} {f['file_path']}:{f['line']} ({f['verdict']})"
         for i, f in enumerate(findings) if i not in claimed
     ]
+    return outcomes, missing, unexpected, mismatches
+
+
+def compare(case: Case, findings: list[dict[str, Any]]) -> tuple[list[str], list[str], list[str]]:
+    """(missing, unexpected, mismatches) for one case's persisted findings."""
+    _outcomes, missing, unexpected, mismatches = evaluate_expected(case, findings)
     return missing, unexpected, mismatches
 
 
@@ -218,9 +242,15 @@ def _summarize(finding: Any) -> dict[str, Any]:
     }
 
 
-def run_case(case: Case, *, record: str | None = None) -> CaseResult:
+def run_case(case: Case, *, record: str | None = None, check_consistency: bool = False) -> CaseResult:
     """Scan `case` and compare. `record` is None (replay), RECORD_SCRIPTED or
-    RECORD_LIVE."""
+    RECORD_LIVE. `check_consistency` also runs `scan_export.check_report_consistency`
+    on the case's scan (the API counts, the Excel export and the PDF must agree)
+    and puts any contradiction in `result.consistency`.
+
+    The project and scan ids are derived from the case id, so a case's
+    `occurrence_id`s are the same on every run and every machine — the release gate
+    compares them with a committed baseline."""
     from app import db as db_module
     from app.db import init_db
     from app.models import Finding, Project, Scan
@@ -263,6 +293,7 @@ def run_case(case: Case, *, record: str | None = None) -> CaseResult:
 
                 with db_module.SessionLocal() as db:
                     project = Project(
+                        id=f"accuracy-project-{case.id}",
                         name=f"accuracy-{case.id}", default_git_url="https://example.invalid/repo.git",
                         llm_provider=PINNED_PROVIDER, llm_model=PINNED_MODEL,
                         limitations_config=dict(case.limitations),
@@ -270,6 +301,7 @@ def run_case(case: Case, *, record: str | None = None) -> CaseResult:
                     db.add(project)
                     db.commit()
                     scan = Scan(
+                        id=f"accuracy-scan-{case.id}", status="success",
                         project_id=project.id, git_url=project.default_git_url,
                         llm_provider=PINNED_PROVIDER, llm_model=PINNED_MODEL,
                     )
@@ -292,6 +324,10 @@ def run_case(case: Case, *, record: str | None = None) -> CaseResult:
                         (_summarize(f) for f in rows),
                         key=lambda f: (f["file_path"] or "", f["line"] or 0, f["rule_id"] or ""),
                     )
+                    if check_consistency:
+                        from app.services import scan_export
+
+                        result.consistency = scan_export.check_report_consistency(db, db.get(Scan, scan_id))
             except Exception as exc:  # noqa: BLE001 - a crashed case is a failed case
                 result.error = f"{type(exc).__name__}: {exc}"
             finally:
@@ -300,7 +336,9 @@ def run_case(case: Case, *, record: str | None = None) -> CaseResult:
     if unrecorded:
         result.unrecorded = sorted(set(unrecorded))
     if not result.error and not result.unrecorded:
-        result.missing, result.unexpected, result.mismatches = compare(case, result.findings)
+        result.outcomes, result.missing, result.unexpected, result.mismatches = evaluate_expected(
+            case, result.findings
+        )
     result.status = _status(case, result)
     return result
 

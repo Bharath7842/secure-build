@@ -1,0 +1,28 @@
+id: xxe-jms-hardened
+area: xml-parser
+polarity: negative
+seed_findings: [274]
+adjudication: adjudicated
+expected:
+  - rule_id: java-xxe-documentbuilder
+    cwe: CWE-611
+    file: src/main/java/com/acme/service/OrderMessageService.java
+    sink_line: 14
+    verdict: false_positive
+    reason_tag: disallow-doctype-decl
+scripted:
+  - step: scan_deep_files
+    when_user_contains: ["OrderMessageService.java"]
+    response:
+      findings:
+        - line: 14
+          verdict: false_positive
+          confidence: 0.3
+          rule_id: java-xxe-documentbuilder
+          severity: LOW
+          cwe: CWE-611
+          title: DocumentBuilderFactory created for a JMS message
+          owasp_category: "A05:2021-Security-Misconfiguration"
+          sink: DocumentBuilderFactory.newInstance()
+          snippet: DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+          verdict_reason: The same factory sets disallow-doctype-decl before the builder is created, so DTDs and external entities are rejected.

@@ -1,0 +1,27 @@
+id: verdict-not-sure
+area: verdict-contract
+polarity: uncertain
+seed_findings: []
+adjudication: adjudicated
+expected:
+  - cwe: CWE-78
+    file: src/main/java/com/acme/service/BackupService.java
+    sink_line: 5
+    verdict: unverified
+    unresolved_reason: llm_unrecognised_verdict
+scripted:
+  - step: scan_deep_files
+    when_user_contains: ["BackupService.java"]
+    response:
+      findings:
+        - line: 5
+          verdict: not sure
+          confidence: 0.6
+          rule_id: llm-extra
+          severity: HIGH
+          cwe: CWE-78
+          title: Operating system command built from a method argument
+          owasp_category: "A03:2021-Injection"
+          sink: Runtime.getRuntime().exec(...)
+          snippet: Runtime.getRuntime().exec("tar czf /backups/latest.tgz " + directory);
+          verdict_reason: The directory comes from the caller but I cannot tell whether it is validated upstream.

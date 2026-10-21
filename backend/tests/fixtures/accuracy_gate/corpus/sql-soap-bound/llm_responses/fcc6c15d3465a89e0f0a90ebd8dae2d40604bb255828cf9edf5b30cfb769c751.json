@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5249,
+  "key": "fcc6c15d3465a89e0f0a90ebd8dae2d40604bb255828cf9edf5b30cfb769c751",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 138,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 11, \"verdict\": \"false_positive\", \"confidence\": 0.3, \"rule_id\": \"java-jdbc-prepare-concat\", \"severity\": \"LOW\", \"cwe\": \"CWE-89\", \"title\": \"Possible SQL injection in a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"sink\": \"connection.prepareStatement(\\\"SELECT * FROM orders WHERE id = ?\\\")\", \"snippet\": \"PreparedStatement stmt = connection.prepareStatement(\\\"SELECT * FROM orders WHERE id = ?\\\");\", \"verdict_reason\": \"The statement text is a constant and orderId is bound with setString, so it cannot change the query.\"}]}"
+}

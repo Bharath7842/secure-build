@@ -85,4 +85,6 @@ ACCURACY_RECORD=live pytest -m accuracy -k <id>  # a real provider; spends money
 5. If the current engine gets it wrong, say so honestly with `xfail: EPIC-nn` rather than
    weakening the expectation.
 
-EPIC-01 to EPIC-03 add their §9.2 pairs here.
+EPIC-01 to EPIC-03 add their §9.2 pairs here. The release gate (`scripts/accuracy/gate.py`) runs this
+corpus against `accuracy_baseline.json`; see `spec/dev-stories/sast-accuracy/README.md` for the
+"gate green" rule and `backend/accuracy/gate.py` for the five gates.

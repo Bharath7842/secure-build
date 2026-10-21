@@ -1,0 +1,53 @@
+# The accuracy release gate (SAST-00-100). Replays the accuracy corpus offline against
+# its recorded LLM responses — no model call, no cloud credentials — and fails when a
+# scanner change loses a known positive, misclassifies a known negative, resolves an
+# uncertainty, or makes the reports contradict each other.
+name: Accuracy gate
+
+on:
+  pull_request:
+    paths:
+      - "backend/sast_engine/**"
+      - "backend/app/services/scan_export.py"
+      - "backend/accuracy/**"
+      - "backend/tests/accuracy_corpus/**"
+      - "scripts/accuracy/**"
+      - "backend/requirements.txt"
+      - ".github/workflows/accuracy-gate.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/sast_engine/**"
+      - "backend/app/services/scan_export.py"
+      - "backend/accuracy/**"
+      - "backend/tests/accuracy_corpus/**"
+      - "scripts/accuracy/**"
+      - "backend/requirements.txt"
+      - ".github/workflows/accuracy-gate.yml"
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install the backend, including the full engine dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Accuracy gate
+        run: >
+          python scripts/accuracy/gate.py
+          --baseline backend/tests/accuracy_corpus/accuracy_baseline.json
+          --out accuracy-gate
+      - name: Corpus and harness tests
+        working-directory: backend
+        run: python -m pytest -m accuracy -q
+      - name: Keep the gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: accuracy-gate
+          path: accuracy-gate/

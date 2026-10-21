@@ -1,0 +1,126 @@
+{
+  "cases": {
+    "group-mixed-member": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/report/ReportA.java",
+          "issue_class": "security",
+          "line": 13,
+          "occurrence_id": "2bd909f1113c4dae4d17c18b4bfdf5bc8725bf584ded25e41001741b49423e32",
+          "rule_id": "java-jdbc-statement-exec-variable",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        },
+        {
+          "file_path": "src/main/java/com/acme/report/ReportB.java",
+          "issue_class": "security",
+          "line": 13,
+          "occurrence_id": "675fabb2bc8efe642f2abfee671219c79a1e5cfe5e0e8cee5671e5cf140a20f0",
+          "rule_id": "java-jdbc-statement-exec-variable",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        },
+        {
+          "file_path": "src/main/java/com/acme/report/ReportC.java",
+          "issue_class": "security",
+          "line": 11,
+          "occurrence_id": "f0ecfee3f70be1f382eda582ee0458076ca84171d0b9a51f679b7d7831fb9d93",
+          "rule_id": "java-sql-string-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        },
+        {
+          "file_path": "src/main/java/com/acme/report/ReportC.java",
+          "issue_class": "security",
+          "line": 13,
+          "occurrence_id": "b703373cc6073245c0ab4d9941e6262935c152323d61525d8c49b1e5a2683962",
+          "rule_id": "java-jdbc-statement-exec-variable",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "log-credential": {
+      "findings": []
+    },
+    "log-credential-renamed-logger": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/service/AuthService.java",
+          "issue_class": "security",
+          "line": 10,
+          "occurrence_id": "19276fb231b2da599578905cd7bb8770b6e0b420c5e092e475b1816c143ee4ca",
+          "rule_id": "java-sensitive-data-in-logs",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "sql-soap-bound": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/SoapDao.java",
+          "issue_class": "security",
+          "line": 11,
+          "occurrence_id": "6170070f2d684478e8997a499b79ebac688ec0edf334c106ce81c00d6d105827",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "sql-soap-concat": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/SoapDao.java",
+          "issue_class": "security",
+          "line": 12,
+          "occurrence_id": "43db4cbeb9b74fd6db7558581649b19732c0472c1fb8f7f87f8a877c3df76bf9",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "verdict-not-sure": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/service/BackupService.java",
+          "issue_class": "security",
+          "line": 5,
+          "occurrence_id": "ecc3584e42efe5b7770fc1a7e87ca216c6a7cf2f5b5704033f17f9e8c891270e",
+          "rule_id": "llm-extra",
+          "unresolved_reason": "llm_unrecognised_verdict",
+          "verdict": "unverified"
+        }
+      ]
+    },
+    "xxe-jms-hardened": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/service/OrderMessageService.java",
+          "issue_class": "security",
+          "line": 14,
+          "occurrence_id": "5c27df048d398f9d34a788a4c3877048e31e4a0f7826485bcf4c4ed9f25ba119",
+          "rule_id": "java-xxe-documentbuilder",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "xxe-jms-unhardened": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/service/OrderMessageService.java",
+          "issue_class": "security",
+          "line": 14,
+          "occurrence_id": "84e56db67d1110b019275bc8236ac355f6b026e6d41c100aeb8500e3bea15408",
+          "rule_id": "java-xxe-documentbuilder",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    }
+  },
+  "version": 1
+}
