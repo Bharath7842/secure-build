@@ -344,6 +344,12 @@ export interface Finding {
   affected_files: string[] | null;
   /** Every file:line a merged group stands for; null for a single row. */
   affected_lines?: { file_path: string; line: number }[] | null;
+  /** Stable per-occurrence identity; survives rescans and line shifts. */
+  occurrence_id?: string | null;
+  /** `exact`, or `file_level` when no enclosing method could be resolved. */
+  identity_quality?: "exact" | "file_level" | null;
+  /** A grouped row's member occurrence ids. */
+  member_occurrence_ids?: string[] | null;
   /** Raw rows this grouped finding stands for (1 when ungrouped). */
   occurrence_count?: number | null;
   /** The literal text the regex matched — findings group by rule + this. */

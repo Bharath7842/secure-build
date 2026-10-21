@@ -12,6 +12,7 @@ import logging
 from typing import Any, Mapping
 
 from app.models import UNVERIFIED_VERDICT, DastEvidence, Finding
+from app.services.occurrence import occurrence_id, occurrence_parts
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,11 @@ def cap_excerpt(text: str | None, limit: int = EVIDENCE_EXCERPT_CAP) -> str | No
     return text if len(text) <= limit else text[: limit - 15] + "…[truncated]"
 
 
-def build_finding_row(scan_id: str, f: Mapping[str, Any], file_path: str) -> Finding:
+def build_finding_row(
+    scan_id: str, f: Mapping[str, Any], file_path: str, project_id: str | None = None
+) -> Finding:
+    """`project_id`, when given, stamps the row's `occurrence_id`; DAST rows
+    never get one (their own dedupe keys them)."""
     is_dast = bool(f.get("target"))
     verdict = f.get("verdict")
     unresolved_reason = f.get("unresolved_reason")
@@ -60,6 +65,12 @@ def build_finding_row(scan_id: str, f: Mapping[str, Any], file_path: str) -> Fin
         verdict_reason=f.get("verdict_reason"),
         matched_text=f.get("matched_text"),
         group_by_rule=f.get("group_by_rule"),
+        occurrence_id=(
+            occurrence_id(project_id, f, file_path) if project_id and not is_dast else None
+        ),
+        identity_quality=(
+            occurrence_parts(f, file_path)["identity_quality"] if project_id and not is_dast else None
+        ),
         issue_class=f.get("issue_class"),
         unresolved_reason=unresolved_reason if verdict == UNVERIFIED_VERDICT else None,
         flow_path=f.get("flow_path"),

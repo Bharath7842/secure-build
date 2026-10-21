@@ -171,7 +171,9 @@ def test_node_verify_flow_slices_threads_findings_writer(agent, tmp_path, monkey
     state.update(agent.node_map_modules_and_risk(state))
     state.update(agent.node_build_call_graph(state))
     state.update(agent.node_discover_flows(state))
-    marker = object()
-    state["findings_writer"] = marker
+    written = []
+    state["findings_writer"] = lambda path, findings: written.append((path, findings))
     agent.node_verify_flow_slices(state)
-    assert captured == [marker]
+    # Wrapped for occurrence identity; a write must still reach the original.
+    captured[0]("a.java", [])
+    assert written == [("a.java", [])]

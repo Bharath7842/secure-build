@@ -506,6 +506,12 @@ class FindingOut(BaseModel):
     affected_files: list[str] | None = None
     # Every file:line a merged group stands for ({file_path, line}); None for a single row.
     affected_lines: list[dict] | None = None
+    # Stable per-occurrence identity (survives rescans and line shifts); a grouped
+    # row lists its members' ids in `member_occurrence_ids`. `identity_quality` is
+    # `exact`, or `file_level` when no enclosing method could be resolved.
+    occurrence_id: str | None = None
+    identity_quality: str | None = None
+    member_occurrence_ids: list[str] | None = None
     # Rows this grouped finding stands for (group_findings_by_issue).
     occurrence_count: int | None = None
     matched_text: str | None = None

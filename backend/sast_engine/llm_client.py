@@ -4,6 +4,7 @@ Ollama (local, optional)."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import random
@@ -461,6 +462,19 @@ def record_result_cache_hit(
         stats["by_step"][step] = stats["by_step"].get(step, 0) + 1
 
 
+def record_system_prompt(usage: Optional[Dict[str, Any]], step: str, system: str) -> None:
+    """Remember the sha256 of each distinct system prompt a step used, so a
+    scan's recorded versions say exactly which prompts produced its findings.
+    A step can use several (the deep scan builds one per language)."""
+    if usage is None:
+        return
+    digest = hashlib.sha256(system.encode("utf-8")).hexdigest()
+    with _USAGE_LOCK:
+        hashes = usage.setdefault("system_prompt_hashes", {}).setdefault(step, [])
+        if digest not in hashes:
+            hashes.append(digest)
+
+
 def _resolve_provider_for_call(
     usage: Optional[Dict[str, Any]],
     provider: Optional[str],
@@ -603,6 +617,11 @@ def usage_cost_summary(usage: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "result_cache_hits": int(result_cache.get("hits") or 0),
         "result_cache_saved_tokens": int(result_cache.get("saved_input_tokens") or 0)
         + int(result_cache.get("saved_output_tokens") or 0),
+        # Which system prompts each step ran with (sha256, sorted).
+        "system_prompt_sha256": {
+            step_name: sorted(hashes)
+            for step_name, hashes in (usage.get("system_prompt_hashes") or {}).items()
+        },
     }
 
 
@@ -624,6 +643,7 @@ def call_llm(
     recorded token counts (zero on a result-cache hit) — the only reliable
     per-call figure when parallel workers share one usage dict."""
     provider, model = _resolve_provider_for_call(usage, provider, model, step)
+    record_system_prompt(usage, step, system)
     if provider not in KNOWN_PROVIDERS:
         # Used to fall through to Bedrock silently — a typo'd provider would
         # have shipped code to AWS on a scan configured for a local model.

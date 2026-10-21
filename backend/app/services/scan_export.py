@@ -715,6 +715,14 @@ def issue_groups(findings: list[Finding]) -> list[list[Finding]]:
     return _consolidate_groups(list(groups.values()))
 
 
+def _occurrence_ids(finding: Finding) -> list[str]:
+    """Occurrence ids a (possibly grouped) finding stands for, in member order."""
+    members = getattr(finding, "member_occurrence_ids", None)
+    if members:
+        return list(members)
+    return [finding.occurrence_id] if getattr(finding, "occurrence_id", None) else []
+
+
 def group_findings_by_issue(findings: list[Finding]) -> list[Finding]:
     """Collapse findings that represent the same issue across multiple files
     into one representative Finding per group, with every affected file path
@@ -734,6 +742,9 @@ def group_findings_by_issue(findings: list[Finding]) -> list[Finding]:
         if len(members) == 1:
             members[0].occurrence_count = 1
             members[0].affected_lines = None
+            members[0].member_occurrence_ids = (
+                [members[0].occurrence_id] if members[0].occurrence_id else None
+            )
             result.append(members[0])
             continue
         # Among equals, prefer the member with the strongest reachability
@@ -763,6 +774,11 @@ def group_findings_by_issue(findings: list[Finding]) -> list[Finding]:
         representative.affected_files = paths
         representative.affected_lines = [{"file_path": p, "line": n} for p, n in locations] or None
         representative.occurrence_count = len(members)
+        member_ids: list[str] = []
+        for m in members:
+            if m.occurrence_id and m.occurrence_id not in member_ids:
+                member_ids.append(m.occurrence_id)
+        representative.member_occurrence_ids = member_ids or None
         result.append(representative)
     return _sorted_findings(result)
 
@@ -903,8 +919,9 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
         "Risk",
         "Recommendation",
         "Example Fix",
+        "Occurrence ID",
     ]
-    widths = [5, 12, 15, 32, 12, 8, 12, 8, 42, 44, 36, 44, 44, 46]
+    widths = [5, 12, 15, 32, 12, 8, 12, 8, 42, 44, 36, 44, 44, 46, 68]
     _xl_header_row(sheet, 1, headers, widths=widths)
 
     sorted_findings = _sorted_findings(findings)
@@ -930,6 +947,7 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
             _excel_cell(_risk_text(finding)),
             _excel_cell(recommendation),
             _excel_cell(_example_fix_text(finding)),
+            "\n".join(_occurrence_ids(finding)),
         ]
         sheet.append([_excel_scalar(v) for v in row_values])
 
@@ -1501,6 +1519,13 @@ def _finding_story_block(
                                       width=prose_width, label_color="#065f46", accent="#ecfdf5"))
     if example_fix:
         strips.extend(_code_boxes("Example fix", example_fix, styles=styles, width=inner_width))
+    occurrence_ids = _occurrence_ids(finding)
+    if occurrence_ids:
+        shown = ", ".join(occurrence_ids[:6])
+        if len(occurrence_ids) > 6:
+            shown += f" (+{len(occurrence_ids) - 6} more)"
+        strips.append(_labelled_block("Occurrence ID", shown, styles=styles,
+                                      width=inner_width, label_color="#64748b"))
 
     # Spacers between strips would show as gaps in the rail; drop them and let
     # the strip padding do the spacing instead.

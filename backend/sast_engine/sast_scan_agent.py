@@ -72,7 +72,7 @@ import llm_client  # noqa: E402
 from llm_client import RESULT_CACHE_USAGE_KEY, init_usage, usage_cost_summary  # noqa: E402
 import ast_struct  # noqa: E402
 from pipeline import call_graph, call_graph_python, dependency_scan, derive_rules, flow_verify, llm_file_scan, regex_scan, rg_prefilter  # noqa: E402
-from pipeline import joern_findings, joern_flows, joern_runner, reachability  # noqa: E402
+from pipeline import joern_findings, joern_flows, joern_runner, occurrence, reachability  # noqa: E402
 
 # ===========================================================================
 # 0. CONFIG — extension map, skip dirs, per-stack risk profiles
@@ -1568,6 +1568,26 @@ def _resolve_active_surfaces(state: SastState, rules_path: Path):
     )
 
 
+def _findings_writer(state: SastState):
+    """`state["findings_writer"]`, stamped with each finding's occurrence
+    identity (sink expression, enclosing method, ordinal) on the way through.
+    Every stage's writes go through this one wrapper, so none can be missed,
+    and a stamping problem never blocks a write."""
+    writer = state.get("findings_writer")
+    if writer is None:
+        return None
+    root = _resolve_scan_root(state)
+
+    def write(file_path: str, findings: List[Dict[str, Any]]) -> None:
+        try:
+            occurrence.stamp_identity(root, file_path, findings)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [identity] could not stamp occurrence identity for {file_path}: {exc}", flush=True)
+        writer(file_path, findings)
+
+    return write
+
+
 def _scan_context(state: SastState) -> tuple:
     root = _resolve_scan_root(state)
     rules_path = Path(state.get("regex_rules_path") or (_ENGINE_DIR / "rules"))
@@ -1941,7 +1961,7 @@ def node_verify_flow_slices(state: SastState) -> dict:
         usage=usage,
         llm_provider=state.get("llm_provider"),
         llm_model=state.get("llm_model"),
-        findings_writer=state.get("findings_writer"),
+        findings_writer=_findings_writer(state),
         cap=cap,
         suppress_no_cwe=state.get("suppress_no_cwe_findings", True),
         suppress_http_findings=state.get("suppress_http_findings", False),
@@ -2076,7 +2096,7 @@ def node_scan_deep_files(state: SastState) -> dict:
 
     (root, rules, active_frameworks, dependency_index,
      priority_rule_ids, stack_context, usage) = _scan_context(state)
-    findings_writer = state.get("findings_writer")
+    findings_writer = _findings_writer(state)
     completed: List[Dict[str, Any]] = []
 
     tracer.log(7, "scan_deep_files",
@@ -2216,7 +2236,7 @@ def node_scan_triage_files(state: SastState) -> dict:
 
     (root, rules, active_frameworks, dependency_index,
      priority_rule_ids, stack_context, usage) = _scan_context(state)
-    findings_writer = state.get("findings_writer")
+    findings_writer = _findings_writer(state)
     completed: List[Dict[str, Any]] = []
 
     batch_size = state.get("triage_batch_size", _DEFAULT_TRIAGE_BATCH_SIZE)
@@ -2417,7 +2437,7 @@ def node_joern_scan(state: SastState) -> dict:
     rules = joern_findings.rules_for_hits(raws)
     hit_count = sum(len(r["findings"]) for r in file_results)
 
-    writer = state.get("findings_writer")
+    writer = _findings_writer(state)
     if writer is not None:
         for r in file_results:
             writer(r["file_path"], r["findings"])

@@ -666,10 +666,13 @@ def test_node_scan_deep_files_threads_findings_writer_from_state(agent, project_
 
     monkeypatch.setattr(agent.llm_file_scan, "scan_deep_files", fake_scan_critical_files)
 
-    marker = object()
-    state["findings_writer"] = marker
+    written = []
+    state["findings_writer"] = lambda path, findings: written.append((path, findings))
     agent.node_scan_deep_files(state)
-    assert captured == [marker]
+    # The stage gets the state's writer wrapped (occurrence identity is stamped
+    # on the way through); a write must still reach the original.
+    captured[0]("a.py", [])
+    assert written == [("a.py", [])]
 
 
 def test_node_scan_deep_files_threads_suppress_low_confidence_fp_from_state(agent, project_tree, monkeypatch):
@@ -728,10 +731,11 @@ def test_node_scan_triage_files_threads_findings_writer_from_state(agent, projec
 
     monkeypatch.setattr(agent.llm_file_scan, "scan_triage_files", fake_scan_low_files)
 
-    marker = object()
-    state["findings_writer"] = marker
+    written = []
+    state["findings_writer"] = lambda path, findings: written.append((path, findings))
     agent.node_scan_triage_files(state)
-    assert captured == [marker]
+    captured[0]("a.py", [])
+    assert written == [("a.py", [])]
 
 
 # --- _batch_triage_entries ---------------------------------------------------

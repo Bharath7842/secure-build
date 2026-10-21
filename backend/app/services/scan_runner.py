@@ -19,7 +19,7 @@ from app.config import settings
 from app.models import DAST_SETTINGS_SNAPSHOT_KEY, UNVERIFIED_VERDICT, Finding, Scan
 from app.dast.domain.identities import identity_from_public
 from app.dast.domain.redaction import redact_json, redact_text
-from app.services import agent_bridge, engine_adapter, git_token, git_workspace, scan_log
+from app.services import agent_bridge, engine_adapter, git_token, git_workspace, scan_log, scan_versions
 from app.services.credential_holder import InMemoryCredentialHolder
 from app.services.dast_findings import DastFindingsWriter
 from app.services.finding_rows import build_evidence_row, build_finding_row
@@ -215,6 +215,9 @@ def _merge_engine_metadata(
         metadata["discovery"] = merged
     if usage_summary:
         metadata["usage_summary"] = usage_summary
+        metadata[scan_versions.VERSIONS_KEY] = scan_versions.with_prompt_hashes(
+            metadata.get(scan_versions.VERSIONS_KEY), usage_summary
+        )
     scan.metadata_json = metadata
     db.commit()
 
@@ -404,6 +407,27 @@ def unresolved_counts(db, scan_id: str) -> dict[str, int]:
     return {(reason or "unknown"): count for reason, count in rows}
 
 
+def _log_identity_summary(scan_id: str) -> None:
+    """One log line per scan: how many occurrence identities could only be
+    resolved to the file. A high share means rescan joins are weak for it."""
+    db = db_module.SessionLocal()
+    try:
+        total = db.query(func.count(Finding.id)).filter(
+            Finding.scan_id == scan_id, Finding.occurrence_id.isnot(None)
+        ).scalar() or 0
+        file_level = db.query(func.count(Finding.id)).filter(
+            Finding.scan_id == scan_id, Finding.identity_quality == "file_level"
+        ).scalar() or 0
+    finally:
+        db.close()
+    if total:
+        scan_log.log(
+            scan_id,
+            f"Occurrence identity: {file_level} of {total} finding(s) resolved to the file only "
+            f"({file_level * 100 // total}% file-level).",
+        )
+
+
 def _log_unresolved_summary(scan_id: str) -> None:
     """One log line per scan: how many findings ended unresolved, and why."""
     db = db_module.SessionLocal()
@@ -463,7 +487,9 @@ def _make_findings_writer(scan_id: str):
             if not findings:
                 scan_log.log(scan_id, f"  No findings for {file_path}.")
                 return
-            rows = [build_finding_row(scan_id, f, file_path) for f in findings]
+            scan = session.get(Scan, scan_id)
+            project_id = scan.project_id if scan is not None else None
+            rows = [build_finding_row(scan_id, f, file_path, project_id) for f in findings]
             with _DB_WRITE_LOCK:
                 session.add_all(rows)
                 session.flush()  # assign finding ids so evidence rows can reference them
@@ -1188,6 +1214,13 @@ def execute_scan(scan_id: str) -> None:
                     _mark_cancelled(db, scan_id)
                     return
 
+                metadata = dict(scan.metadata_json or {})
+                metadata[scan_versions.VERSIONS_KEY] = scan_versions.static_versions(
+                    scan, mock=engine_adapter.mock_engine_enabled()
+                )
+                scan.metadata_json = metadata
+                db.commit()
+
                 scan_log.log(scan_id, "Starting the discovery agent...")
                 try:
                     engine_result = engine_adapter.run_scan(
@@ -1236,6 +1269,9 @@ def execute_scan(scan_id: str) -> None:
 
                 scan.progress = max(last_progress[0], 95)
                 metadata = dict(scan.metadata_json or {})
+                metadata[scan_versions.VERSIONS_KEY] = scan_versions.with_prompt_hashes(
+                    metadata.get(scan_versions.VERSIONS_KEY), usage_summary
+                )
                 if discovery:
                     metadata["discovery"] = discovery
                 if usage_summary:
@@ -1257,6 +1293,7 @@ def execute_scan(scan_id: str) -> None:
 
                 reconcile_unverified_findings(scan_id)
                 _log_unresolved_summary(scan_id)
+                _log_identity_summary(scan_id)
                 scan = db.get(Scan, scan_id)
                 if scan is None:
                     return

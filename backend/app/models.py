@@ -228,6 +228,13 @@ class Finding(Base):
     # Why an `unverified` verdict is undecided (UNRESOLVED_REASONS); NULL once
     # a verdict is decided and on pre-column rows.
     unresolved_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Stable identity of this occurrence across rescans (app/services/occurrence.py):
+    # sha256 of project, file, rule, CWE, sink expression, enclosing method and the
+    # sink's ordinal in it — never the line. NULL on rows from before the column and on
+    # DAST rows. `identity_quality` is `exact`, or `file_level` when no enclosing
+    # method could be resolved (so the join is weaker for that row).
+    occurrence_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    identity_quality: Mapped[str | None] = mapped_column(String(20), nullable=True)
     owasp_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
     exploitability: Mapped[float | None] = mapped_column(Float, nullable=True)
     root_cause_id: Mapped[str | None] = mapped_column(String(40), nullable=True)

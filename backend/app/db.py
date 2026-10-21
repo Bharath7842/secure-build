@@ -125,6 +125,8 @@ def _run_light_migrations(engine) -> None:
             ("group_by_rule", "ALTER TABLE findings ADD COLUMN group_by_rule BOOLEAN"),
             ("issue_class", "ALTER TABLE findings ADD COLUMN issue_class VARCHAR(20)"),
             ("unresolved_reason", "ALTER TABLE findings ADD COLUMN unresolved_reason VARCHAR(40)"),
+            ("occurrence_id", "ALTER TABLE findings ADD COLUMN occurrence_id VARCHAR(64)"),
+            ("identity_quality", "ALTER TABLE findings ADD COLUMN identity_quality VARCHAR(20)"),
             # DAST evidence fields (DAST-00-040); the new dast_evidence / dast_request_audit
             # tables are created by Base.metadata.create_all, so only columns need ALTER.
             ("target", "ALTER TABLE findings ADD COLUMN target VARCHAR(300)"),
@@ -143,6 +145,11 @@ def _run_light_migrations(engine) -> None:
             if col_name not in finding_cols:
                 with engine.begin() as conn:
                     conn.execute(text(col_sql))
+
+        with engine.begin() as conn:
+            conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_findings_occurrence_id ON findings (occurrence_id)")
+            )
 
         # owasp_category grew from VARCHAR(10) to VARCHAR(64) to hold full
         # "A0x:2021-Some-Category" labels instead of just the short code.

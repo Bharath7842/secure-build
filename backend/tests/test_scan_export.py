@@ -330,6 +330,7 @@ def test_excel_findings_use_expected_columns():
         "Risk",
         "Recommendation",
         "Example Fix",
+        "Occurrence ID",
     ]
     row = [cell.value for cell in sheet[2]]
     assert row[1] == "HIGH"
