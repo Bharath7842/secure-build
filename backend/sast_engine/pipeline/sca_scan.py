@@ -381,6 +381,7 @@ def build_findings(dependencies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     # in this codebase, mirroring the "pattern matched, nobody
                     # reviewed it" semantics regex-only findings already use.
                     "verdict": "unverified",
+                    "unresolved_reason": "not_reviewed_sca",
                     "ai_fix": ai_fix,
                 }
             )

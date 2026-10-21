@@ -43,7 +43,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
-from llm_client import PROVIDER_BEDROCK, call_llm, parse_llm_json_array, should_cache_system_prompt
+from llm_client import (
+    PROVIDER_BEDROCK,
+    LlmBudgetExhausted,
+    call_llm,
+    parse_llm_json_array,
+    should_cache_system_prompt,
+)
 
 from . import reachability
 from .owasp_map import OWASP_TOP_10_2021, owasp_for_rule
@@ -1017,6 +1023,28 @@ def trim_catalog(catalog: List[Dict[str, Any]], *, drop_patterns_over: int = 60)
 # rewrite every regex-only finding to false_positive.
 VERDICT_UNVERIFIED = "unverified"
 _VALID_VERDICTS = {"true_positive", "false_positive", VERDICT_UNVERIFIED}
+
+# The decision contract. `app/models.py` holds the same sets (the engine cannot
+# import `app`); tests/test_verdict_contract.py fails if the copies drift.
+VERDICTS = frozenset(_VALID_VERDICTS)
+ISSUE_CLASSES = frozenset({"security", "quality", "inactive"})
+DEFAULT_ISSUE_CLASS = "security"
+UNRESOLVED_REASONS = frozenset({
+    "not_reviewed_regex",
+    "not_reviewed_joern",
+    "not_reviewed_sca",
+    "llm_missing_verdict",
+    "llm_unrecognised_verdict",
+    "llm_call_failed",
+    "llm_budget_exhausted",
+    "cap_reached",
+    "evidence_missing",
+})
+
+
+def unresolved_reason_for_exception(exc: BaseException) -> str:
+    """Why an LLM call that raised left its work undecided."""
+    return "llm_budget_exhausted" if isinstance(exc, LlmBudgetExhausted) else "llm_call_failed"
 _VALID_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"}
 _SEVERITY_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
 _NEGATION_RE = re.compile(r"\b(not|no|isn'?t|non)\b")
@@ -1450,7 +1478,10 @@ def scan_chunk(
             raw_text = _call(retry_user)
             items, err = parse_llm_json_array(raw_text)
     except Exception as exc:  # one bad chunk must not kill the tier
-        return {"findings": [], "error": f"{type(exc).__name__}: {exc}"}
+        return {
+            "findings": [], "error": f"{type(exc).__name__}: {exc}",
+            "budget_exhausted": isinstance(exc, LlmBudgetExhausted),
+        }
 
     findings: List[Dict[str, Any]] = []
     for item in items:
@@ -1462,6 +1493,45 @@ def scan_chunk(
         if norm is not None:
             findings.append(norm)
     return {"findings": findings, "error": err if (err and not items) else None}
+
+
+def _budget_fallback_findings(
+    *,
+    rel_path: str,
+    text: str,
+    lang: Optional[str],
+    spans: Sequence[Tuple[int, int]],
+    rules: List[RegexRule],
+    active_frameworks: Optional[Set[str]],
+    dependency_index: Optional[Dict[str, List[Optional[str]]]],
+    repo_root: Path,
+) -> List[Dict[str, Any]]:
+    """Regex hits for the chunks the LLM budget ran out on, as `unverified`.
+
+    Past the spend cutoff a deep-scan chunk gets no answer at all, and unlike
+    the triage tier a deep-scan file is not otherwise regex-scanned, so the
+    work would simply vanish. The catalog pass is local and free: its hits in
+    just those line ranges are recorded as unresolved (`llm_budget_exhausted`)
+    so the gap shows up as undecided work, never as a clean file."""
+    if not spans:
+        return []
+    scanned = scan_one_file(
+        repo_root, rel_path, "", rules, file_lang=lang,
+        active_frameworks=active_frameworks, dependency_index=dependency_index,
+    )
+    hits = [
+        h for h in scanned["hits"]
+        if any(start <= int(h.get("line") or 0) <= end for start, end in spans)
+    ]
+    out = findings_from_hits(
+        file_path=rel_path, source_text=text, hits=hits,
+        rules_by_id={rule.id: rule for rule in rules},
+    )
+    for finding in out:
+        finding["file_path"] = rel_path
+        finding["unresolved_reason"] = "llm_budget_exhausted"
+        finding["verdict_reason"] = BUDGET_EXHAUSTED_REASON
+    return out
 
 
 def scan_file(
@@ -1543,23 +1613,35 @@ def scan_file(
 
     all_findings: List[Dict[str, Any]] = []
     chunk_errors: List[str] = []
-    for _idx, outcome in sorted(outcomes, key=lambda pair: pair[0]):
+    budget_spans: List[Tuple[int, int]] = []
+    for idx, outcome in sorted(outcomes, key=lambda pair: pair[0]):
         all_findings.extend(outcome["findings"])
         if outcome.get("error"):
             chunk_errors.append(outcome["error"])
+        if outcome.get("budget_exhausted"):
+            chunk = chunks[idx - 1]
+            budget_spans.append((chunk["start_line"], chunk["end_line"]))
 
     merged = finalize_findings(
         merge_dedupe(all_findings), text,
         suppress_no_cwe=suppress_no_cwe, suppress_http_findings=suppress_http_findings,
         suppress_low_confidence_false_positives=suppress_low_confidence_false_positives,
     )
+    unverified = _budget_fallback_findings(
+        rel_path=rel_path, text=text, lang=lang, spans=budget_spans, rules=rules,
+        active_frameworks=active_frameworks, dependency_index=dependency_index,
+        repo_root=repo_root,
+    )
+    merged = merged + unverified
     tp_count = sum(1 for f in merged if f["verdict"] == "true_positive")
+    fp_count = sum(1 for f in merged if f["verdict"] == "false_positive")
     return {
         "file_path": rel_path,
         "chunks": len(chunks),
         "findings": merged,
         "tp_count": tp_count,
-        "fp_count": len(merged) - tp_count,
+        "fp_count": fp_count,
+        "unverified_count": len(unverified),
         "read_error": False,
         "chunk_errors": chunk_errors,
     }
@@ -1916,6 +1998,10 @@ _TRIAGE_RESPONSE_SCHEMA = """Output format — one JSON object, exactly one deci
 # Excerpt lines longer than this are cut — the per-window char cap the old
 # ±10-line blocks had (SNIPPET_MAX_CHARS) no longer applies once windows merge.
 TRIAGE_LINE_MAX_CHARS = 400
+BUDGET_EXHAUSTED_REASON = (
+    "The LLM spend cutoff was reached before this part of the file was reviewed; "
+    "this is a regex match that nobody has reviewed yet."
+)
 TRIAGE_NO_DECISION_REASON = (
     "LLM triage returned no usable decision for this candidate; it is a regex "
     "match that nobody has reviewed yet."
@@ -2152,9 +2238,11 @@ def _triage_finding(
     file_path: str,
     source_text: str,
     rules_by_id: Dict[str, RegexRule],
+    unresolved_reason: str = "llm_missing_verdict",
 ) -> Dict[str, Any]:
     """Build the finding locally from the candidate and rule; the model only
-    contributes the decision fields."""
+    contributes the decision fields. `unresolved_reason` applies only when
+    there is no decision (`item is None`)."""
     rule = rules_by_id.get(cand.get("rule_id") or "")
     cwe = ((rule.cwe if rule else "") or "").strip() or None
     severity = str((rule.severity if rule else cand.get("severity")) or "LOW").upper()
@@ -2171,6 +2259,7 @@ def _triage_finding(
         "matched_text": cand["matched_text"][:500],
         "group_by_rule": bool(rule.group_by_rule) if rule else False,
         "derived": bool(rule.derived) if rule else False,
+        "issue_class": rule.issue_class if rule else DEFAULT_ISSUE_CLASS,
         "kind": "regex",
     }
     if item is None:
@@ -2179,6 +2268,7 @@ def _triage_finding(
             "severity": severity,
             "snippet": build_code_context(source_text, int(cand["line"]), cand["matched_text"]),
             "verdict": VERDICT_UNVERIFIED,
+            "unresolved_reason": unresolved_reason,
             "verdict_reason": TRIAGE_NO_DECISION_REASON,
             "confidence": None,
             "ai_fix": None,
@@ -2230,6 +2320,7 @@ def triage_regex_hits(
     rules_by_id = {rule.id: rule for rule in rules}
     candidates = group_triage_candidates(triage_candidates(hits), rules_by_id)
     errors: List[str] = []
+    call_failure: List[str] = []  # reason of the last call that raised, if any
 
     def _ask(subset: Sequence[Dict[str, Any]]) -> Tuple[Dict[str, Dict[str, Any]], bool]:
         """(decisions, call_raised)."""
@@ -2247,6 +2338,7 @@ def triage_regex_hits(
                 )
         except Exception as exc:  # one bad file must not kill the tier
             errors.append(f"{type(exc).__name__}: {exc}")
+            call_failure.append(unresolved_reason_for_exception(exc))
             return {}, True
         items, err = parse_llm_json_array(raw_text)
         if err and not items:
@@ -2275,9 +2367,11 @@ def triage_regex_hits(
     merged = finalize_findings(merge_dedupe(reviewed), source_text)
     # Undecided candidates bypass suppression, exactly like regex-only
     # findings: no one has judged them, so nothing may be dropped on a guess.
+    undecided_reason = call_failure[-1] if call_failure else "llm_missing_verdict"
     unverified = [
         _triage_finding(m, None, file_path=file_path,
-                        source_text=source_text, rules_by_id=rules_by_id)
+                        source_text=source_text, rules_by_id=rules_by_id,
+                        unresolved_reason=undecided_reason)
         for c in missing
         for m in c["members"]
     ]
@@ -2339,7 +2433,9 @@ def findings_from_hits(
             "matched_text": matched[:500],
             "group_by_rule": bool(rule.group_by_rule) if rule else False,
             "derived": bool(rule.derived) if rule else False,
+            "issue_class": (rule.issue_class if rule else DEFAULT_ISSUE_CLASS),
             "verdict": VERDICT_UNVERIFIED,
+            "unresolved_reason": "not_reviewed_regex",
             "verdict_reason": UNVERIFIED_REASON,
             "kind": "regex",
             "confidence": None,
@@ -2641,6 +2737,7 @@ def _confirm_result_from_item(item: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "verdict": VERDICT_UNVERIFIED, "confidence": None,
             "verdict_reason": "", "ai_fix": None, "error": "missing verdict",
+            "unresolved_reason": "llm_missing_verdict",
         }
     verdict = _normalize_verdict(item.get("verdict"))
     confidence = _normalize_confidence(item.get("confidence"), verdict)
@@ -2650,6 +2747,7 @@ def _confirm_result_from_item(item: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "verdict": verdict, "confidence": confidence,
         "verdict_reason": reason, "ai_fix": ai_fix, "error": None,
+        "unresolved_reason": None,
     }
 
 
@@ -2703,6 +2801,7 @@ def confirm_finding_group(
             "verdict": VERDICT_UNVERIFIED, "confidence": None,
             "verdict_reason": "", "ai_fix": None,
             "error": f"{type(exc).__name__}: {exc}",
+            "unresolved_reason": unresolved_reason_for_exception(exc),
         }
 
     item = items[0] if items and isinstance(items[0], dict) else None
@@ -2711,6 +2810,7 @@ def confirm_finding_group(
             "verdict": VERDICT_UNVERIFIED, "confidence": None,
             "verdict_reason": "", "ai_fix": None,
             "error": err or "empty or unparseable response",
+            "unresolved_reason": "llm_call_failed",
         }
 
     return _confirm_result_from_item(item)
@@ -3010,8 +3110,12 @@ def group_confirm_unverified_findings(
 
     def _apply_result(members: List[Dict[str, Any]], result: Dict[str, Any]) -> None:
         if result.get("error") is not None:
+            # Still unverified, but say why nobody decided it.
+            for m in members:
+                m["unresolved_reason"] = result.get("unresolved_reason") or "llm_call_failed"
             return
         for m in members:
+            m["unresolved_reason"] = None
             m["verdict"] = result["verdict"]
             m["confidence"] = result["confidence"]
             m["verdict_reason"] = (
@@ -3075,20 +3179,40 @@ def group_confirm_unverified_findings(
         else:
             outcomes = [o for batch_keys in batches for o in _run_batch(batch_keys)]
 
+    for key in skipped_keys:
+        for m in groups[key]:
+            m["unresolved_reason"] = "cap_reached"
+
     if verdict_updates_writer is not None:
         updates_by_file: Dict[str, List[Dict[str, Any]]] = {}
         for outcome in outcomes:
-            if outcome.get("error") is not None:
-                continue
             for m in outcome["members"]:
                 path = m.get("file_path") or ""
-                updates_by_file.setdefault(path, []).append({
+                if outcome.get("error") is not None:
+                    # Verdict, confidence and reasoning stay as they were; only
+                    # the reason the group is still undecided is recorded.
+                    update = {
+                        "rule_id": m.get("rule_id"),
+                        "line": m.get("line"),
+                        "unresolved_reason": m.get("unresolved_reason"),
+                    }
+                else:
+                    update = {
+                        "rule_id": m.get("rule_id"),
+                        "line": m.get("line"),
+                        "verdict": m.get("verdict"),
+                        "confidence": m.get("confidence"),
+                        "verdict_reason": m.get("verdict_reason"),
+                        "ai_fix": m.get("ai_fix"),
+                        "unresolved_reason": None,
+                    }
+                updates_by_file.setdefault(path, []).append(update)
+        for key in skipped_keys:
+            for m in groups[key]:
+                updates_by_file.setdefault(m.get("file_path") or "", []).append({
                     "rule_id": m.get("rule_id"),
                     "line": m.get("line"),
-                    "verdict": m.get("verdict"),
-                    "confidence": m.get("confidence"),
-                    "verdict_reason": m.get("verdict_reason"),
-                    "ai_fix": m.get("ai_fix"),
+                    "unresolved_reason": "cap_reached",
                 })
         for path, updates in updates_by_file.items():
             verdict_updates_writer(path, updates)

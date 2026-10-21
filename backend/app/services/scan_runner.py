@@ -12,7 +12,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 
 from app import db as db_module
 from app.config import settings
@@ -392,6 +392,30 @@ def reconcile_unverified_findings(scan_id: str, *, capped: bool = False) -> None
         db.close()
 
 
+def unresolved_counts(db, scan_id: str) -> dict[str, int]:
+    """Unverified findings of a scan, counted by why they are undecided.
+    Rows with no stored reason (written before the column) count as `unknown`."""
+    rows = (
+        db.query(Finding.unresolved_reason, func.count(Finding.id))
+        .filter(Finding.scan_id == scan_id, Finding.verdict == UNVERIFIED_VERDICT)
+        .group_by(Finding.unresolved_reason)
+        .all()
+    )
+    return {(reason or "unknown"): count for reason, count in rows}
+
+
+def _log_unresolved_summary(scan_id: str) -> None:
+    """One log line per scan: how many findings ended unresolved, and why."""
+    db = db_module.SessionLocal()
+    try:
+        counts = unresolved_counts(db, scan_id)
+    finally:
+        db.close()
+    if counts:
+        detail = ", ".join(f"{reason}={count}" for reason, count in sorted(counts.items()))
+        scan_log.log(scan_id, f"Unresolved findings by reason: {detail}.")
+
+
 def _unfinished_progress(scan: Scan) -> int:
     """Progress for a DAST scan that ended without succeeding: where it got to, never 100 (a scan
     that failed or was cancelled did not finish)."""
@@ -526,6 +550,20 @@ def _make_verdict_updates_writer(scan_id: str):
                     line = update.get("line")
                     if rule_id is None or line is None:
                         continue
+                    # Only the keys an update carries are written: a group that
+                    # could not be decided sends just `unresolved_reason`, so
+                    # its earlier reasoning is left alone.
+                    values = {
+                        column: update[column]
+                        for column in (
+                            "verdict", "confidence", "verdict_reason", "ai_fix", "unresolved_reason",
+                        )
+                        if column in update
+                    }
+                    if values.get("verdict") in ("true_positive", "false_positive"):
+                        values["unresolved_reason"] = None
+                    if not values:
+                        continue
                     changed += (
                         session.query(Finding)
                         .filter(
@@ -534,15 +572,7 @@ def _make_verdict_updates_writer(scan_id: str):
                             Finding.rule_id == rule_id,
                             Finding.line == line,
                         )
-                        .update(
-                            {
-                                "verdict": update.get("verdict"),
-                                "confidence": update.get("confidence"),
-                                "verdict_reason": update.get("verdict_reason"),
-                                "ai_fix": update.get("ai_fix"),
-                            },
-                            synchronize_session=False,
-                        )
+                        .update(values, synchronize_session=False)
                     )
                 session.commit()
             if changed:
@@ -1226,6 +1256,7 @@ def execute_scan(scan_id: str) -> None:
                     return
 
                 reconcile_unverified_findings(scan_id)
+                _log_unresolved_summary(scan_id)
                 scan = db.get(Scan, scan_id)
                 if scan is None:
                     return

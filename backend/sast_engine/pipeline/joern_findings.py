@@ -143,6 +143,7 @@ def findings_for_file(rel: str, source_text: str, hits: List[Dict[str, Any]]) ->
             "group_by_rule": False,
             "derived": False,
             "verdict": VERDICT_UNVERIFIED,
+            "unresolved_reason": "not_reviewed_joern",
             "verdict_reason": UNVERIFIED_REASON,
             "kind": KIND,
             "confidence": None,

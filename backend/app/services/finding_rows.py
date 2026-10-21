@@ -8,9 +8,12 @@ column empty.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Mapping
 
-from app.models import DastEvidence, Finding
+from app.models import UNVERIFIED_VERDICT, DastEvidence, Finding
+
+logger = logging.getLogger(__name__)
 
 # Evidence excerpts are proof, not a response archive: cap what is stored per exchange.
 EVIDENCE_EXCERPT_CAP = 2000
@@ -24,6 +27,17 @@ def cap_excerpt(text: str | None, limit: int = EVIDENCE_EXCERPT_CAP) -> str | No
 
 def build_finding_row(scan_id: str, f: Mapping[str, Any], file_path: str) -> Finding:
     is_dast = bool(f.get("target"))
+    verdict = f.get("verdict")
+    unresolved_reason = f.get("unresolved_reason")
+    if verdict == UNVERIFIED_VERDICT and not unresolved_reason:
+        # Every writer that stores `unverified` should say why; a missing
+        # reason is a bug in that writer, not something to leave undecided.
+        logger.warning(
+            "unverified finding without unresolved_reason (rule=%s file=%s)",
+            f.get("rule_id"),
+            f.get("file_path") or file_path,
+        )
+        unresolved_reason = "evidence_missing"
     return Finding(
         scan_id=scan_id,
         severity=f.get("severity") or "MEDIUM",
@@ -38,7 +52,7 @@ def build_finding_row(scan_id: str, f: Mapping[str, Any], file_path: str) -> Fin
         snippet=f.get("snippet"),
         ai_fix=f.get("ai_fix"),
         kind=f.get("kind") or "llm",
-        verdict=f.get("verdict"),
+        verdict=verdict,
         confidence=f.get("confidence"),
         source=f.get("source"),
         sink=f.get("sink"),
@@ -46,6 +60,8 @@ def build_finding_row(scan_id: str, f: Mapping[str, Any], file_path: str) -> Fin
         verdict_reason=f.get("verdict_reason"),
         matched_text=f.get("matched_text"),
         group_by_rule=f.get("group_by_rule"),
+        issue_class=f.get("issue_class"),
+        unresolved_reason=unresolved_reason if verdict == UNVERIFIED_VERDICT else None,
         flow_path=f.get("flow_path"),
         reachability=f.get("reachability"),
         affected_files=f.get("affected_files"),

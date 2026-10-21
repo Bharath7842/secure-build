@@ -499,6 +499,10 @@ class FindingOut(BaseModel):
     sink: str | None = None
     data_flow: str | None = None
     verdict_reason: str | None = None
+    # security | quality | inactive; null on findings that predate the column.
+    issue_class: str | None = None
+    # Why an `unverified` verdict is undecided (app.models.UNRESOLVED_REASONS).
+    unresolved_reason: str | None = None
     affected_files: list[str] | None = None
     # Every file:line a merged group stands for ({file_path, line}); None for a single row.
     affected_lines: list[dict] | None = None

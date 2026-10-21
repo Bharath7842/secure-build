@@ -473,6 +473,7 @@
     ],
     "frameworks": [],
     "pattern": "(?i)log(ger)?\\.(error|warn|info|debug)\\s*\\([^)]*\\b\\w+\\.toString\\s*\\(\\s*\\)",
+    "issue_class": "quality",
     "group_by_rule": true
   },
   {
@@ -807,6 +808,7 @@
       "java"
     ],
     "frameworks": [],
+    "issue_class": "quality",
     "group_by_rule": true,
     "pattern": "class\\s+\\w+[^{]{0,120}implements\\s+(java\\.io\\.)?Serializable\\b(?!(?:(?!serialVersionUID)[\\s\\S]){0,250}serialVersionUID)"
   },

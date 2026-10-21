@@ -155,7 +155,7 @@ class RegexRule:
         "id", "title", "description", "cwe", "severity", "category", "owasp",
         "languages", "frameworks", "requires_dependency",
         "pattern", "regex", "multiline", "group_by_rule", "derived",
-        "scan_comments", "examples",
+        "scan_comments", "examples", "issue_class",
     )
 
     def __init__(self, raw: Dict[str, Any]):
@@ -174,6 +174,10 @@ class RegexRule:
         # collapse by rule_id alone, ignoring matched_text.
         self.group_by_rule = bool(raw.get("group_by_rule", False))
         self.derived = bool(raw.get("derived", False))
+        # What kind of issue a hit is: security (default), quality or inactive.
+        # Validated against llm_file_scan.ISSUE_CLASSES by tests/test_rule_catalog.py
+        # (this module cannot import it without a cycle).
+        self.issue_class = str(raw.get("issue_class") or "security")
         # Hits that start on a comment-only line are dropped, for line and
         # multiline rules alike. A rule *about* comments opts out.
         self.scan_comments = bool(raw.get("scan_comments", False))

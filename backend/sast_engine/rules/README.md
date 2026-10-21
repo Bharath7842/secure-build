@@ -89,6 +89,11 @@ filters, all **empty-means-universal** — an empty list never excludes anything
   `serializable-missing-svuid` matches `class Foo implements Serializable`,
   `class Bar implements Serializable`, ... and without this flag each class
   gets its own row instead of one row listing every affected class.
+- `issue_class` (default `security`) — what kind of issue a hit is:
+  `security`, `quality` (real behaviour, but no security boundary or impact is
+  established — e.g. a missing `serialVersionUID`) or `inactive`. Copied onto
+  the finding at hit time and stored as `Finding.issue_class`;
+  `tests/test_rule_catalog.py` rejects any other value.
 - `examples` — `{"match": [...], "no_match": [...]}`, each entry a code string
   or `{"code": ..., "path": "x.html"}` when the file extension should pick the
   language. Never read at scan time; `tests/test_rule_catalog.py` runs every

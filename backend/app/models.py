@@ -151,6 +151,28 @@ class Scan(Base):
 # vulnerabilities) and false_positive (which would hide real ones).
 UNVERIFIED_VERDICT = "unverified"
 
+# The decision contract every finding carries (EPIC-00, SAST-00-010). A verdict
+# is the scanner's decision; `issue_class` says what kind of issue it is; an
+# `unverified` verdict also carries the reason nobody decided it. Review
+# workflow state is separate (`FindingReview`) and never encoded in `verdict`.
+# The engine cannot import `app`, so `sast_engine/pipeline/llm_file_scan.py`
+# mirrors these sets; tests/test_verdict_contract.py keeps the copies equal.
+VERDICTS = frozenset({"true_positive", "false_positive", UNVERIFIED_VERDICT})
+ISSUE_CLASSES = frozenset({"security", "quality", "inactive"})
+UNRESOLVED_REASONS = frozenset(
+    {
+        "not_reviewed_regex",
+        "not_reviewed_joern",
+        "not_reviewed_sca",
+        "llm_missing_verdict",
+        "llm_unrecognised_verdict",
+        "llm_call_failed",
+        "llm_budget_exhausted",
+        "cap_reached",
+        "evidence_missing",
+    }
+)
+
 # `Scan.metadata_json` key holding a DAST scan's effective settings (budgets,
 # rate limit, safe mode, model routing — no secrets), snapshotted at scan start
 # so history and diffs stay valid when configuration later changes. See
@@ -200,6 +222,12 @@ class Finding(Base):
     # matched_text — for rules whose match text is expected to vary every
     # occurrence (e.g. a class name) while still describing one issue.
     group_by_rule: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # security | quality | inactive (ISSUE_CLASSES); NULL on rows written
+    # before the column existed — reported as null, never guessed.
+    issue_class: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Why an `unverified` verdict is undecided (UNRESOLVED_REASONS); NULL once
+    # a verdict is decided and on pre-column rows.
+    unresolved_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
     owasp_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
     exploitability: Mapped[float | None] = mapped_column(Float, nullable=True)
     root_cause_id: Mapped[str | None] = mapped_column(String(40), nullable=True)

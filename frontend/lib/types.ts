@@ -337,6 +337,10 @@ export interface Finding {
   sink: string | null;
   data_flow: string | null;
   verdict_reason: string | null;
+  /** security | quality | inactive; null on findings that predate the column. */
+  issue_class?: "security" | "quality" | "inactive" | null;
+  /** Why an `unverified` verdict is undecided (e.g. "not_reviewed_regex"). */
+  unresolved_reason?: string | null;
   affected_files: string[] | null;
   /** Every file:line a merged group stands for; null for a single row. */
   affected_lines?: { file_path: string; line: number }[] | null;

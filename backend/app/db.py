@@ -123,6 +123,8 @@ def _run_light_migrations(engine) -> None:
             ("example_fix", "ALTER TABLE findings ADD COLUMN example_fix TEXT"),
             ("matched_text", "ALTER TABLE findings ADD COLUMN matched_text VARCHAR(500)"),
             ("group_by_rule", "ALTER TABLE findings ADD COLUMN group_by_rule BOOLEAN"),
+            ("issue_class", "ALTER TABLE findings ADD COLUMN issue_class VARCHAR(20)"),
+            ("unresolved_reason", "ALTER TABLE findings ADD COLUMN unresolved_reason VARCHAR(40)"),
             # DAST evidence fields (DAST-00-040); the new dast_evidence / dast_request_audit
             # tables are created by Base.metadata.create_all, so only columns need ALTER.
             ("target", "ALTER TABLE findings ADD COLUMN target VARCHAR(300)"),
