@@ -130,8 +130,16 @@ def run_real_scan(
     discovery_writer: Callable[[dict], None] | None = None,
     verdict_updates_writer: Callable[[str, list[dict]], None] | None = None,
     reachability_updates_writer: Callable[[str, list[dict]], None] | None = None,
+    result_cache: object | None = None,
+    state_overrides: dict | None = None,
 ) -> dict:
-    """Run the discovery agent against `workspace` and return its findings."""
+    """Run the discovery agent against `workspace` and return its findings.
+
+    `result_cache` (a `get`/`put` object, see `llm_client.RESULT_CACHE_USAGE_KEY`)
+    replaces the project's DB-backed LLM result cache, and `state_overrides` is
+    merged over the initial graph state last. Both exist for the accuracy
+    corpus (`backend/accuracy/`), which replays recorded LLM responses and pins
+    engine knobs the API does not expose; the API never passes either."""
     agent = _load_agent_module()
 
     llm_provider = (
@@ -244,10 +252,14 @@ def run_real_scan(
     # project's cache instead of the provider. `metadata.bypass_llm_cache`
     # on the scan request forces every call live, e.g. to measure a cold run.
     project_id = getattr(project, "id", None)
-    if use_llm and project_id and not source_meta.get("bypass_llm_cache"):
+    if use_llm and result_cache is not None:
+        initial_state["usage"][agent.RESULT_CACHE_USAGE_KEY] = result_cache
+    elif use_llm and project_id and not source_meta.get("bypass_llm_cache"):
         from app.services.llm_result_cache import DbLlmResultCache
 
         initial_state["usage"][agent.RESULT_CACHE_USAGE_KEY] = DbLlmResultCache(project_id)
+    if state_overrides:
+        initial_state.update(state_overrides)
 
     # Joern CPGs can run to gigabytes; own the scratch dir here so it is
     # removed even when the graph raises partway through.

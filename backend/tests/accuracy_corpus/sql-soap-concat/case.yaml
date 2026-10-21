@@ -1,0 +1,31 @@
+id: sql-soap-concat
+area: sql-binding
+polarity: positive
+seed_findings: [1, 2]
+adjudication: dev_label_only
+expected:
+  - rule_id: java-jdbc-prepare-concat
+    cwe: CWE-89
+    file: src/main/java/com/acme/dao/SoapDao.java
+    sink_line: 12
+    verdict: true_positive
+    issue_class: security
+scripted:
+  - step: scan_deep_files
+    when_user_contains: ["SoapDao.java"]
+    response:
+      findings:
+        - line: 12
+          verdict: true_positive
+          confidence: 0.95
+          rule_id: java-jdbc-prepare-concat
+          severity: HIGH
+          cwe: CWE-89
+          title: SQL injection through a concatenated JDBC statement
+          owasp_category: "A03:2021-Injection"
+          source: orderId (method parameter)
+          sink: connection.prepareStatement(sql)
+          data_flow: orderId is concatenated into sql, which is then passed to prepareStatement
+          snippet: PreparedStatement stmt = connection.prepareStatement(sql);
+          verdict_reason: The query text is built by concatenating the untrusted orderId, so prepareStatement does not bind it.
+          ai_fix: Use a "?" placeholder and stmt.setString(1, orderId).

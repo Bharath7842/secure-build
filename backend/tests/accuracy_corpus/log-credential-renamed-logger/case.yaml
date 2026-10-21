@@ -1,0 +1,31 @@
+id: log-credential-renamed-logger
+area: log-boundary
+polarity: positive
+seed_findings: [257, 258, 270]
+adjudication: dev_label_only
+expected:
+  - rule_id: java-sensitive-data-in-logs
+    cwe: CWE-532
+    file: src/main/java/com/acme/service/AuthService.java
+    sink_line: 10
+    verdict: true_positive
+    issue_class: security
+scripted:
+  - step: scan_deep_files
+    when_user_contains: ["AuthService.java"]
+    response:
+      findings:
+        - line: 10
+          verdict: true_positive
+          confidence: 0.92
+          rule_id: java-sensitive-data-in-logs
+          severity: HIGH
+          cwe: CWE-532
+          title: Password written to the application log
+          owasp_category: "A09:2021-Security-Logging-and-Monitoring-Failures"
+          source: password (method parameter)
+          sink: auditTrail call in AuthService.login
+          data_flow: password is concatenated into the log message and written out
+          snippet: "login attempt user=\" + user + \" password=\" + password"
+          verdict_reason: The raw password is part of the logged string, so credentials end up in the log files.
+          ai_fix: Never log the password; log only the user name.

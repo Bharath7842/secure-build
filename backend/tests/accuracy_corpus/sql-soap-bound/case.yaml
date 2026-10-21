@@ -1,0 +1,28 @@
+id: sql-soap-bound
+area: sql-binding
+polarity: negative
+seed_findings: [34]
+adjudication: dev_label_only
+expected:
+  - rule_id: java-jdbc-prepare-concat
+    cwe: CWE-89
+    file: src/main/java/com/acme/dao/SoapDao.java
+    sink_line: 11
+    verdict: false_positive
+    reason_tag: setString
+scripted:
+  - step: scan_deep_files
+    when_user_contains: ["SoapDao.java"]
+    response:
+      findings:
+        - line: 11
+          verdict: false_positive
+          confidence: 0.3
+          rule_id: java-jdbc-prepare-concat
+          severity: LOW
+          cwe: CWE-89
+          title: Possible SQL injection in a JDBC statement
+          owasp_category: "A03:2021-Injection"
+          sink: connection.prepareStatement("SELECT * FROM orders WHERE id = ?")
+          snippet: PreparedStatement stmt = connection.prepareStatement("SELECT * FROM orders WHERE id = ?");
+          verdict_reason: The statement text is a constant and orderId is bound with setString, so it cannot change the query.

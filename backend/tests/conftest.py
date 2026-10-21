@@ -1,8 +1,10 @@
 """Shared pytest configuration.
 
-Markers (registered in pytest.ini): `unit`, `integration`, `live`. The default run is
-fully offline: tests marked `live` (they need a real browser, model or practice
-target) are skipped unless a `-m` expression names them, e.g. `pytest -m live`.
+Markers (registered in pytest.ini): `unit`, `integration`, `live`, `accuracy`. The default
+run is fully offline: tests marked `live` (they need a real browser, model or practice
+target) are skipped unless a `-m` expression names them, e.g. `pytest -m live`. Tests
+marked `accuracy` (the offline accuracy corpus, which scans with the real graph) are
+skipped the same way: `pytest -m accuracy`.
 """
 
 import pytest
@@ -11,12 +13,16 @@ from tests.dast_fixtures import FakeModelGateway, FakeTarget
 
 
 def pytest_collection_modifyitems(config, items):
-    if "live" in (config.getoption("-m") or ""):
-        return  # explicitly selected (or explicitly excluded with "not live")
-    skip_live = pytest.mark.skip(reason="live test: needs a browser/model/practice target; run with -m live")
-    for item in items:
-        if "live" in item.keywords:
-            item.add_marker(skip_live)
+    if "live" not in (config.getoption("-m") or ""):
+        skip_live = pytest.mark.skip(reason="live test: needs a browser/model/practice target; run with -m live")
+        for item in items:
+            if "live" in item.keywords:
+                item.add_marker(skip_live)
+    if "accuracy" not in (config.getoption("-m") or ""):
+        skip_accuracy = pytest.mark.skip(reason="accuracy corpus: run with -m accuracy")
+        for item in items:
+            if "accuracy" in item.keywords:
+                item.add_marker(skip_accuracy)
 
 
 @pytest.fixture(autouse=True)

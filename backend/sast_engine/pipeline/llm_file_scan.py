@@ -880,6 +880,7 @@ def catalog_rule_index(catalog: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str,
             "title": str(rule.get("title") or "").strip(),
             "cwe": str(rule.get("cwe") or "").strip(),
             "owasp": owasp.get(rule_id, ""),
+            "issue_class": str(rule.get("issue_class") or "").strip(),
         }
     return index
 
@@ -1010,7 +1011,7 @@ def trim_catalog(catalog: List[Dict[str, Any]], *, drop_patterns_over: int = 60)
     `pattern` field is dropped — at that size the regexes cost more tokens and
     attention than they buy in calibration."""
     keep_pattern = len(catalog) <= drop_patterns_over
-    fields = ("id", "title", "description", "cwe", "severity", "owasp") + (
+    fields = ("id", "title", "description", "cwe", "severity", "owasp", "issue_class") + (
         ("pattern",) if keep_pattern else ()
     )
     return [{k: rule[k] for k in fields if k in rule} for rule in catalog]
@@ -1220,6 +1221,8 @@ def normalize_finding(
 
     kind = str(raw.get("kind") or kind).strip() or "llm"
     finding_out = {
+        # What kind of issue it is: the cited catalog rule's class, else security.
+        "issue_class": meta.get("issue_class") or DEFAULT_ISSUE_CLASS,
         "verdict": verdict,
         "confidence": _normalize_confidence(raw.get("confidence"), verdict),
         "owasp_category": owasp_category,

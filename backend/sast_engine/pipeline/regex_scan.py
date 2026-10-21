@@ -739,6 +739,7 @@ def rules_for_prompt(
             "cwe": r.cwe,
             "severity": r.severity,
             "owasp": r.owasp,
+            "issue_class": r.issue_class,
         }
         for r in applicable
     ]

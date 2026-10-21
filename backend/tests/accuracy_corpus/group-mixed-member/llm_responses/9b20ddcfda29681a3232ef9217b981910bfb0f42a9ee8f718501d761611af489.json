@@ -1,0 +1,8 @@
+{
+  "input_tokens": 976,
+  "key": "9b20ddcfda29681a3232ef9217b981910bfb0f42a9ee8f718501d761611af489",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 96,
+  "step": "group_confirm_triage_findings",
+  "text": "{\"decisions\": [{\"group_index\": 0, \"verdict\": \"false_positive\", \"confidence\": 0.2, \"verdict_reason\": \"The formatted value is a numeric id, so it cannot change the query.\"}, {\"group_index\": 1, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"verdict_reason\": \"The name is formatted into the query text as a quoted string.\", \"ai_fix\": \"Bind the name with a PreparedStatement parameter.\"}]}"
+}
