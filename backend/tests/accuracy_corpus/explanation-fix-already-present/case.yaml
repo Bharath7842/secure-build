@@ -1,0 +1,47 @@
+id: explanation-fix-already-present
+area: log-boundary
+polarity: negative
+seed_findings: [81]
+adjudication: dev_label_only
+# The first answer reports exception information in a log and recommends
+# `logger.error(msg, ex)`, which is exactly what the code already does. The fix
+# the model proposes is already present, so it is asked once more; the corrected
+# answer dismisses the finding.
+expected:
+  - rule_id: logger-exception-tostring
+    cwe: CWE-209
+    file: src/main/java/com/acme/service/JobService.java
+    sink_line: 10
+    verdict: false_positive
+scripted:
+  - step: scan_deep_files
+    when_user_contains: ["Deterministic facts:"]
+    response:
+      findings:
+        - line: 10
+          verdict: false_positive
+          confidence: 0.3
+          rule_id: logger-exception-tostring
+          severity: LOW
+          cwe: CWE-209
+          title: Exception detail written to the log
+          owasp_category: "A09:2021-Security-Logging-and-Monitoring-Failures"
+          verdict_reason: The exception is passed to the logger as its last argument, the recommended form.
+  - step: scan_deep_files
+    when_user_contains: ["JobService.java"]
+    response:
+      findings:
+        - line: 10
+          verdict: true_positive
+          confidence: 0.6
+          rule_id: logger-exception-tostring
+          severity: LOW
+          cwe: CWE-209
+          title: Exception detail written to the log
+          owasp_category: "A09:2021-Security-Logging-and-Monitoring-Failures"
+          source: ex (caught exception)
+          sink: logger.error
+          data_flow: the exception is logged
+          snippet: logger.error(msg, ex);
+          verdict_reason: Exception details are written to the log.
+          ai_fix: Pass the exception as the last argument, as in `logger.error(msg, ex)`.

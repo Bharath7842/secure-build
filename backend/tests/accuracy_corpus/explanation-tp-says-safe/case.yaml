@@ -1,0 +1,47 @@
+id: explanation-tp-says-safe
+area: sql-binding
+polarity: negative
+seed_findings: [93]
+adjudication: dev_label_only
+# The first answer is a true positive whose own reasoning says the query is
+# parameterized and there is no injection risk: verdict and reason disagree. A
+# targeted retry names that; the corrected answer is a dismissal. Without the check
+# the contradictory true positive would have been published as a settled finding.
+expected:
+  - rule_id: llm-extra
+    cwe: CWE-89
+    file: src/main/java/com/acme/service/OrderService.java
+    sink_line: 13
+    verdict: false_positive
+scripted:
+  - step: scan_deep_files
+    when_user_contains: ["Deterministic facts:"]
+    response:
+      findings:
+        - line: 13
+          verdict: false_positive
+          confidence: 0.3
+          rule_id: llm-extra
+          severity: LOW
+          cwe: CWE-89
+          title: SQL built by string concatenation
+          owasp_category: "A03:2021-Injection"
+          verdict_reason: The id is bound with setString, so it never becomes part of the SQL text.
+  - step: scan_deep_files
+    when_user_contains: ["OrderService.java"]
+    response:
+      findings:
+        - line: 13
+          verdict: true_positive
+          confidence: 0.9
+          rule_id: llm-extra
+          severity: HIGH
+          cwe: CWE-89
+          title: SQL built by string concatenation
+          owasp_category: "A03:2021-Injection"
+          source: orderId (method parameter)
+          sink: stmt.executeQuery
+          data_flow: orderId reaches the statement
+          snippet: return stmt.executeQuery();
+          verdict_reason: The query is parameterized, so there is no injection risk here.
+          ai_fix: Use a prepared statement.

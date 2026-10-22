@@ -143,7 +143,9 @@ def test_a_named_source_that_is_in_the_method_publishes_it():
 
 
 def test_a_named_source_that_is_not_in_the_method_does_not_count():
-    assert _decide(_sql(9, source='request.getParameter("id")'), SQL_JAVA) == lfs.DEMOTE
+    assert _decide(_sql(9, source='session.getAttribute("user")'), SQL_JAVA) == lfs.DEMOTE
+    # A source named by its type still counts when the code calls the same method.
+    assert _decide(_sql(9, source='HttpServletRequest.getParameter("id")'), SQL_JAVA) == lfs.PUBLISH
 
 
 def test_a_noisy_false_positive_is_still_dropped_and_counted():

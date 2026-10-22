@@ -17,15 +17,22 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from llm_client import call_llm, last_call_was_cache_hit, parse_llm_json_array
+from llm_client import (
+    bump_counter,
+    call_llm,
+    last_call_was_cache_hit,
+    parse_llm_json_array,
+    stage_has_budget,
+)
 
-from pipeline import reachability
+from pipeline import explanation_check, reachability
 from pipeline.finding_facts import prepare_findings
 from pipeline.call_graph import Flow, FLOW_VERIFY_CAP, flow_to_dict
 from pipeline.llm_file_scan import (
     DROP,
     SINGLE_CALL_CHAR_BUDGET,
     _RESPONSE_SCHEMA,
+    _retry_match,
     apply_publish_decision,
     normalize_finding,
     publish_decision,
@@ -388,6 +395,8 @@ def _findings_for_flow(
                 [finding], sink_text, file_path=sink.file, usage=usage,
                 validators=occurrence_validators,
             )
+            if occurrence_validators:
+                explanation_check.annotate([finding], sink_text, usage=usage)
         decision = publish_decision(
             finding, sink.body,
             suppress_no_cwe=suppress_no_cwe,
@@ -455,6 +464,73 @@ def group_flows_by_shared_hops(
     return [group["idxs"] for group in groups]
 
 
+def _resolve_flow_contradictions(
+    idxs: Sequence[int],
+    flows: Sequence[Flow],
+    outcomes: List[Optional[Dict[str, Any]]],
+    *,
+    system: str,
+    user: str,
+    llm_step: str,
+    usage: Optional[Dict[str, Any]],
+    llm_provider: Optional[str],
+    llm_model: Optional[str],
+    call_llm_fn: Callable[..., str],
+    suppress: Dict[str, Any],
+) -> None:
+    """Findings of one call whose explanation contradicts its code: one targeted
+    retry of that call (same prompt plus a `Deterministic facts:` block) when
+    the stage has budget, then whatever still contradicts becomes
+    `unverified` / `explanation_contradiction`. Never a dismissal."""
+    pending = {
+        pos: [f for f in (outcomes[idx] or {}).get("findings", []) if f.get("contradictions")]
+        for pos, idx in enumerate(idxs)
+    }
+    flat = [(pos, f) for pos, found in pending.items() for f in found]
+    if not flat:
+        return
+    replaced: Dict[int, Dict[str, Any]] = {}
+    if stage_has_budget(usage, llm_step):
+        bump_counter(usage, "explanation_contradictions", "retries")
+        block = explanation_check.contradictions_block(
+            [f for _pos, f in flat], labels=[f"flow {pos + 1}" for pos, _f in flat],
+        )
+        items, _err = _call_and_parse(
+            system, user + "\n\n" + block, usage=usage, llm_provider=llm_provider,
+            llm_model=llm_model, call_llm_fn=call_llm_fn, step=llm_step,
+        )
+        per_flow = [items] if len(idxs) == 1 else assign_items_to_flows(list(flows), items)
+        for pos, found in pending.items():
+            if not found:
+                continue
+            fresh = _findings_for_flow(flows[pos], per_flow[pos], **suppress)
+            for old in found:
+                match = _retry_match(old, fresh)
+                if match is None:
+                    continue
+                if match.get("contradictions"):
+                    old["contradictions"] = match["contradictions"]
+                    continue
+                match["decisions"] = list(old.get("decisions") or []) + [{
+                    "stage": "explanation_retry", "actor": "explanation_check",
+                    "verdict": match.get("verdict"), "confidence": match.get("confidence"),
+                    "unresolved_reason": match.get("unresolved_reason"),
+                    "verdict_reason": match.get("verdict_reason"),
+                    "detail": {"resolved_contradictions": old["contradictions"],
+                               "first_verdict": old.get("verdict")},
+                }]
+                replaced[id(old)] = match
+                bump_counter(usage, "explanation_contradictions", "retry_resolved")
+    for idx in idxs:
+        outcome = outcomes[idx]
+        if outcome is None:
+            continue
+        outcome["findings"] = [
+            explanation_check.mark_contradicted(f) if f.get("contradictions") else f
+            for f in (replaced.get(id(f), f) for f in outcome["findings"])
+        ]
+
+
 def verify_flow(
     flow: Flow,
     *,
@@ -477,13 +553,21 @@ def verify_flow(
         build_flow_system_prompt(stack_context), build_flow_user_prompt(flow, slice_text),
         usage=usage, llm_provider=llm_provider, llm_model=llm_model, call_llm_fn=call_llm_fn,
     )
-    findings = _findings_for_flow(
-        flow, items,
+    suppress = dict(
         suppress_no_cwe=suppress_no_cwe,
         suppress_http_findings=suppress_http_findings,
         suppress_low_confidence_false_positives=suppress_low_confidence_false_positives,
         usage=usage, read_text=read_text, occurrence_validators=occurrence_validators,
     )
+    findings = _findings_for_flow(flow, items, **suppress)
+    outcomes: List[Optional[Dict[str, Any]]] = [{"findings": findings}]
+    _resolve_flow_contradictions(
+        [0], [flow], outcomes,
+        system=build_flow_system_prompt(stack_context), user=build_flow_user_prompt(flow, slice_text),
+        llm_step="verify_flow_slices", usage=usage, llm_provider=llm_provider, llm_model=llm_model,
+        call_llm_fn=call_llm_fn, suppress=suppress,
+    )
+    findings = outcomes[0]["findings"]
     return {
         "findings": findings, "skipped": False, "skip_reason": parse_err,
         "failed": bool(parse_err and not items),
@@ -583,6 +667,11 @@ def verify_flows(
                 "skip_reason": parse_err,
                 "failed": bool(parse_err and not items),
             }
+        _resolve_flow_contradictions(
+            group, group_flows, outcomes, system=system, user=user, llm_step=llm_step,
+            usage=usage, llm_provider=llm_provider, llm_model=llm_model,
+            call_llm_fn=call_llm_fn, suppress=suppress,
+        )
         for idx in group:
             _emit(idx)
 

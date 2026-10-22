@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5297,
+  "key": "67bae2c6066c4d58055ab2a689de8802832f21edc15dc6a14e750cc42e6006f0",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 79,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 13, \"verdict\": \"false_positive\", \"confidence\": 0.3, \"rule_id\": \"llm-extra\", \"severity\": \"LOW\", \"cwe\": \"CWE-89\", \"title\": \"SQL built by string concatenation\", \"owasp_category\": \"A03:2021-Injection\", \"verdict_reason\": \"The id is bound with setString, so it never becomes part of the SQL text.\"}]}"
+}

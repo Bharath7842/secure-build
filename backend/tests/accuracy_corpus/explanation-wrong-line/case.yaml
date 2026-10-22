@@ -1,0 +1,52 @@
+id: explanation-wrong-line
+area: log-boundary
+polarity: positive
+seed_findings: [98]
+adjudication: dev_label_only
+# The first answer is anchored on the count log (line 10) but its sink and
+# reasoning are about the exception-message log below it (line 11). That
+# explanation does not match its own line, so the model is asked once more with the
+# contradiction named; its corrected answer is anchored where the sink is.
+expected:
+  - rule_id: java-log-injection-unsanitized-input
+    cwe: CWE-117
+    file: src/main/java/com/acme/service/ReportService.java
+    sink_line: 11
+    verdict: true_positive
+scripted:
+  - step: scan_deep_files
+    when_user_contains: ["Deterministic facts:"]
+    response:
+      findings:
+        - line: 11
+          verdict: true_positive
+          confidence: 0.8
+          rule_id: java-log-injection-unsanitized-input
+          severity: MEDIUM
+          cwe: CWE-117
+          title: Unsanitized data reaches a log call
+          owasp_category: "A09:2021-Security-Logging-and-Monitoring-Failures"
+          source: ex.getMessage() (exception message)
+          sink: log.warn
+          data_flow: the exception message is logged unsanitized
+          snippet: log.warn("failed {}", ex.getMessage());
+          verdict_reason: Exception messages can contain attacker-controlled newlines and are logged unchanged.
+          ai_fix: Sanitize or encode the message before logging.
+  - step: scan_deep_files
+    when_user_contains: ["ReportService.java"]
+    response:
+      findings:
+        - line: 10
+          verdict: true_positive
+          confidence: 0.8
+          rule_id: java-log-injection-unsanitized-input
+          severity: MEDIUM
+          cwe: CWE-117
+          title: Unsanitized data reaches a log call
+          owasp_category: "A09:2021-Security-Logging-and-Monitoring-Failures"
+          source: ex.getMessage() (exception message)
+          sink: log.warn(ex.getMessage())
+          data_flow: the exception message is logged unsanitized
+          snippet: log.info("rows " + count);
+          verdict_reason: Exception messages can contain attacker-controlled newlines and are logged unchanged.
+          ai_fix: Sanitize or encode the message before logging.

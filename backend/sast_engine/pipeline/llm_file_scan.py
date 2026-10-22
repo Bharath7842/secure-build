@@ -49,6 +49,7 @@ from llm_client import (
     append_record,
     bump_counter,
     call_llm,
+    stage_has_budget,
     last_call_was_cache_hit,
     parse_llm_json_array,
     record_verdict_event,
@@ -56,7 +57,8 @@ from llm_client import (
 )
 
 from . import reachability
-from .finding_facts import prepare_findings
+from .finding_facts import prepare_findings, source_in_text
+from . import explanation_check
 from .occurrence_facts import LOGGER_PACKAGES, semantic_signature
 from .validators import reapply_precedence, render_deterministic_facts
 from .owasp_map import OWASP_TOP_10_2021, owasp_for_rule
@@ -1499,9 +1501,8 @@ def _has_source_evidence(finding: Dict[str, Any]) -> bool:
     if not source:
         return False
     if finding.get("kind") == "flow" and finding.get("flow_path"):
-        expression = _squash(source.split(" (", 1)[0])
         return any(
-            expression in _squash(step.get("snippet")) or expression in _squash(step.get("label"))
+            source_in_text(source, f"{step.get('snippet') or ''}\n{step.get('label') or ''}")
             for step in finding.get("flow_path") or []
         )
     facts = finding.get("facts")
@@ -1687,6 +1688,81 @@ def finalize_findings(
     return out
 
 
+def _retry_match(old: Dict[str, Any], candidates: Sequence[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The retry's answer about the same issue: same rule on the same line,
+    else the same rule within the dedupe window, else the same CWE there."""
+    def near(c: Dict[str, Any], window: int) -> bool:
+        return abs(int(c.get("line") or 0) - int(old.get("line") or 0)) <= window
+
+    for same, window in (
+        (lambda c: c.get("rule_id") == old.get("rule_id"), 0),
+        (lambda c: c.get("rule_id") == old.get("rule_id"), DEDUPE_LINE_WINDOW),
+        (lambda c: _cwe_number(c.get("cwe")) == _cwe_number(old.get("cwe")), DEDUPE_LINE_WINDOW),
+    ):
+        for c in candidates:
+            if same(c) and near(c, window):
+                return c
+    return None
+
+
+def resolve_contradictions(
+    findings: List[Dict[str, Any]],
+    source_text: str,
+    *,
+    file_path: str = "",
+    usage: Optional[Dict[str, Any]] = None,
+    step: str = "scan_deep_files",
+    retry: Optional[Callable[[str], List[Dict[str, Any]]]] = None,
+    labels: Optional[Sequence[str]] = None,
+) -> List[Dict[str, Any]]:
+    """Check each finding's explanation against its code and verdict
+    (`explanation_check`). A contradiction earns ONE targeted retry — `retry` is
+    called with the `Deterministic facts:` block naming the contradictions and
+    returns the model's fresh findings — when the stage still has budget. A
+    finding whose retry is consistent is replaced by the retry's; one whose
+    retry still contradicts, or that had no retry, becomes `unverified` /
+    `explanation_contradiction`. Nothing is ever turned into a false positive
+    by this check."""
+    prepare_findings(findings, source_text, file_path=file_path, usage=usage, validators=True)
+    contradicted = explanation_check.annotate(findings, source_text, usage=usage)
+    if not contradicted:
+        return findings
+    replacements: Dict[int, Dict[str, Any]] = {}
+    if retry is not None and stage_has_budget(usage, step):
+        bump_counter(usage, "explanation_contradictions", "retries")
+        block = explanation_check.contradictions_block(contradicted, labels=labels)
+        try:
+            fresh = list(retry(block) or [])
+        except Exception:  # noqa: BLE001 - a failed retry leaves the contradiction standing
+            fresh = []
+        if fresh:
+            prepare_findings(fresh, source_text, file_path=file_path, usage=usage, validators=True)
+            for old in contradicted:
+                match = _retry_match(old, fresh)
+                if match is None:
+                    continue
+                if explanation_check.annotate([match], source_text, usage=usage):
+                    old["contradictions"] = match["contradictions"]
+                    continue
+                match["decisions"] = list(old.get("decisions") or []) + [{
+                    "stage": "explanation_retry", "actor": "explanation_check",
+                    "verdict": match.get("verdict"), "confidence": match.get("confidence"),
+                    "unresolved_reason": match.get("unresolved_reason"),
+                    "verdict_reason": match.get("verdict_reason"),
+                    "detail": {"resolved_contradictions": old["contradictions"],
+                               "first_verdict": old.get("verdict")},
+                }]
+                replacements[id(old)] = match
+                bump_counter(usage, "explanation_contradictions", "retry_resolved")
+    out: List[Dict[str, Any]] = []
+    for finding in findings:
+        finding = replacements.get(id(finding), finding)
+        if finding.get("contradictions"):
+            explanation_check.mark_contradicted(finding)
+        out.append(finding)
+    return out
+
+
 def dedupe_and_finalize(
     findings: List[Dict[str, Any]],
     source_text: str,
@@ -1761,8 +1837,13 @@ def scan_chunk(
     llm_step: str = "scan_deep_files",
     kind: str = "llm",
     omit_span: Optional[Tuple[int, int]] = None,
+    extra_user: str = "",
 ) -> Dict[str, Any]:
     """Scan one chunk. Returns {"findings": [...], "error": str|None}.
+
+    `extra_user`, when given, is appended to the user prompt: the retry of an
+    answer whose explanation contradicted the code carries a
+    `Deterministic facts:` block naming what was wrong.
 
     A malformed JSON response gets one retry with an explicit repair nudge; if
     it still fails the error is returned rather than silently yielding zero
@@ -1776,6 +1857,8 @@ def scan_chunk(
         file_path=file_path, chunk_text=chunk["text"],
         start_line=chunk["start_line"], skeleton=skeleton, omit_span=omit_span,
     )
+    if extra_user:
+        user = user + "\n\n" + extra_user
     rule_meta = catalog_rule_index(catalog)
 
     def _call(prompt: str) -> str:
@@ -1922,14 +2005,24 @@ def scan_file(
             skeleton_for_chunk(skeleton_entries, chunk["start_line"], chunk["end_line"])
             if skeleton_entries else ""
         )
-        return idx, scan_chunk(
-            file_path=rel_path, chunk=chunk, catalog=catalog,
-            stack_context=stack_context, skeleton=skeleton,
-            source_lines=source_lines, usage=usage,
-            llm_provider=llm_provider, llm_model=llm_model,
-            call_llm_fn=call_llm_fn, system_prompt=system_prompt,
-            llm_step=llm_step, kind="llm", omit_span=omit_span,
-        )
+        def _scan(extra_user: str = "") -> Dict[str, Any]:
+            return scan_chunk(
+                file_path=rel_path, chunk=chunk, catalog=catalog,
+                stack_context=stack_context, skeleton=skeleton,
+                source_lines=source_lines, usage=usage,
+                llm_provider=llm_provider, llm_model=llm_model,
+                call_llm_fn=call_llm_fn, system_prompt=system_prompt,
+                llm_step=llm_step, kind="llm", omit_span=omit_span,
+                extra_user=extra_user,
+            )
+
+        outcome = _scan()
+        if occurrence_validators and outcome["findings"]:
+            outcome["findings"] = resolve_contradictions(
+                outcome["findings"], text, file_path=rel_path, usage=usage, step=llm_step,
+                retry=lambda block: _scan(block)["findings"],
+            )
+        return idx, outcome
 
     indexed_chunks = list(enumerate(chunks, start=1))
     if len(indexed_chunks) > 1 and chunk_workers > 1:
@@ -2064,6 +2157,22 @@ def scan_file_batch(
 
     results = []
     for path, text in files:
+        if occurrence_validators and by_path[path]:
+            lines = lines_by_path[path]
+
+            def _retry(block: str, path: str = path, text: str = text, lines: Sequence[str] = lines):
+                # A batch cannot be asked about one file; the retry is the same
+                # file reviewed alone, with the contradiction named.
+                return scan_chunk(
+                    file_path=path, chunk={"text": text, "start_line": 1, "end_line": max(1, len(lines))},
+                    catalog=catalog, stack_context="", source_lines=lines, usage=usage,
+                    llm_provider=llm_provider, llm_model=llm_model, call_llm_fn=call_llm_fn,
+                    system_prompt=system_prompt, llm_step=llm_step, kind="llm", extra_user=block,
+                )["findings"]
+
+            by_path[path] = resolve_contradictions(
+                by_path[path], text, file_path=path, usage=usage, step=llm_step, retry=_retry,
+            )
         merged = dedupe_and_finalize(
             by_path[path], text, file_path=path, usage=usage,
             occurrence_validators=occurrence_validators,
@@ -3540,14 +3649,17 @@ def _follow_up_indices(state: Dict[str, Any]) -> List[int]:
 def _ask_group(
     state: Dict[str, Any], indices: Sequence[int], *, stack_context: str,
     usage: Optional[Dict[str, Any]], llm_provider: Optional[str], llm_model: Optional[str],
-    call_llm_fn: Callable[..., str],
+    call_llm_fn: Callable[..., str], extra_user: str = "",
 ) -> None:
-    """One call for one group over `indices`: plan, ask (one JSON retry), record."""
+    """One call for one group over `indices`: plan, ask (one JSON retry), record.
+    `extra_user` is appended to the prompt (a retry names the contradiction)."""
     entry = state["entry"]
     shown, _left, uniform = _plan_members(entry, indices)
     system, user = build_group_confirm_prompt(
         entry=entry, shown=shown, uniform=uniform, stack_context=stack_context,
     )
+    if extra_user:
+        user = user + "\n\n" + extra_user
 
     def _call(prompt: str) -> str:
         with _INFLIGHT:
@@ -3610,7 +3722,88 @@ def confirm_finding_group(
     remaining = _follow_up_indices(state)
     if remaining and not state["failure"]:
         _ask_group(state, remaining, **kwargs)
-    return _finalize_state(state)
+    outcome = _finalize_state(state)
+    if entry.get("explain", True):
+        outcome = _resolve_member_contradictions(entry, state, outcome, **kwargs)
+    return outcome
+
+
+def _probe_for(entry: Dict[str, Any], index: int, result: Dict[str, Any]) -> Dict[str, Any]:
+    """The member as `explanation_check` reads it once the model has answered."""
+    member = entry["members"][index]
+    return {
+        "verdict": result["verdict"], "verdict_reason": result["verdict_reason"],
+        "ai_fix": result["ai_fix"], "line": member.get("line"), "file_path": member.get("file_path"),
+        "facts": member.get("facts"), "kind": "regex", "sink": "", "source": "",
+    }
+
+
+def _contradictions_of(entry: Dict[str, Any], index: int, result: Dict[str, Any]) -> List[Dict[str, str]]:
+    probe = _probe_for(entry, index, result)
+    member = entry["members"][index]
+    text = entry["text_for"](member.get("file_path") or "")
+    facts = member.get("facts") if isinstance(member.get("facts"), dict) else None
+    return explanation_check.check_explanation(probe, facts, text)
+
+
+def _resolve_member_contradictions(
+    entry: Dict[str, Any], state: Dict[str, Any], outcome: Dict[str, Any], *,
+    stack_context: str, usage: Optional[Dict[str, Any]], llm_provider: Optional[str],
+    llm_model: Optional[str], call_llm_fn: Callable[..., str],
+) -> Dict[str, Any]:
+    """A member decision whose explanation contradicts its code gets one retry of
+    just those members (the same prompt plus a `Deterministic facts:` block);
+    one that still contradicts, or had no budget for a retry, is unverified /
+    explanation_contradiction. A wording check never dismisses a member."""
+    results = outcome["results"]
+    found: Dict[int, List[Dict[str, str]]] = {}
+    for index, result in enumerate(results):
+        if result.get("error") is not None:
+            continue
+        contradictions = _contradictions_of(entry, index, result)
+        if contradictions:
+            found[index] = contradictions
+            for c in contradictions:
+                bump_counter(usage, "explanation_contradictions", c["check"])
+    if not found:
+        return outcome
+    # A uniform group's one decision stands for every member: one retry is enough.
+    retry_indices = [min(found)] if state["uniform"] else sorted(found)
+    retried: Dict[int, Dict[str, Any]] = {}
+    if stage_has_budget(usage, CONFIRM_STEP):
+        bump_counter(usage, "explanation_contradictions", "retries")
+        block = explanation_check.contradictions_block(
+            [{"contradictions": found[i]} for i in retry_indices],
+            labels=[_member_id(i) for i in retry_indices],
+        )
+        retry_state = _new_state(entry)
+        _ask_group(
+            retry_state, retry_indices, stack_context=stack_context, usage=usage,
+            llm_provider=llm_provider, llm_model=llm_model, call_llm_fn=call_llm_fn, extra_user=block,
+        )
+        retried = retry_state["results"]
+    reviewed = outcome["reviewed"]
+    for index, contradictions in found.items():
+        again = retried.get(index if not state["uniform"] else retry_indices[0])
+        if again is not None and not _contradictions_of(entry, index, again):
+            results[index] = again
+            bump_counter(usage, "explanation_contradictions", "retry_resolved")
+            continue
+        listed = "; ".join(c["detail"] for c in (
+            _contradictions_of(entry, index, again) if again is not None else contradictions
+        ))
+        results[index] = {
+            "verdict": VERDICT_UNVERIFIED, "confidence": None, "ai_fix": None,
+            "verdict_reason": (
+                f"The explanation contradicts the code or its own verdict: {listed}. "
+                f"(The model's verdict was {results[index]['verdict']}.)"
+            ),
+            "error": "explanation contradiction", "unresolved_reason": "explanation_contradiction",
+            "detail": {"contradictions": contradictions, "model_verdict": results[index]["verdict"]},
+        }
+        reviewed -= 1
+    return {**outcome, "results": results, "reviewed": reviewed,
+            "error": None if reviewed else outcome["error"] or "explanation contradiction"}
 
 
 def confirm_finding_group_batch(
@@ -3699,6 +3892,7 @@ def group_confirm_unverified_findings(
     on_group: Optional[Callable[[Dict[str, Any]], None]] = None,
     group_cap: Optional[int] = None,
     groups_per_call: int = 1,
+    occurrence_validators: bool = True,
 ) -> Dict[str, Any]:
     """Group unverified findings (via `group_unverified_findings`) and confirm
     every member of each group with an LLM, mutating each member finding dict
@@ -3756,6 +3950,7 @@ def group_confirm_unverified_findings(
             "members": ordered,
             "rule": rules_by_id.get(ordered[0].get("rule_id") or ""),
             "text_for": _text_for,
+            "explain": occurrence_validators,
         }
 
     def _apply_outcome(entry: Dict[str, Any], outcome: Dict[str, Any]) -> None:
@@ -3767,6 +3962,11 @@ def group_confirm_unverified_findings(
             if result.get("error") is not None:
                 reason = result.get("unresolved_reason") or "llm_call_failed"
                 member["unresolved_reason"] = reason
+                if reason == "explanation_contradiction":
+                    member["verdict_reason"] = result.get("verdict_reason")
+                    member["verdict"] = VERDICT_UNVERIFIED
+                    member["confidence"] = None
+                    member["contradictions"] = (result.get("detail") or {}).get("contradictions")
                 if reason == "not_in_sample":
                     member["verdict_reason"] = (
                         f"Not reviewed: only {outcome['reviewed']} of {outcome['total']} occurrences "
@@ -3863,8 +4063,13 @@ def group_confirm_unverified_findings(
                         "unresolved_reason": m.get("unresolved_reason"),
                         "review_coverage": coverage,
                     }
-                    if m.get("unresolved_reason") == "not_in_sample":
+                    if m.get("unresolved_reason") in ("not_in_sample", "explanation_contradiction"):
                         update["verdict_reason"] = m.get("verdict_reason")
+                    if m.get("unresolved_reason") == "explanation_contradiction":
+                        update.update(
+                            verdict=VERDICT_UNVERIFIED, confidence=None,
+                            decision_detail={"contradictions": m.get("contradictions")},
+                        )
                 else:
                     update = {
                         "rule_id": m.get("rule_id"), "line": m.get("line"),

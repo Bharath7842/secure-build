@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5259,
+  "key": "1b9ea50a35c67063f9a745af86d64e1d0a05d6a50b87b3fad60473b232853810",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 93,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 10, \"verdict\": \"false_positive\", \"confidence\": 0.3, \"rule_id\": \"logger-exception-tostring\", \"severity\": \"LOW\", \"cwe\": \"CWE-209\", \"title\": \"Exception detail written to the log\", \"owasp_category\": \"A09:2021-Security-Logging-and-Monitoring-Failures\", \"verdict_reason\": \"The exception is passed to the logger as its last argument, the recommended form.\"}]}"
+}

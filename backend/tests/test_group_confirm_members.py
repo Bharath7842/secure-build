@@ -264,3 +264,63 @@ def test_member_ids_are_matched_exactly(tmp_path):
 
     _confirm(tmp_path, results, model)
     assert {_finding(results, i)["verdict"] for i in range(3)} == {"unverified"}
+
+
+# --- explanation contradictions in a member's decision (SAST-01-090) ----------------------
+
+def test_a_member_whose_reason_contradicts_its_verdict_is_retried_once_then_resolved(tmp_path):
+    _repo(tmp_path, 3)
+    results = _results(3)
+    calls = []
+
+    def model(system, user, **kwargs):
+        calls.append(user)
+        retry = "Deterministic facts:" in user
+        decisions = []
+        for member, _path in re.findall(r"^(m\d+) \| (\S+?):\d+", user, flags=re.M):
+            bad = member == "m2" and not retry
+            decisions.append({
+                "member": member, "verdict": "true_positive", "confidence": 0.8,
+                "verdict_reason": ("The query is parameterized, so there is no injection risk."
+                                   if bad else "A password is assigned a literal."),
+            })
+        return json.dumps({"decisions": decisions})
+
+    usage = {}
+    out = lfs.group_confirm_unverified_findings(
+        file_results=results, repo_root=tmp_path, rules=[], call_llm_fn=model, group_workers=1, usage=usage,
+    )
+    assert len(calls) == 2
+    retry = calls[1]
+    assert "m2:" in retry and "m1 |" not in retry and "m3 |" not in retry
+    assert all(_finding(results, i)["verdict"] == "true_positive" for i in range(3))
+    assert "parameterized" not in _finding(results, 1)["verdict_reason"]
+    assert out["members_reviewed"] == 3
+    assert usage["_counters"]["explanation_contradictions"]["retry_resolved"] == 1
+
+
+def test_a_member_whose_retry_still_contradicts_is_unresolved_not_dismissed(tmp_path):
+    _repo(tmp_path, 2)
+    results = _results(2)
+
+    def model(system, user, **kwargs):
+        decisions = [
+            {"member": member, "verdict": "false_positive", "confidence": 0.9,
+             "verdict_reason": "An attacker can control this value."}
+            for member, _p in re.findall(r"^(m\d+) \| (\S+?):\d+", user, flags=re.M)
+        ]
+        return json.dumps({"decisions": decisions})
+
+    writes = []
+    out = lfs.group_confirm_unverified_findings(
+        file_results=results, repo_root=tmp_path, rules=[], call_llm_fn=model, group_workers=1,
+        verdict_updates_writer=lambda p, u: writes.append((p, u)),
+    )
+    for i in range(2):
+        f = _finding(results, i)
+        assert f["verdict"] == "unverified" and f["unresolved_reason"] == "explanation_contradiction"
+        assert "asserts exploitation" in f["verdict_reason"]
+    assert out["members_reviewed"] == 0 and out["error_group_count"] == 1
+    update = writes[0][1][0]
+    assert update["verdict"] == "unverified" and update["unresolved_reason"] == "explanation_contradiction"
+    assert update["decision_detail"]["contradictions"]

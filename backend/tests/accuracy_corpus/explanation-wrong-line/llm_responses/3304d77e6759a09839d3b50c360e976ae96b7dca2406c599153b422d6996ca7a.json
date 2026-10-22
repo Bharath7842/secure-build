@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5288,
+  "key": "3304d77e6759a09839d3b50c360e976ae96b7dca2406c599153b422d6996ca7a",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 159,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 11, \"verdict\": \"true_positive\", \"confidence\": 0.8, \"rule_id\": \"java-log-injection-unsanitized-input\", \"severity\": \"MEDIUM\", \"cwe\": \"CWE-117\", \"title\": \"Unsanitized data reaches a log call\", \"owasp_category\": \"A09:2021-Security-Logging-and-Monitoring-Failures\", \"source\": \"ex.getMessage() (exception message)\", \"sink\": \"log.warn\", \"data_flow\": \"the exception message is logged unsanitized\", \"snippet\": \"log.warn(\\\"failed {}\\\", ex.getMessage());\", \"verdict_reason\": \"Exception messages can contain attacker-controlled newlines and are logged unchanged.\", \"ai_fix\": \"Sanitize or encode the message before logging.\"}]}"
+}

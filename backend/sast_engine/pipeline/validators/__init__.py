@@ -292,7 +292,7 @@ def render_deterministic_facts(
             elif outcome["outcome"] == NEGATIVE:
                 lines.append(f"- {label}: ruled out — {outcome.get('proof')}")
         for note in finding.get("contradictions") or []:
-            lines.append(f"- {label}: {note}")
+            lines.append(f"- {label}: {note['detail'] if isinstance(note, dict) else note}")
     if not lines:
         return ""
     return "Deterministic facts:\n" + "\n".join(lines)

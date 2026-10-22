@@ -19,6 +19,7 @@ every consumer behaves exactly as it did before facts existed.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional, Sequence
 
 from llm_client import bump_counter
@@ -71,6 +72,24 @@ def _squash(text: str) -> str:
     return " ".join(str(text or "").split())
 
 
+def source_in_text(source: str, text: str) -> bool:
+    """Does the source expression a finding names appear in `text`? The model
+    often names a source by its type (`TextMessage.getText()`) where the code
+    has the variable (`message.getText()`), so a call is matched on its callee
+    name and a dotted path on its last segment, not on the whole expression.
+    The wording note after the expression ("orderId (method parameter)") is
+    ignored."""
+    expression = _squash(str(source or "").split(" (", 1)[0])
+    if not expression:
+        return False
+    body = _squash(text)
+    if expression in body:
+        return True
+    calls = re.findall(r"([A-Za-z_]\w*)\s*\(", expression)
+    tail = calls[-1] if calls else re.split(r"[.\s]+", expression)[-1]
+    return len(tail) >= 3 and re.search(rf"(?<![\w$]){re.escape(tail)}(?![\w$])", body) is not None
+
+
 def _note_source_evidence(finding: Dict[str, Any], source_text: str) -> None:
     """`facts["source_in_method"]`: does the model's named `source` expression
     appear in the method the finding sits in? Publication uses it to tell a
@@ -84,11 +103,7 @@ def _note_source_evidence(finding: Dict[str, Any], source_text: str) -> None:
     start, end = int(enclosing.get("start_line") or 0), int(enclosing.get("end_line") or 0)
     if start < 1 or end < start:
         return
-    # The model's wording is often "orderId (method parameter)": the expression
-    # is whatever precedes the parenthetical note.
-    expression = _squash(source.split(" (", 1)[0])
-    body = _squash("\n".join(lines[start - 1:end]))
-    facts["source_in_method"] = bool(expression) and expression in body
+    facts["source_in_method"] = source_in_text(source, "\n".join(lines[start - 1:end]))
 
 
 def prepare_findings(
@@ -101,14 +116,17 @@ def prepare_findings(
 ) -> List[Dict[str, Any]]:
     """Attach facts to every finding of one file, then run the validators on
     each (unless `validators` is off). Mutates and returns `findings`."""
-    for finding in findings:
+    fresh = [f for f in findings if not f.get("_prepared")]
+    for finding in fresh:
         attach_facts(finding, source_text, file_path=file_path, usage=usage)
-    if validators:
+    for finding in fresh:
+        finding["_prepared"] = True
+    if validators and fresh:
         try:
             from . import validators as validator_registry
 
             validator_registry.apply_validators(
-                findings, source_text, file_path=file_path, usage=usage
+                fresh, source_text, file_path=file_path, usage=usage
             )
         except ImportError:  # the registry ships in the same epic; tolerate its absence
             pass

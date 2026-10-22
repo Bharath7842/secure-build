@@ -27,7 +27,7 @@ scripted:
           cwe: CWE-89
           title: SQL built by string concatenation
           owasp_category: "A03:2021-Injection"
-          source: request.getParameter("report")
+          source: ""
           sink: stmt.executeQuery
           data_flow: the report name reaches the query
           snippet: return stmt.executeQuery(QueryBuilder.forReport(name));
