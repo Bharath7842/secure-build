@@ -57,7 +57,7 @@ from llm_client import (
 
 from . import reachability
 from .finding_facts import prepare_findings
-from .occurrence_facts import LOGGER_PACKAGES
+from .occurrence_facts import LOGGER_PACKAGES, semantic_signature
 from .owasp_map import OWASP_TOP_10_2021, owasp_for_rule
 from .regex_scan import (
     PROCESS_POOL_MIN_FILES,
@@ -3052,16 +3052,25 @@ _GROUP_RESPONSE_SCHEMA = """Output format — one JSON object with exactly one d
 
 def group_key_for_finding(finding: Dict[str, Any]) -> tuple:
     """Same-issue key for unverified regex findings — mirrors
-    app.services.scan_export._finding_group_key's regex branch."""
+    app.services.scan_export._finding_group_key (minus its leading verdict).
+
+    The last element is the occurrence's semantic signature (callee, receiver
+    type, argument kinds — `occurrence_facts.semantic_signature`): members that
+    differ in what they actually call, or in what they pass to it, are not one
+    construct, so a verdict for one is never copied to the other. A rule with
+    `group_by_rule` still collapses a varying matched text, but never across
+    signatures. Members with no facts all share `unresolved` and group with
+    each other only."""
     rule_id = str(finding.get("rule_id") or "").strip()
     matched = " ".join(str(finding.get("matched_text") or "").split())[:200]
+    signature = semantic_signature(finding.get("facts"))
     if rule_id and rule_id.lower() != "llm-extra":
         if finding.get("group_by_rule"):
-            return ("rule", rule_id)
-        return ("rule", rule_id, matched)
+            return ("rule", rule_id, signature)
+        return ("rule", rule_id, matched, signature)
     topic = re.sub(r"[^a-z0-9]+", " ", str(finding.get("title") or "").lower()).strip()
     topic = " ".join(topic.split()[:3])
-    return ("topic", str(finding.get("cwe") or "").strip().upper(), topic, matched)
+    return ("topic", str(finding.get("cwe") or "").strip().upper(), topic, matched, signature)
 
 
 def build_group_confirm_prompt(
@@ -3394,8 +3403,10 @@ def group_unverified_findings(
 
     groups: Dict[tuple, List[Dict[str, Any]]] = {}
     group_order: List[tuple] = []
+    constructs: Set[tuple] = set()  # the same grouping before the semantic split
     for finding in candidates:
         key = group_key_for_finding(finding)
+        constructs.add(key[:-1])
         bucket = groups.setdefault(key, [])
         if not bucket:
             group_order.append(key)
@@ -3421,12 +3432,14 @@ def group_unverified_findings(
             "owasp_category": representative.get("owasp_category"),
             "occurrence_count": len(members),
             "sample_files": sample_files,
+            "signature": key[-1],
         })
     summaries.sort(key=lambda g: g["occurrence_count"], reverse=True)
 
     return {
         "candidate_count": len(candidates),
         "group_count": len(group_order),
+        "construct_count": len(constructs),
         "groups": summaries,
         "members_by_key": groups,
         "group_order": group_order,

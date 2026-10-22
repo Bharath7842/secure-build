@@ -64,6 +64,7 @@ from app.models import ISSUE_CLASSES, UNVERIFIED_VERDICT, Finding, Project, Scan
 from app.services.gates import build_gate_summary
 from app.services.git_workspace import redact_git_url
 from app.services.module_path import to_module_path
+from app.services.occurrence import semantic_signature
 
 logger = logging.getLogger(__name__)
 
@@ -741,7 +742,12 @@ def _finding_group_key(finding: Finding) -> tuple:
     A rule can opt out of the matched-text split via `group_by_rule` (denorm'd
     onto the Finding row from RegexRule.group_by_rule at write time) for
     constructs whose matched text is expected to differ every occurrence — a
-    class name, say — while still describing exactly one issue."""
+    class name, say — while still describing exactly one issue.
+
+    Every rule/topic key ends with the occurrence's semantic signature (what it
+    calls, on which receiver type, with which kinds of arguments): members that
+    differ there are different constructs and never share a verdict. Rows
+    without facts all carry `unresolved`, so old scans group exactly as before."""
     verdict = (finding.verdict or "").strip().lower()
     rule_id = (finding.rule_id or "").strip()
     if (finding.kind or "").strip().lower() == "dast":
@@ -764,14 +770,15 @@ def _finding_group_key(finding: Finding) -> tuple:
         )
         if hops:
             return (verdict, "flow", (finding.cwe or "").strip().upper(), hops)
+    signature = semantic_signature(finding.facts)
     if rule_id and rule_id.lower() != "llm-extra":
         if finding.group_by_rule:
-            return (verdict, "rule", rule_id)
-        return (verdict, "rule", rule_id, _normalized_match(finding))
+            return (verdict, "rule", rule_id, signature)
+        return (verdict, "rule", rule_id, _normalized_match(finding), signature)
     topic = re.sub(r"[^a-z0-9]+", " ", (finding.title or "").lower()).strip()
     topic = " ".join(topic.split()[:3])
     return (verdict, "topic", (finding.cwe or "").strip().upper(), topic,
-            _normalized_match(finding))
+            _normalized_match(finding), signature)
 
 
 # Kinds whose title/rule_id are model-written and so vary between findings that

@@ -378,3 +378,29 @@ def test_exports_use_effective_verdict(client, scan, monkeypatch):
     assert sarif.status_code == 200
     verdicts = {r["ruleId"]: r["properties"]["verdict"] for r in json.loads(sarif.text)["runs"][0]["results"]}
     assert verdicts["sqli"] == "false_positive"
+
+
+def test_a_review_of_an_old_group_is_still_found_after_the_group_key_changes(client, scan):
+    """Group keys now end in a semantic signature, so a rescan's fingerprints differ
+    from an old review's. Reviews are located through the member ids stored with
+    them, so an existing review keeps covering its rows (SAST-01-060)."""
+    from app.db import SessionLocal
+    from app.models import Finding
+    from app.services import feedback
+
+    scan_id, ids = scan
+    body = _review(client, scan_id, ids["rx0"], decision="false_positive", comment="fixtures").json()
+    assert body["occurrence_count"] == 3
+    db = SessionLocal()
+    try:
+        for key in ("rx0", "rx1", "rx2"):
+            row = db.get(Finding, ids[key])
+            # Resolved facts arrive for these rows after the review was taken.
+            row.facts = {"call": {"callee": "x", "arity": 0, "owner_fqn": "a.B", "receiver_fqn": "a.B"}, "args": []}
+        db.commit()
+        for key in ("rx0", "rx1", "rx2"):
+            assert feedback.find_review(db, scan_id, ids[key]) is not None
+    finally:
+        db.close()
+    group = [f for f in _findings(client, scan_id)["findings"] if f["rule_id"] == "secret"]
+    assert len(group) == 1 and group[0]["review"]["reviewer_verdict"] == "false_positive"

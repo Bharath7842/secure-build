@@ -2600,7 +2600,9 @@ def node_group_triage_findings(state: SastState) -> dict:
     tracer.log(9, "group_triage_findings",
                 f"Grouped {grouping['candidate_count']} unverified finding(s) into "
                 f"{grouping['group_count']} unique pattern(s)",
-                detail=f"top patterns: {top_lines}",
+                detail=f"top patterns: {top_lines}; {grouping['construct_count']} construct(s) "
+                       f"before splitting by resolved call/receiver/arguments, "
+                       f"{grouping['group_count']} after",
                 narrative=f"Grouped {grouping['candidate_count']} unverified {tier} finding(s) by matched "
                           f"pattern into {grouping['group_count']} unique construct(s) — no LLM call made, "
                           f"verdicts are still unverified. "

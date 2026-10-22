@@ -34,6 +34,35 @@ def normalize_expression(text: Any) -> str:
     return " ".join(str(text or "").split())
 
 
+UNRESOLVED_SIGNATURE = "unresolved"
+
+
+def semantic_signature(facts: Mapping[str, Any] | None) -> str:
+    """The part of an occurrence's facts that decides whether two occurrences
+    are one construct (SAST-01-060). Mirrors
+    `sast_engine/pipeline/occurrence_facts.semantic_signature` — the app cannot
+    import the engine; `tests/test_group_key_parity.py` keeps the two equal.
+
+    A call is identified by its owner type, name and arity, its receiver's type
+    and the kinds of its arguments; a declaration by method name, arity and
+    whether its body is a stub; no facts at all is `unresolved`."""
+    if not facts:
+        return UNRESOLVED_SIGNATURE
+    if facts.get("in_comment"):
+        return "comment"
+    call = facts.get("call")
+    if call:
+        kinds = ",".join(a.get("kind", "unknown") for a in facts.get("args") or [])
+        owner = call.get("owner_fqn") or "?"
+        receiver = call.get("receiver_fqn") or "?"
+        return f"call:{owner}.{call.get('callee')}/{call.get('arity')}|{receiver}|({kinds})"
+    enclosing = facts.get("enclosing") or {}
+    if facts.get("is_declaration"):
+        shape = "stub" if facts.get("is_stub") else "impl"
+        return f"decl:{enclosing.get('method')}/{enclosing.get('arity')}|{shape}"
+    return f"other:{'stub' if facts.get('is_stub') else 'body'}"
+
+
 def _sink_expression(f: Mapping[str, Any]) -> str:
     stamped = f.get("sink_expression")
     if stamped is not None:
