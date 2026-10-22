@@ -1,0 +1,33 @@
+id: sql-constant-select
+area: sql-binding
+polarity: negative
+seed_findings:
+- 47
+adjudication: dev_label_only
+expected:
+- rule_id: java-jdbc-prepare-concat
+  cwe: CWE-89
+  file: src/main/java/com/acme/dao/ReportCountDao.java
+  sink_line: 12
+  verdict: false_positive
+  reason_tag: sql_fixed_template_bound
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - ReportCountDao.java
+  response:
+    findings:
+    - line: 12
+      verdict: true_positive
+      confidence: 0.55
+      rule_id: java-jdbc-prepare-concat
+      severity: HIGH
+      cwe: CWE-89
+      title: SQL injection through a JDBC statement
+      owasp_category: A03:2021-Injection
+      source: ''
+      sink: connection.prepareStatement(COUNT_DONE)
+      data_flow: ''
+      snippet: PreparedStatement stmt = connection.prepareStatement(COUNT_DONE);
+      verdict_reason: The statement is executed from a variable, which may be built from input elsewhere.
+      ai_fix: Bind the value with a PreparedStatement placeholder.

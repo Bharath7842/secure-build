@@ -24,8 +24,12 @@ cli = importlib.util.module_from_spec(spec)
 sys.modules["accuracy_gate_cli"] = cli
 spec.loader.exec_module(cli)
 
-POSITIVE, SECOND_POSITIVE = "sql-soap-concat", "log-credential-renamed-logger"
-NEGATIVE, SECOND_NEGATIVE = "sql-soap-bound", "xxe-jms-hardened"
+# The cases whose recorded model answer the tests rewrite to simulate a
+# regression. They must be ones no deterministic validator decides: the SQL
+# cases' verdicts follow from the statement's structure (sql_binding), so a
+# flipped model answer there is overruled rather than regressed.
+POSITIVE, SECOND_POSITIVE = "log-credential-renamed-logger", "sql-soap-concat"
+NEGATIVE, SECOND_NEGATIVE = "xxe-jms-hardened", "sql-soap-bound"
 UNCERTAIN = "verdict-not-sure"
 
 

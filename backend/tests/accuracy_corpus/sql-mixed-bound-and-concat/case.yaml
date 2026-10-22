@@ -1,0 +1,32 @@
+id: sql-mixed-bound-and-concat
+area: sql-binding
+polarity: positive
+seed_findings: []
+adjudication: dev_label_only
+expected:
+- rule_id: java-jdbc-prepare-concat
+  cwe: CWE-89
+  file: src/main/java/com/acme/dao/OrderDao.java
+  sink_line: 11
+  verdict: true_positive
+  issue_class: security
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - OrderDao.java
+  response:
+    findings:
+    - line: 11
+      verdict: true_positive
+      confidence: 0.85
+      rule_id: java-jdbc-prepare-concat
+      severity: HIGH
+      cwe: CWE-89
+      title: SQL injection through a JDBC statement
+      owasp_category: A03:2021-Injection
+      source: status (method parameter)
+      sink: connection.prepareStatement(...)
+      data_flow: customer is bound, but status is concatenated into the query text
+      snippet: PreparedStatement stmt = connection.prepareStatement(
+      verdict_reason: status is concatenated into the SQL text even though customer is bound.
+      ai_fix: Bind the value with a PreparedStatement placeholder.

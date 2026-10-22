@@ -152,6 +152,8 @@ def _outcome_dict(validator: Validator, result: ValidatorResult) -> Dict[str, An
         out["proof"] = result.proof
     if result.missing:
         out["missing"] = result.missing
+    if result.issue_class:
+        out["issue_class"] = result.issue_class
     return out
 
 
@@ -199,6 +201,10 @@ def _settle(finding: Dict[str, Any], outcomes: Sequence[Dict[str, Any]], *, reco
     elif positives:
         decisive = positives[0]
 
+    if decisive is not None and decisive.get("issue_class") and finding.get("issue_class") != decisive["issue_class"]:
+        finding["issue_class"] = decisive["issue_class"]
+        changed = True
+
     if record and decisive is not None:
         finding.setdefault("decisions", []).append({
             "stage": "validator",
@@ -207,7 +213,8 @@ def _settle(finding: Dict[str, Any], outcomes: Sequence[Dict[str, Any]], *, reco
             "confidence": finding.get("confidence"),
             "unresolved_reason": finding.get("unresolved_reason"),
             "verdict_reason": finding.get("verdict_reason"),
-            "detail": {k: decisive[k] for k in ("outcome", "reason_tag", "proof", "missing") if k in decisive},
+            "detail": {k: decisive[k] for k in ("outcome", "reason_tag", "proof", "missing", "issue_class")
+                       if k in decisive},
         })
     return changed
 
@@ -224,6 +231,8 @@ def apply_precedence(
     outcomes: List[Dict[str, Any]] = []
     for validator, result in results:
         bump_counter(usage, "validators", f"{validator.name}.{result.outcome}")
+        if result.reason_tag:
+            bump_counter(usage, "validators", f"{validator.name}.{result.reason_tag}")
         if result.outcome != NO_OPINION:
             outcomes.append(_outcome_dict(validator, result))
     if not outcomes:
@@ -300,6 +309,8 @@ def render_deterministic_facts(
 
 # The shipped validators. Imported last: they register themselves on import.
 # Order matters — the first negative proof wins, so `stub_method` (a stub has no
-# sink at all) is consulted before `declaration_not_call`.
+# sink at all) is consulted before `declaration_not_call`, and both before the
+# SQL checks, which assume the anchor is real code.
 from . import stub_method as _stub_method  # noqa: E402,F401
 from . import declaration_not_call as _declaration_not_call  # noqa: E402,F401
+from . import sql_binding as _sql_binding  # noqa: E402,F401

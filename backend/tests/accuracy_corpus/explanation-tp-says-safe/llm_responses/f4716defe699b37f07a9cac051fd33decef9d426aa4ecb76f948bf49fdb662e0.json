@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5252,
-  "key": "f4716defe699b37f07a9cac051fd33decef9d426aa4ecb76f948bf49fdb662e0",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 125,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 13, \"verdict\": \"true_positive\", \"confidence\": 0.9, \"rule_id\": \"llm-extra\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL built by string concatenation\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"orderId (method parameter)\", \"sink\": \"stmt.executeQuery\", \"data_flow\": \"orderId reaches the statement\", \"snippet\": \"return stmt.executeQuery();\", \"verdict_reason\": \"The query is parameterized, so there is no injection risk here.\", \"ai_fix\": \"Use a prepared statement.\"}]}"
-}

@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5250,
+  "key": "f5f88f4760a4ef954837be7bc7b341b9242befe7bf913666d8a608c96c91dc7a",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 125,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 12, \"verdict\": \"true_positive\", \"confidence\": 0.95, \"rule_id\": \"java-sql-string-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL built by string concatenation\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"\", \"sink\": \"stmt.executeQuery\", \"data_flow\": \"the report name reaches the query\", \"snippet\": \"return stmt.executeQuery(QueryBuilder.forReport(name));\", \"verdict_reason\": \"The report name is used to build the query.\", \"ai_fix\": \"Use a prepared statement.\"}]}"
+}

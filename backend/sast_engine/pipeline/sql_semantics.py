@@ -87,6 +87,7 @@ class Bind:
     kind: str
     line: int
     branch: Branch
+    setter: str = ""
 
 
 @dataclass
@@ -489,6 +490,7 @@ def statements_in_method(method_node: Any, src: bytes, ctx: Optional[MethodConte
                     fact.binds.append(Bind(
                         index=_int_literal(args[0], ctx), value=args[1],
                         kind=of._java_kind(args[1], ctx.scope, ctx.jf), line=line, branch=branch,
+                        setter=method,
                     ))
     return facts
 
@@ -640,6 +642,9 @@ class QueryFolder:
     def __init__(self, ctx: MethodContext, constants: Optional[Any] = None) -> None:
         self.ctx = ctx
         self.constants = constants
+        # Lines whose code contributed to a folded query: the declaration and
+        # appends of `sql`, not only the statement line it is executed on.
+        self.touched: set = set()
         body = of._f(ctx.node, "body")
         self.nodes: List[Tuple[Any, Branch]] = []
         if body is not None:
@@ -714,6 +719,7 @@ class QueryFolder:
             return [[Unk("missing expression")]]
         if depth > MAX_FOLD_DEPTH:
             return [[Unk("expression too deep to fold", node)]]
+        self.touched.update(range(node.start_point[0] + 1, node.end_point[0] + 2))
         t = node.type
         if t in ("string_literal", "text_block", "character_literal"):
             return [[Lit(_literal_text(node, ctx))]]
@@ -796,6 +802,8 @@ class QueryFolder:
             _type, init, _final, static_final = ctx.scope.fields[fname]
             if static_final and init is not None:
                 return self.fold(init, depth + 1)
+            return [[self._dyn(node)]]
+        if obj.type == "identifier" and oname in ctx.jf.enum_types:
             return [[self._dyn(node)]]
         if obj.type == "identifier" and oname[:1].isupper():
             if self.constants is not None:
@@ -993,3 +1001,78 @@ def classify_query(query_expr: Any, method_ctx: MethodContext, *, constants: Opt
         kind = "fixed"
     return QueryClass(kind=kind, dynamic_parts=parts, unknown=unknown, placeholders=placeholders,
                       placeholder_list=plist, variants=templates)
+
+
+# --- binding coverage -----------------------------------------------------------
+
+def _arms(node: Any) -> Optional[List[str]]:
+    """Every arm of a branching node, or None when one path takes no arm at all
+    (an `if` without `else`, a `switch` without `default`, any loop)."""
+    if node.type == "if_statement":
+        return ["then", "else"] if of._f(node, "alternative") is not None else None
+    if node.type == "switch_block":
+        groups = [(i, c) for i, c in enumerate(node.children)
+                  if c.type in ("switch_block_statement_group", "switch_rule")]
+        if not any(_switch_default(c) for _i, c in groups):
+            return None
+        return ["default" if _switch_default(c) else f"case{i}" for i, c in groups]
+    return None
+
+
+def _nodes_by_id(ctx: MethodContext) -> Dict[int, Any]:
+    out: Dict[int, Any] = {}
+    stack = [ctx.node]
+    while stack:
+        n = stack.pop()
+        out[n.id] = n
+        stack.extend(n.children)
+    return out
+
+
+def _covered(prefix: Branch, binds: List[Bind], by_id: Dict[int, Any]) -> bool:
+    """Does every run through `prefix` pass one of `binds`? Directly, when a
+    bind sits at this level (or an enclosing one); otherwise when some branch
+    node right below has a bind on every one of its arms."""
+    if any(encloses(b.branch, prefix) for b in binds):
+        return True
+    below: Dict[int, set] = {}
+    for b in binds:
+        if len(b.branch) > len(prefix) and b.branch[: len(prefix)] == prefix:
+            node_id, arm = b.branch[len(prefix)]
+            below.setdefault(node_id, set()).add(arm)
+    for node_id in below:
+        node = by_id.get(node_id)
+        arms = _arms(node) if node is not None else None
+        if arms and all(_covered(prefix + ((node_id, arm),), binds, by_id) for arm in arms):
+            return True
+    return False
+
+
+def unbound_placeholders(fact: StatementFact, qc: QueryClass, ctx: MethodContext) -> List[str]:
+    """What is not bound before some execution: placeholder indexes (or the
+    placeholder list) without a bind on every path that reaches it. Empty when
+    every placeholder is bound for every execution."""
+    if fact.alloc == "jdbc_template":
+        return [] if (qc.placeholders == 0 and not qc.placeholder_list) or fact.bound_by_args else ["the template's bind arguments"]
+    by_id = _nodes_by_id(ctx)
+    missing: List[str] = []
+    for execution in fact.executions:
+        if execution.has_sql_arg:
+            continue
+        before = [b for b in fact.binds if b.line <= execution.line and not exclusive(b.branch, execution.branch)]
+        computed = [b for b in before if not isinstance(b.index, int)]
+        literal = qc.placeholders - (1 if qc.placeholder_list else 0)
+        if qc.placeholder_list:
+            if not any(any(arm == "loop" for _id, arm in b.branch) for b in computed):
+                missing.append(f"the placeholder list before {execution.method} at line {execution.line}")
+            computed = [b for b in computed if not any(arm == "loop" for _id, arm in b.branch)]
+        if computed and not any(isinstance(b.index, int) for b in before):
+            # Indexes computed as `i++`: count the binds on the execution's path.
+            if len([b for b in computed if encloses(b.branch, execution.branch)]) < literal:
+                missing.append(f"{literal} placeholders, fewer binds before line {execution.line}")
+            continue
+        for index in range(1, literal + 1):
+            binds = [b for b in before if b.index == index]
+            if not _covered(execution.branch, binds, by_id):
+                missing.append(f"index {index} before {execution.method} at line {execution.line}")
+    return missing

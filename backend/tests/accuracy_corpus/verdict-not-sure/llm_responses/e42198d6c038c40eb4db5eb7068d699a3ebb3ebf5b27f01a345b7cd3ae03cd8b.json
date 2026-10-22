@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5190,
-  "key": "e42198d6c038c40eb4db5eb7068d699a3ebb3ebf5b27f01a345b7cd3ae03cd8b",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 118,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 5, \"verdict\": \"not sure\", \"confidence\": 0.6, \"rule_id\": \"llm-extra\", \"severity\": \"HIGH\", \"cwe\": \"CWE-78\", \"title\": \"Operating system command built from a method argument\", \"owasp_category\": \"A03:2021-Injection\", \"sink\": \"Runtime.getRuntime().exec(...)\", \"snippet\": \"Runtime.getRuntime().exec(\\\"tar czf /backups/latest.tgz \\\" + directory);\", \"verdict_reason\": \"The directory comes from the caller but I cannot tell whether it is validated upstream.\"}]}"
-}

@@ -164,7 +164,9 @@ def test_a_contradiction_gets_one_retry_naming_it_and_a_consistent_answer_is_pub
     assert "does not contain it" in provider.users[1] and "Deterministic facts:" not in provider.users[0]
     (finding,) = result["findings"]
     assert finding["verdict"] == "true_positive" and finding["sink"] == "stmt.executeQuery"
-    assert [d["stage"] for d in finding["decisions"]] == ["explanation_retry"]
+    # The query really is concatenated, so the SQL validator records its fact
+    # first (EPIC-02); the explanation retry follows it.
+    assert [d["stage"] for d in finding["decisions"]] == ["validator", "explanation_retry"]
     counters = usage["_counters"]["explanation_contradictions"]
     assert counters["retries"] == 1 and counters["retry_resolved"] == 1 and counters["sink_not_on_line"] >= 1
 
@@ -183,7 +185,10 @@ def test_a_contradicted_false_positive_is_never_made_a_true_positive_or_dropped(
                              verdict_reason="An attacker can control the name, but it is escaped.", ai_fix=None))
     result = _scan(tmp_path, provider)
     (finding,) = result["findings"]
-    assert finding["verdict"] == "unverified" and finding["unresolved_reason"] == "explanation_contradiction"
+    # Undecided, never a true positive and never dropped. The reason is the
+    # stronger one: a deterministic fact (the query is concatenated) disagrees
+    # with the dismissal, which outranks the contradicted explanation.
+    assert finding["verdict"] == "unverified" and finding["unresolved_reason"] == "conflict"
 
 
 def test_without_budget_there_is_no_retry_and_the_finding_is_unresolved(tmp_path, monkeypatch):

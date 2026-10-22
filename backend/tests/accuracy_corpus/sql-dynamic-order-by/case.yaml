@@ -1,0 +1,32 @@
+id: sql-dynamic-order-by
+area: sql-binding
+polarity: positive
+seed_findings: []
+adjudication: dev_label_only
+expected:
+- rule_id: java-jdbc-prepare-concat
+  cwe: CWE-89
+  file: src/main/java/com/acme/dao/ReportListDao.java
+  sink_line: 11
+  verdict: true_positive
+  issue_class: security
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - ReportListDao.java
+  response:
+    findings:
+    - line: 11
+      verdict: true_positive
+      confidence: 0.85
+      rule_id: java-jdbc-prepare-concat
+      severity: HIGH
+      cwe: CWE-89
+      title: SQL injection through a JDBC statement
+      owasp_category: A03:2021-Injection
+      source: sortColumn (method parameter)
+      sink: connection.prepareStatement(...)
+      data_flow: sortColumn is concatenated into the ORDER BY clause
+      snippet: PreparedStatement stmt = connection.prepareStatement(
+      verdict_reason: The ORDER BY column comes from sortColumn and cannot be bound, so it changes the query.
+      ai_fix: Bind the value with a PreparedStatement placeholder.

@@ -60,14 +60,19 @@ class ValidatorResult:
     reason_tag: Optional[str] = None
     proof: Optional[str] = None
     missing: Optional[str] = None
+    # What kind of issue the occurrence is, when the check decides it: a
+    # numeric value concatenated into SQL is `quality`, not injection; unsafe
+    # SQL in a method nothing can reach is `inactive`. Changes the class, never
+    # the verdict.
+    issue_class: Optional[str] = None
 
 
-def negative_proof(reason_tag: str, proof: str) -> ValidatorResult:
-    return ValidatorResult(NEGATIVE, reason_tag=reason_tag, proof=_cut(proof))
+def negative_proof(reason_tag: str, proof: str, *, issue_class: Optional[str] = None) -> ValidatorResult:
+    return ValidatorResult(NEGATIVE, reason_tag=reason_tag, proof=_cut(proof), issue_class=issue_class)
 
 
-def positive_fact(reason_tag: str, proof: str) -> ValidatorResult:
-    return ValidatorResult(POSITIVE, reason_tag=reason_tag, proof=_cut(proof))
+def positive_fact(reason_tag: str, proof: str, *, issue_class: Optional[str] = None) -> ValidatorResult:
+    return ValidatorResult(POSITIVE, reason_tag=reason_tag, proof=_cut(proof), issue_class=issue_class)
 
 
 def evidence_gap(missing: str) -> ValidatorResult:
@@ -81,12 +86,14 @@ def no_opinion() -> ValidatorResult:
 @dataclass
 class ValidatorContext:
     """Read access a validator may use: file text (cached) and, when the scan
-    built one, the call graph. ``file_text`` is pre-seeded with the file being
+    built them, the call graph and SQL method summaries. ``file_text`` is pre-seeded with the file being
     scanned, so the common case never touches the disk."""
 
     file_text: Dict[str, str] = field(default_factory=dict)
     repo_root: Optional[Path] = None
     call_graph: Any = None
+    # The scan's SQL method summaries (`sql_semantics.SqlSummaries`), when built.
+    sql: Any = None
 
     def read_text(self, path: str) -> Optional[str]:
         if path in self.file_text:

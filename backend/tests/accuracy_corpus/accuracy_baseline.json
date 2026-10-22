@@ -103,7 +103,7 @@
           "file_path": "src/main/java/com/acme/service/OrderService.java",
           "issue_class": "security",
           "line": 13,
-          "occurrence_id": "a3b2fd83fe6e493d7e969e5f0b448ba6ef1038f45e13cf9fb049b68f1f5486eb",
+          "occurrence_id": "362136659e1d47d00b153310ddd8fb781eed0924851f591a357b34e3cba48c74",
           "rule_id": "llm-extra",
           "unresolved_reason": null,
           "verdict": "false_positive"
@@ -286,6 +286,110 @@
         }
       ]
     },
+    "sql-bound-numeric-param": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/JobDao.java",
+          "issue_class": "security",
+          "line": 10,
+          "occurrence_id": "5146589fa08696fce96cb189a7da7474d82a6e5d59481ed8109533e9a71a2353",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "sql-bound-setobject": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/AccountDao.java",
+          "issue_class": "security",
+          "line": 13,
+          "occurrence_id": "fe88123ae3c8634061703fe93f3ea2881aa4b437b665419c0dd97bf35ea3a08e",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "sql-commented-legacy-concat": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/InvoiceDao.java",
+          "issue_class": "security",
+          "line": 12,
+          "occurrence_id": "ee3faeefabed1db884fb861abcdd2bcbda0e58da8c7e4e8aa9ccfafcdfe368c1",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "sql-concat-into-prepare": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/PortDao.java",
+          "issue_class": "security",
+          "line": 11,
+          "occurrence_id": "8c90e1d8adcef94a51f68d11d1cb69c1fb53d15e333789755a8047e2114d9185",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "sql-constant-select": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/ReportCountDao.java",
+          "issue_class": "security",
+          "line": 12,
+          "occurrence_id": "3f4d106623b15eb07ff56294119d553ec6cb95341993f99fa42d17be1116396c",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "sql-dynamic-order-by": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/ReportListDao.java",
+          "issue_class": "security",
+          "line": 11,
+          "occurrence_id": "bb5bc743d713f50a2e99eeb9c45053c427b1968fb28a4f369ce89eed7125f033",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "sql-live-concat-below-comment": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/InvoiceSearchDao.java",
+          "issue_class": "security",
+          "line": 12,
+          "occurrence_id": "3cb3438852b8132b77a8c6042df383571d956315082e75c07b833f9783e1df8e",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "sql-mixed-bound-and-concat": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/OrderDao.java",
+          "issue_class": "security",
+          "line": 11,
+          "occurrence_id": "94b96d8f2c45aca61be2ef199db65f1099053f17ece38e89bfd1ad5e09ea287e",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
     "sql-soap-bound": {
       "findings": [
         {
@@ -306,6 +410,19 @@
           "issue_class": "security",
           "line": 12,
           "occurrence_id": "43db4cbeb9b74fd6db7558581649b19732c0472c1fb8f7f87f8a877c3df76bf9",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "sql-wrong-statement-bound": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/UserDao.java",
+          "issue_class": "security",
+          "line": 15,
+          "occurrence_id": "265e0abcc71c3a62f78ddd5ef30053d18203cfc6a57151316369af35335f40c5",
           "rule_id": "java-jdbc-prepare-concat",
           "unresolved_reason": null,
           "verdict": "true_positive"

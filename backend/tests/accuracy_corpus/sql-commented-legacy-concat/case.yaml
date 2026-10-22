@@ -1,0 +1,33 @@
+id: sql-commented-legacy-concat
+area: sql-binding
+polarity: negative
+seed_findings:
+- 34
+adjudication: dev_label_only
+expected:
+- rule_id: java-jdbc-prepare-concat
+  cwe: CWE-89
+  file: src/main/java/com/acme/dao/InvoiceDao.java
+  sink_line: 12
+  verdict: false_positive
+  reason_tag: sql_fixed_template_bound
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - InvoiceDao.java
+  response:
+    findings:
+    - line: 12
+      verdict: true_positive
+      confidence: 0.7
+      rule_id: java-jdbc-prepare-concat
+      severity: HIGH
+      cwe: CWE-89
+      title: SQL injection through a JDBC statement
+      owasp_category: A03:2021-Injection
+      source: invoiceNo (method parameter)
+      sink: connection.prepareStatement(...)
+      data_flow: invoiceNo is concatenated into sql
+      snippet: PreparedStatement stmt = connection.prepareStatement("SELECT * FROM invoices WHERE invoice_no = ?");
+      verdict_reason: The query is built by concatenating invoiceNo into sql.
+      ai_fix: Bind the value with a PreparedStatement placeholder.

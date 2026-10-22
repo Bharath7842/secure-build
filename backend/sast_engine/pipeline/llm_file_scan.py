@@ -811,6 +811,7 @@ _SYSTEM_HEAD = (
     "produced is not a vulnerability.\n"
     "- Parameterised queries (bound `?` / named parameters) are safe even when the "
     "surrounding code concatenates non-parameter fragments.\n"
+    "- A value passed to a `PreparedStatement` setter is data, not SQL text.\n"
     "- Do NOT flag JDBC ResultSet getters (rs.getString, getInt, etc.) as SQL "
     "injection; reading a column from a query result is not building SQL.\n"
     "- Do NOT flag string concatenation that does not build a query, command, path, "
@@ -1558,9 +1559,15 @@ def publish_decision(
         return DROP
     if suppress_http_findings and _is_http_related_finding(finding):
         return DROP
+    # A dismissal settled by a deterministic proof (validators) is kept as a row
+    # with its proof, so the report shows the scanner looked at it; the two
+    # drops below are about *model* dismissals, and a proof carries no
+    # confidence to compare.
+    proven = _has_validator_proof(finding)
     if (
         suppress_low_confidence_false_positives
         and finding.get("verdict") == "false_positive"
+        and not proven
         and float(finding.get("confidence") or 0.0) <= FALSE_POSITIVE_SUPPRESS_CONFIDENCE_CEILING
     ):
         return DROP
@@ -1591,7 +1598,7 @@ def publish_decision(
 
     if _is_noisy_rule(finding.get("rule_id", "")):
         verdict = finding.get("verdict")
-        if verdict == "false_positive":
+        if verdict == "false_positive" and not proven:
             _record_publish_drop(usage, finding, "noisy_fp", cwe)
             bump_counter(usage, "publish_filter", "noisy_fp_dropped")
             return DROP  # generic catalog echo marked FP — no tuning value

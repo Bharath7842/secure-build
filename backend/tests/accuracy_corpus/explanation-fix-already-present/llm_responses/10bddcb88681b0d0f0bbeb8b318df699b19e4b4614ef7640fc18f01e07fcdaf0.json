@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5214,
-  "key": "10bddcb88681b0d0f0bbeb8b318df699b19e4b4614ef7640fc18f01e07fcdaf0",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 138,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 10, \"verdict\": \"true_positive\", \"confidence\": 0.6, \"rule_id\": \"logger-exception-tostring\", \"severity\": \"LOW\", \"cwe\": \"CWE-209\", \"title\": \"Exception detail written to the log\", \"owasp_category\": \"A09:2021-Security-Logging-and-Monitoring-Failures\", \"source\": \"ex (caught exception)\", \"sink\": \"logger.error\", \"data_flow\": \"the exception is logged\", \"snippet\": \"logger.error(msg, ex);\", \"verdict_reason\": \"Exception details are written to the log.\", \"ai_fix\": \"Pass the exception as the last argument, as in `logger.error(msg, ex)`.\"}]}"
-}

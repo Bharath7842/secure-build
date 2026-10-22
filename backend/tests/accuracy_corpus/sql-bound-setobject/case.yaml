@@ -1,0 +1,34 @@
+id: sql-bound-setobject
+area: sql-binding
+polarity: negative
+seed_findings:
+- 15
+- 209
+adjudication: dev_label_only
+expected:
+- rule_id: java-jdbc-prepare-concat
+  cwe: CWE-89
+  file: src/main/java/com/acme/dao/AccountDao.java
+  sink_line: 13
+  verdict: false_positive
+  reason_tag: sql_fixed_template_bound
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - AccountDao.java
+  response:
+    findings:
+    - line: 13
+      verdict: true_positive
+      confidence: 0.85
+      rule_id: java-jdbc-prepare-concat
+      severity: HIGH
+      cwe: CWE-89
+      title: SQL injection through a JDBC statement
+      owasp_category: A03:2021-Injection
+      source: accountId (method parameter)
+      sink: stmt.setObject(1, accountId)
+      data_flow: accountId reaches setObject on the statement
+      snippet: stmt.setObject(1, accountId);
+      verdict_reason: accountId flows into setObject, which passes it to the SQL statement.
+      ai_fix: Bind the value with a PreparedStatement placeholder.

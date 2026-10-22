@@ -1,0 +1,32 @@
+id: sql-wrong-statement-bound
+area: sql-binding
+polarity: positive
+seed_findings: []
+adjudication: dev_label_only
+expected:
+- rule_id: java-jdbc-prepare-concat
+  cwe: CWE-89
+  file: src/main/java/com/acme/dao/UserDao.java
+  sink_line: 15
+  verdict: true_positive
+  issue_class: security
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - UserDao.java
+  response:
+    findings:
+    - line: 15
+      verdict: true_positive
+      confidence: 0.85
+      rule_id: java-jdbc-prepare-concat
+      severity: HIGH
+      cwe: CWE-89
+      title: SQL injection through a JDBC statement
+      owasp_category: A03:2021-Injection
+      source: login (method parameter)
+      sink: query.executeQuery()
+      data_flow: login is bound to `check`, but `query` concatenates it and is the one executed
+      snippet: return query.executeQuery();
+      verdict_reason: The executed statement concatenates login; the bound one is never run.
+      ai_fix: Bind the value with a PreparedStatement placeholder.

@@ -7,6 +7,11 @@ adjudication: dev_label_only
 # parameterized and there is no injection risk: verdict and reason disagree. A
 # targeted retry names that; the corrected answer is a dismissal. Without the check
 # the contradictory true positive would have been published as a settled finding.
+#
+# Since EPIC-02 the statement itself settles it first: the query is fixed text with
+# its one placeholder bound, so `sql_binding` dismisses the first answer with that
+# proof and no retry is needed (the retry entry below is kept for runs with the
+# validators off). The explanation-* log cases still exercise the retry.
 expected:
   - rule_id: llm-extra
     cwe: CWE-89

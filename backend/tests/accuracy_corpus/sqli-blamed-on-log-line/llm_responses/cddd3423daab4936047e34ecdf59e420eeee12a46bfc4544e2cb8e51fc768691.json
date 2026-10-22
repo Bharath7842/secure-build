@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5236,
+  "key": "cddd3423daab4936047e34ecdf59e420eeee12a46bfc4544e2cb8e51fc768691",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 129,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 10, \"verdict\": \"true_positive\", \"confidence\": 0.8, \"rule_id\": \"llm-extra\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a concatenated query string\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"id (method parameter)\", \"sink\": \"log.debug\", \"data_flow\": \"id is concatenated into a SELECT statement\", \"snippet\": \"log.debug(\\\"select * from orders where id = \\\" + id);\", \"verdict_reason\": \"The id is concatenated into SQL text.\", \"ai_fix\": \"Use a prepared statement.\"}]}"
+}
