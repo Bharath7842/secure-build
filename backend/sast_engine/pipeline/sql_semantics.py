@@ -48,6 +48,7 @@ The module is pure — source text in, facts out, no LLM, no I/O — and reuses
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -340,6 +341,19 @@ def _alloc_call(node: Any, ctx: MethodContext) -> Optional[Tuple[str, Any]]:
     return method, (args[0] if args else None)
 
 
+def _is_assigned(invocation: Any) -> bool:
+    """Is this allocation the value of a declaration, assignment or resource
+    (so the statement has a variable)?"""
+    parent = invocation.parent
+    if parent is None:
+        return False
+    if parent.type in ("variable_declarator", "resource"):
+        return of._f(parent, "value") == invocation
+    if parent.type == "assignment_expression":
+        return of._f(parent, "right") == invocation
+    return False
+
+
 def _is_template_receiver(obj: Any, ctx: MethodContext) -> bool:
     _text, fqn, simple = of._java_receiver(obj, ctx.scope, ctx.jf)
     return bool(
@@ -427,6 +441,28 @@ def statements_in_method(method_node: Any, src: bytes, ctx: Optional[MethodConte
             name_node, obj = of._f(node, "name"), of._f(node, "object")
             method = ctx.text(name_node) if name_node is not None else ""
             args = _args(node)
+            if method in _ALLOC_TO_TYPE and not _is_assigned(node):
+                # Returned, passed on or chained: a statement with no variable.
+                # Only a chained execution is visible here.
+                parent = node.parent
+                chained = (
+                    parent is not None and parent.type == "method_invocation"
+                    and of._f(parent, "object") == node
+                    and ctx.text(of._f(parent, "name")) in _EXECUTE_METHODS
+                )
+                fact = StatementFact(
+                    var="", scope="local", statement_type=_ALLOC_TO_TYPE[method], alloc=method,
+                    alloc_line=line, alloc_branch=branch, query_expr=args[0] if args else None,
+                    complete=chained,
+                )
+                if chained:
+                    parent_args = _args(parent)
+                    fact.executions.append(Execution(
+                        method=ctx.text(of._f(parent, "name")), line=parent.start_point[0] + 1,
+                        sql_arg=parent_args[0] if parent_args else None, branch=branch,
+                    ))
+                facts.append(fact)
+                continue
             if method in _JDBC_TEMPLATE_METHODS and obj is not None and args and _is_template_receiver(obj, ctx):
                 rest = args[1:]
                 fact = StatementFact(
@@ -470,3 +506,490 @@ def fact_lines(fact: StatementFact) -> List[int]:
     lines = [fact.alloc_line] if fact.alloc_line else []
     lines += [b.line for b in fact.binds] + [e.line for e in fact.executions]
     return lines
+
+
+# --- SAST-02-020: query classification ----------------------------------------
+#
+# A query expression is folded into *variants* (one per way the text can be
+# built: two plain assignments, a ternary), each a list of segments: literal
+# SQL text, a dynamic part (a value the method does not fix), an unknown part
+# (text built by a helper or constant this method cannot see) and a
+# placeholder list (`?,` repeated n times). The class follows from the
+# segments: only text that can change the SQL grammar makes a query dynamic.
+
+QUERY_CLASSES = ("fixed", "fixed_placeholders", "dynamic_value", "dynamic_identifier", "unknown")
+MAX_VARIANTS = 8
+MAX_FOLD_DEPTH = 12
+
+_BUILDER_TYPES = frozenset({"StringBuilder", "StringBuffer"})
+_TEXT_PRESERVING_CALLS = frozenset({
+    "trim", "strip", "toUpperCase", "toLowerCase", "intern", "toString", "stripTrailing",
+    "stripLeading",
+})
+_EXTERNAL_PREFIXES = ("java.", "javax.", "jakarta.", "org.springframework.", "org.apache.", "com.google.")
+# A placeholder: `?`, `?1` (JPA positional) or `:name` (named; not a `::` cast).
+_PLACEHOLDER_RE = re.compile(r"\?\d*|(?<![:\w]):[A-Za-z_]\w*")
+_IDENTIFIER_TAIL_RE = re.compile(
+    r"(?:\bFROM|\bJOIN|\bINTO|\bUPDATE|\bTABLE|\bORDER\s+BY|\bGROUP\s+BY|\bSELECT|\bDISTINCT|"
+    r"\bWHERE|\bAND|\bOR|\bON|\bHAVING|\bSET|\bIN\s*\(|\bBY|\.)\s*$",
+    re.IGNORECASE,
+)
+_VALUE_TAIL_RE = re.compile(
+    r"(?:=|<|>|<>|!=|\+|-|\*|/|%|\bLIKE|\bBETWEEN|\bTHEN|\bELSE|\bWHEN|\bLIMIT|\bOFFSET|\bTOP|"
+    r"\bVALUES\s*\(|\bIS)\s*$",
+    re.IGNORECASE,
+)
+_PLACEHOLDER_ONLY_RE = re.compile(r"^[\s?,]*\?[\s?,]*$")
+
+
+@dataclass
+class Lit:
+    text: str
+
+
+@dataclass
+class Dyn:
+    node: Any
+    kind: str
+    param_index: Optional[int] = None
+    origin: Optional[str] = None
+
+
+@dataclass
+class Unk:
+    resolver: str
+    node: Any = None
+
+
+@dataclass
+class PList:
+    count: str
+
+
+@dataclass
+class DynamicPart:
+    text: str
+    kind: str
+    position: str  # value | identifier
+    line: int
+    param_index: Optional[int] = None
+    origin: Optional[str] = None
+
+
+@dataclass
+class QueryClass:
+    kind: str
+    dynamic_parts: List[DynamicPart] = field(default_factory=list)
+    unknown: List[str] = field(default_factory=list)  # what would resolve each unknown part
+    placeholders: int = 0  # the most placeholders any variant has
+    placeholder_list: Optional[str] = None  # the count expression of a `?,` list
+    variants: List[str] = field(default_factory=list)  # each variant's template, parts as {n}
+
+    @property
+    def is_fixed(self) -> bool:
+        return self.kind in ("fixed", "fixed_placeholders")
+
+    @property
+    def resolver(self) -> Optional[str]:
+        return self.unknown[0] if self.unknown else None
+
+
+Variant = List[Any]  # segments
+
+
+def _literal_text(node: Any, ctx: MethodContext) -> str:
+    raw = ctx.text(node)
+    if node.type == "text_block":
+        body = raw[3:-3]
+    elif node.type == "character_literal":
+        body = raw[1:-1]
+    else:
+        body = raw[1:-1] if len(raw) >= 2 else ""
+    return body.replace('\\"', '"').replace("\\'", "'").replace("\\n", "\n").replace("\\t", "\t")
+
+
+def _product(left: List[Variant], right: List[Variant]) -> List[Variant]:
+    out = [a + b for a in left for b in right]
+    return out[:MAX_VARIANTS] if len(out) > MAX_VARIANTS else out
+
+
+def _param_index(name: str, ctx: MethodContext) -> Optional[int]:
+    params = of._f(ctx.node, "parameters")
+    for position, p in enumerate(of._named(params) if params is not None else []):
+        pname = of._f(p, "name")
+        if pname is not None and ctx.text(pname) == name:
+            return position
+    return None
+
+
+@dataclass
+class _Defs:
+    """How a local variable gets its value before a use: plain definitions
+    (initializer or `=`), `+=` appends, and builder `append` calls."""
+
+    plain: List[Any] = field(default_factory=list)
+    appends: List[Tuple[Any, Branch]] = field(default_factory=list)
+    escapes: List[str] = field(default_factory=list)  # helpers the builder was handed to
+
+
+class QueryFolder:
+    """Folds query expressions within one method. `constants` resolves a
+    constant of another class (`Other.NAME`) to its literal text, or None;
+    without it such constants are `unknown`, never assumed constant."""
+
+    def __init__(self, ctx: MethodContext, constants: Optional[Any] = None) -> None:
+        self.ctx = ctx
+        self.constants = constants
+        body = of._f(ctx.node, "body")
+        self.nodes: List[Tuple[Any, Branch]] = []
+        if body is not None:
+            _walk(body, (), self.nodes)
+
+    # definitions -------------------------------------------------------------
+
+    def _defs(self, name: str, before: int) -> _Defs:
+        ctx = self.ctx
+        defs = _Defs()
+        for node, branch in self.nodes:
+            if node.start_byte >= before:
+                break
+            if node.type == "variable_declarator":
+                ident, value = of._f(node, "name"), of._f(node, "value")
+                if ident is not None and ctx.text(ident) == name and value is not None:
+                    defs.plain = [value]
+                    defs.appends = []
+            elif node.type == "assignment_expression":
+                left, right = of._f(node, "left"), of._f(node, "right")
+                if left is None or right is None or left.type != "identifier" or ctx.text(left) != name:
+                    continue
+                op = of._f(node, "operator")
+                if op is not None and op.type == "+=":
+                    defs.appends.append((right, branch))
+                else:
+                    # A plain reassignment at the same level replaces what came
+                    # before; inside a branch it is an alternative.
+                    defs.plain = [right] if not branch else defs.plain + [right]
+                    if not branch:
+                        defs.appends = []
+            elif node.type == "method_invocation":
+                obj, mname = of._f(node, "object"), of._f(node, "name")
+                if obj is not None and obj.type == "identifier" and ctx.text(obj) == name and mname is not None:
+                    method = ctx.text(mname)
+                    if method in ("append", "insert"):
+                        args = _args(node)
+                        if args:
+                            defs.appends.append((args[-1], branch))
+                    continue
+                for arg in _args(node):
+                    if arg.type == "identifier" and ctx.text(arg) == name and mname is not None:
+                        defs.escapes.append(ctx.text(mname))
+        return defs
+
+    def _builder_appends(self, defs: _Defs, depth: int) -> List[Variant]:
+        variants: List[Variant] = [[]]
+        for node, branch in defs.appends:
+            folded = self.fold(node, depth + 1)
+            in_loop = any(arm == "loop" for _id, arm in branch)
+            if in_loop and all(
+                all(isinstance(s, Lit) and _PLACEHOLDER_ONLY_RE.match(s.text) for s in v) for v in folded
+            ):
+                variants = _product(variants, [[PList(self._loop_count(branch))]])
+                continue
+            variants = _product(variants, folded)
+        return variants
+
+    def _loop_count(self, branch: Branch) -> str:
+        loop_ids = [node_id for node_id, arm in branch if arm == "loop"]
+        for node, _b in self.nodes:
+            if loop_ids and node.id == loop_ids[-1]:
+                cond = of._f(node, "condition") or of._f(node, "value")
+                return " ".join(self.ctx.text(cond).split()) if cond is not None else "loop"
+        return "loop"
+
+    # folding ------------------------------------------------------------------
+
+    def fold(self, node: Any, depth: int = 0) -> List[Variant]:
+        ctx = self.ctx
+        if node is None:
+            return [[Unk("missing expression")]]
+        if depth > MAX_FOLD_DEPTH:
+            return [[Unk("expression too deep to fold", node)]]
+        t = node.type
+        if t in ("string_literal", "text_block", "character_literal"):
+            return [[Lit(_literal_text(node, ctx))]]
+        if t in of._JAVA_LITERALS:
+            return [[Lit(ctx.text(node))]]
+        if t == "parenthesized_expression":
+            inner = of._code_children(node, of._JAVA_COMMENT_NODES)
+            return self.fold(inner[0], depth + 1) if inner else [[Unk("empty expression")]]
+        if t == "cast_expression":
+            return self.fold(of._f(node, "value"), depth + 1)
+        if t == "binary_expression":
+            op = of._f(node, "operator")
+            if op is not None and op.type == "+":
+                return _product(self.fold(of._f(node, "left"), depth + 1),
+                                self.fold(of._f(node, "right"), depth + 1))
+            return [[self._dyn(node)]]
+        if t == "ternary_expression":
+            out = self.fold(of._f(node, "consequence"), depth + 1) + self.fold(of._f(node, "alternative"), depth + 1)
+            return out[:MAX_VARIANTS]
+        if t == "identifier":
+            return self._fold_identifier(node, depth)
+        if t == "field_access":
+            return self._fold_field_access(node, depth)
+        if t == "method_invocation":
+            return self._fold_call(node, depth)
+        if t == "object_creation_expression":
+            tname = of._simple_type(of._f(node, "type"), ctx.src)
+            args = _args(node)
+            if tname == "String" or tname in _BUILDER_TYPES:
+                if not args or (tname in _BUILDER_TYPES and of._java_kind(args[0], ctx.scope, ctx.jf) == "numeric"):
+                    return [[]]
+                return self.fold(args[0], depth + 1)
+        return [[self._dyn(node)]]
+
+    def _dyn(self, node: Any) -> Dyn:
+        ctx = self.ctx
+        kind = of._java_kind(node, ctx.scope, ctx.jf)
+        index = _param_index(ctx.text(node), ctx) if node.type == "identifier" else None
+        return Dyn(node=node, kind=kind, param_index=index)
+
+    def _fold_identifier(self, node: Any, depth: int) -> List[Variant]:
+        ctx = self.ctx
+        name = ctx.text(node)
+        if name in ctx.scope.locals:
+            stype, _init, _final = ctx.scope.locals[name]
+            if _param_index(name, ctx) is not None:
+                return [[self._dyn(node)]]
+            defs = self._defs(name, node.start_byte)
+            if defs.escapes and stype in _BUILDER_TYPES:
+                # The builder was handed to a helper that may append anything.
+                return [[Unk(defs.escapes[0], node)]]
+            if not defs.plain and not defs.appends:
+                return [[self._dyn(node)]]
+            base: List[Variant] = [[]]
+            if defs.plain:
+                base = []
+                for value in defs.plain:
+                    base.extend(self.fold(value, depth + 1))
+                base = base[:MAX_VARIANTS]
+            return _product(base, self._builder_appends(defs, depth))
+        if name in ctx.scope.fields:
+            _type, init, _final, static_final = ctx.scope.fields[name]
+            if static_final and init is not None:
+                return self.fold(init, depth + 1)
+            return [[self._dyn(node)]]
+        # Not declared here: a constant inherited or statically imported.
+        if self.constants is not None:
+            text = self.constants(None, name)
+            if text is not None:
+                return [[Lit(text)]]
+        return [[Unk(name, node)]]
+
+    def _fold_field_access(self, node: Any, depth: int) -> List[Variant]:
+        ctx = self.ctx
+        obj, fld = of._f(node, "object"), of._f(node, "field")
+        if obj is None or fld is None:
+            return [[self._dyn(node)]]
+        oname, fname = ctx.text(obj), ctx.text(fld)
+        if oname in ("this", ctx.scope.class_simple) and fname in ctx.scope.fields:
+            _type, init, _final, static_final = ctx.scope.fields[fname]
+            if static_final and init is not None:
+                return self.fold(init, depth + 1)
+            return [[self._dyn(node)]]
+        if obj.type == "identifier" and oname[:1].isupper():
+            if self.constants is not None:
+                text = self.constants(oname, fname)
+                if text is not None:
+                    return [[Lit(text)]]
+            if (ctx.jf.resolve(oname) or "").startswith(_EXTERNAL_PREFIXES):
+                return [[self._dyn(node)]]
+            return [[Unk(f"{oname}.{fname}", node)]]
+        return [[self._dyn(node)]]
+
+    def _fold_call(self, node: Any, depth: int) -> List[Variant]:
+        ctx = self.ctx
+        name_node, obj = of._f(node, "name"), of._f(node, "object")
+        method = ctx.text(name_node) if name_node is not None else ""
+        args = _args(node)
+        oname = ctx.text(obj) if obj is not None else ""
+        if oname in ("String", "MessageFormat") and method == "format" and args:
+            return self._fold_format(args[0], args[1:], depth, message_format=oname == "MessageFormat")
+        if oname == "String" and method == "join" and len(args) >= 2:
+            return self._fold_join(args, depth)
+        if oname == "String" and method == "valueOf" and len(args) == 1:
+            return self.fold(args[0], depth + 1)
+        if obj is not None and method == "repeat" and len(args) == 1:
+            folded = self.fold(obj, depth + 1)
+            if all(all(isinstance(s, Lit) and _PLACEHOLDER_ONLY_RE.match(s.text) for s in v) for v in folded):
+                return [[PList(ctx.text(args[0]))]]
+            return [[self._dyn(node)]]
+        if obj is not None and method == "concat" and len(args) == 1:
+            return _product(self.fold(obj, depth + 1), self.fold(args[0], depth + 1))
+        if obj is not None and method in _TEXT_PRESERVING_CALLS and not args:
+            return self.fold(obj, depth + 1)
+        if obj is not None and method in ("substring", "replaceAll", "replace", "replaceFirst"):
+            # Trimming or rewriting folded text keeps its segments; the
+            # rewrite's own arguments are constants or dynamic parts.
+            out = self.fold(obj, depth + 1)
+            for arg in args:
+                if not of._folded_constant(arg, ctx.scope, ctx.jf) and of._java_kind(arg, ctx.scope, ctx.jf) != "numeric":
+                    out = _product(out, [[self._dyn(arg)]])
+            return out
+        kind = of._java_kind(node, ctx.scope, ctx.jf)
+        if kind == "numeric":
+            return [[self._dyn(node)]]
+        resolver = self._project_helper(obj, method)
+        if resolver is not None:
+            return [[Unk(resolver, node)]]
+        return [[self._dyn(node)]]
+
+    def _project_helper(self, obj: Any, method: str) -> Optional[str]:
+        """The `Type.method` a call's text would be resolved from, when the
+        callee is plausibly a project query-building helper: a call on this
+        class, a static call on a project type. A call on an object variable
+        (a DTO getter, a request accessor) is a dynamic value, not a helper —
+        so `prepareStatement("..." + msg.getPortID())` stays dynamic text."""
+        ctx = self.ctx
+        if obj is None or obj.type in ("this", "super"):
+            owner = ctx.scope.class_simple or "this"
+            return f"{owner}.{method}"
+        if obj.type == "identifier":
+            oname = ctx.text(obj)
+            if oname in ctx.scope.locals or oname in ctx.scope.fields:
+                return None
+            if oname[:1].isupper() and not (ctx.jf.resolve(oname) or "").startswith(_EXTERNAL_PREFIXES):
+                return f"{oname}.{method}"
+        return None
+
+    def _fold_format(self, fmt: Any, args: List[Any], depth: int, *, message_format: bool) -> List[Variant]:
+        folded = self.fold(fmt, depth + 1)
+        if len(folded) != 1 or not all(isinstance(s, Lit) for s in folded[0]):
+            return [[Unk("format string is not a constant", fmt)]]
+        text = "".join(s.text for s in folded[0])
+        spec = r"\{(\d+)[^}]*\}" if message_format else r"%(?:(\d+)\$)?[-#+ 0,(]*\d*(?:\.\d+)?[a-zA-Z%]"
+        out: List[Variant] = [[]]
+        cursor, auto = 0, 0
+        for m in re.finditer(spec, text):
+            out = _product(out, [[Lit(text[cursor:m.start()])]])
+            cursor = m.end()
+            if not message_format and m.group(0) in ("%%", "%n"):
+                out = _product(out, [[Lit("%" if m.group(0) == "%%" else "\n")]])
+                continue
+            if m.group(1):
+                index = int(m.group(1)) - (0 if message_format else 1)
+            else:
+                index, auto = auto, auto + 1
+            out = _product(out, self.fold(args[index], depth + 1) if 0 <= index < len(args)
+                           else [[Unk("format argument missing", fmt)]])
+        return _product(out, [[Lit(text[cursor:])]])
+
+    def _fold_join(self, args: List[Any], depth: int) -> List[Variant]:
+        ctx = self.ctx
+        sep = self.fold(args[0], depth + 1)
+        items = args[1:]
+        if len(items) == 1 and items[0].type == "method_invocation":
+            inner = items[0]
+            iname = of._f(inner, "name")
+            inner_args = _args(inner)
+            if iname is not None and ctx.text(iname) == "nCopies" and len(inner_args) == 2:
+                copy = self.fold(inner_args[1], depth + 1)
+                if all(all(isinstance(s, Lit) and _PLACEHOLDER_ONLY_RE.match(s.text) for s in v) for v in copy):
+                    return [[PList(ctx.text(inner_args[0]))]]
+        out: List[Variant] = [[]]
+        for position, item in enumerate(items):
+            if position:
+                out = _product(out, sep)
+            out = _product(out, self.fold(item, depth + 1))
+        return out
+
+
+def _quote_open(text: str) -> bool:
+    return text.replace("''", "").count("'") % 2 == 1
+
+
+def _position(before: str) -> str:
+    """Where a dynamic part sits, from the literal SQL before it: inside a
+    quoted literal or after an operator is a *value*; after a keyword that
+    introduces a table, column, condition or list (FROM, ORDER BY, WHERE,
+    IN (, a select-list comma), or with nothing before it, an *identifier*
+    position that can carry SQL grammar."""
+    if _quote_open(before):
+        return "value"
+    tail = before.rstrip()
+    if not tail:
+        return "identifier"
+    if _IDENTIFIER_TAIL_RE.search(tail):
+        return "identifier"
+    if _VALUE_TAIL_RE.search(tail):
+        return "value"
+    if tail.endswith(("(", ",")):
+        upper = tail.upper()
+        values_at = upper.rfind("VALUES")
+        if values_at >= 0 and upper.count("(", values_at) > upper.count(")", values_at):
+            return "value"
+        return "identifier"
+    return "identifier"
+
+
+def _count_placeholders(text: str) -> int:
+    # Strip quoted SQL literals before counting: a `?` inside '...' is data.
+    stripped, quoted = [], False
+    for ch in text:
+        if ch == "'":
+            quoted = not quoted
+        elif not quoted:
+            stripped.append(ch)
+    return len(_PLACEHOLDER_RE.findall("".join(stripped)))
+
+
+def classify_query(query_expr: Any, method_ctx: MethodContext, *, constants: Optional[Any] = None,
+                   folder: Optional[QueryFolder] = None) -> QueryClass:
+    """Classify the text a statement executes (see QUERY_CLASSES). A numeric
+    value is still a `dynamic_value` here; its kind travels in `dynamic_parts`
+    and the SQL validator decides what it means."""
+    folder = folder or QueryFolder(method_ctx, constants)
+    variants = folder.fold(query_expr)
+    parts: List[DynamicPart] = []
+    unknown: List[str] = []
+    templates: List[str] = []
+    placeholders = 0
+    plist: Optional[str] = None
+    seen_parts = set()
+    for variant in variants:
+        text, template = "", ""
+        for seg in variant:
+            if isinstance(seg, Lit):
+                text += seg.text
+                template += seg.text
+            elif isinstance(seg, PList):
+                plist = plist or seg.count
+                text += "?"
+                template += "?…"
+            elif isinstance(seg, Unk):
+                if seg.resolver not in unknown:
+                    unknown.append(seg.resolver)
+                template += "{?}"
+            else:
+                key = (seg.node.start_byte, seg.node.end_byte)
+                template += f"{{{len(parts)}}}"
+                if key not in seen_parts:
+                    seen_parts.add(key)
+                    parts.append(DynamicPart(
+                        text=" ".join(method_ctx.text(seg.node).split())[:200], kind=seg.kind,
+                        position=_position(text), line=seg.node.start_point[0] + 1,
+                        param_index=seg.param_index, origin=seg.origin,
+                    ))
+                text += "\x00"
+        placeholders = max(placeholders, _count_placeholders(text.replace("\x00", "")))
+        templates.append(template)
+    if parts:
+        kind = "dynamic_identifier" if any(p.position == "identifier" for p in parts) else "dynamic_value"
+    elif unknown:
+        kind = "unknown"
+    elif placeholders or plist:
+        kind = "fixed_placeholders"
+    else:
+        kind = "fixed"
+    return QueryClass(kind=kind, dynamic_parts=parts, unknown=unknown, placeholders=placeholders,
+                      placeholder_list=plist, variants=templates)

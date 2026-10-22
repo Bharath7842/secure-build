@@ -143,3 +143,75 @@ def test_exclusive_arms_of_one_if():
     assert sq.exclusive(a, b)
     assert not sq.exclusive(a, a + ((2, "loop"),))
     assert not sq.exclusive((), a)
+
+
+# --- SAST-02-020: query classification -------------------------------------------
+
+def _classify(marker: str, constants=None):
+    text = _text("Queries.java")
+    ctx, facts = sq.statements_at(text, _line_of(text, f"// Q:{marker}"))
+    (fact,) = facts
+    return sq.classify_query(fact.query_expr, ctx, constants=constants)
+
+
+@pytest.mark.parametrize("marker, kind", [
+    ("literal", "fixed_placeholders"),
+    ("constant-base", "fixed_placeholders"),
+    ("concat-value", "dynamic_value"),
+    ("order-by", "dynamic_identifier"),
+    ("placeholder-loop", "fixed_placeholders"),
+    ("raw-csv", "dynamic_identifier"),
+    ("helper", "unknown"),
+    ("to-char", "fixed_placeholders"),
+    ("format", "fixed_placeholders"),
+    ("ncopies", "fixed_placeholders"),
+    ("local-single", "fixed_placeholders"),
+    ("appends-branch", "dynamic_value"),
+    ("numeric", "dynamic_value"),
+    ("other-constant", "unknown"),
+    ("ternary", "fixed"),
+    ("builder-helper", "unknown"),
+])
+def test_query_class(marker, kind):
+    assert _classify(marker).kind == kind
+
+
+def test_dynamic_value_names_the_part_and_its_parameter():
+    qc = _classify("concat-value")
+    (part,) = qc.dynamic_parts
+    assert part.text == "id" and part.kind == "string_var" and part.param_index == 1
+    assert part.position == "value"
+
+
+def test_numeric_part_keeps_its_kind():
+    (part,) = _classify("numeric").dynamic_parts
+    assert part.kind == "numeric"
+
+
+def test_unknown_names_what_would_resolve_it():
+    assert _classify("helper").resolver == "QueryHelper.getDefaultWhere"
+    assert _classify("other-constant").resolver == "Tables.ORDERS_SELECT"
+    assert _classify("builder-helper").resolver == "appendRegion"
+
+
+def test_another_class_constant_folds_when_the_repo_resolves_it():
+    def constants(owner, name):
+        return "SELECT * FROM orders" if (owner, name) == ("Tables", "ORDERS_SELECT") else None
+
+    qc = _classify("other-constant", constants=constants)
+    assert qc.kind == "fixed_placeholders" and qc.placeholders == 1
+
+
+def test_placeholder_list_carries_its_count_expression():
+    assert _classify("placeholder-loop").placeholder_list == "i < ids.size()"
+    assert _classify("ncopies").placeholder_list == "ids.size()"
+
+
+def test_placeholders_inside_sql_literals_are_not_counted():
+    assert _classify("to-char").placeholders == 2
+    assert _classify("literal").placeholders == 1
+
+
+def test_commented_reassignment_is_not_a_definition():
+    qc = _classify("local-single")
+    assert qc.dynamic_parts == [] and qc.placeholders == 1
