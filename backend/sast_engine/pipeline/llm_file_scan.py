@@ -1264,17 +1264,16 @@ def _dedupe_key(finding: Dict[str, Any]) -> tuple:
     return (int(cwe.group()) if cwe else topic, bool(cwe))
 
 
-# Between duplicates of one issue a confirmation beats an undecided answer, and
-# an undecided answer beats a dismissal (so an ambiguous verdict is never
-# silently replaced by a duplicate that said false_positive).
-_VERDICT_PREFERENCE = {"true_positive": 0, VERDICT_UNVERIFIED: 1, "false_positive": 2}
+# Between two reviews of one issue that disagree, the verdicts rank for the
+# pairs that involve an undecided answer: a confirmation beats an undecided
+# answer, and an undecided answer beats a dismissal (so an ambiguous verdict is
+# never silently replaced by a duplicate that said false_positive).
+_UNDECIDED_PREFERENCE = {"true_positive": 0, VERDICT_UNVERIFIED: 1, "false_positive": 2}
 
 
 def _is_better(new: Dict[str, Any], current: Dict[str, Any]) -> bool:
-    cur_pref = _VERDICT_PREFERENCE.get(current["verdict"], 2)
-    new_pref = _VERDICT_PREFERENCE.get(new["verdict"], 2)
-    if new_pref != cur_pref:
-        return new_pref < cur_pref
+    """Tie-break between two findings with the SAME verdict: severity, then
+    confidence. It never prefers one verdict over another as such."""
     cur_rank = _SEVERITY_RANK.get(current["severity"], 9)
     new_rank = _SEVERITY_RANK.get(new["severity"], 9)
     return new_rank < cur_rank or (
@@ -1282,21 +1281,121 @@ def _is_better(new: Dict[str, Any], current: Dict[str, Any]) -> bool:
     )
 
 
-def merge_dedupe(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Dedupe on (cwe-or-topic) within the same line, or within
-    `DEDUPE_LINE_WINDOW` lines when both carry a CWE. Prefers true_positive over
-    false_positive, then higher severity, then higher confidence."""
+def _call_node(finding: Dict[str, Any]) -> Optional[Tuple[int, int]]:
+    """Start position of the call this finding is about, when facts resolved one."""
+    call = (finding.get("facts") or {}).get("call") if isinstance(finding.get("facts"), dict) else None
+    if call and call.get("start_line") is not None:
+        return int(call["start_line"]), int(call.get("start_col") or 0)
+    return None
+
+
+def _same_node(a: Dict[str, Any], b: Dict[str, Any], has_cwe: bool) -> bool:
+    """Do two findings refer to the same AST node? With resolved calls: the same
+    call start position — two different calls a few lines apart (a count log
+    and a getMessage log) stay two findings. Without facts for both, the
+    behaviour is what it always was: the same line, or within
+    DEDUPE_LINE_WINDOW lines when both carry a CWE."""
+    node_a, node_b = _call_node(a), _call_node(b)
+    if node_a is not None and node_b is not None:
+        return node_a == node_b
+    gap = abs(a["line"] - b["line"])
+    return gap == 0 or (has_cwe and gap <= DEDUPE_LINE_WINDOW)
+
+
+def _has_validator_proof(finding: Dict[str, Any]) -> bool:
+    facts = finding.get("facts")
+    outcomes = facts.get("validators") if isinstance(facts, dict) else None
+    return any(o.get("outcome") in ("negative_proof", "positive_fact") for o in outcomes or [])
+
+
+def _evidence_score(finding: Dict[str, Any]) -> int:
+    """How much a finding actually shows: a named source, sink and data flow,
+    plus the sink's callee on the anchored call."""
+    score = sum(1 for key in ("source", "sink", "data_flow") if (finding.get(key) or "").strip())
+    facts = finding.get("facts")
+    call = (facts or {}).get("call") if isinstance(facts, dict) else None
+    sink = _squash(finding.get("sink"))
+    if call and sink and (call.get("callee") or "") and call["callee"] in sink:
+        score += 1
+    return score
+
+
+def _note_dedupe(survivor: Dict[str, Any], discarded: Dict[str, Any], *, conflict: bool = False) -> None:
+    """The survivor remembers what the merge threw away (a decision-history row)."""
+    survivor.setdefault("decisions", []).append({
+        "stage": "dedupe", "actor": "merge_dedupe",
+        "verdict": survivor.get("verdict"), "confidence": survivor.get("confidence"),
+        "unresolved_reason": survivor.get("unresolved_reason"),
+        "verdict_reason": survivor.get("verdict_reason"),
+        "detail": {
+            "discarded_verdict": discarded.get("verdict"),
+            "discarded_rule_id": discarded.get("rule_id"),
+            "discarded_reason": _squash(discarded.get("verdict_reason"))[:300],
+            "conflict": conflict,
+        },
+    })
+
+
+def _merge_pair(
+    new: Dict[str, Any], current: Dict[str, Any], usage: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Two findings about one AST node, one survivor.
+
+    Same verdict: the higher severity, then confidence. Different verdicts: an
+    undecided answer is never replaced by a dismissal and a confirmation beats
+    an undecided answer; between a confirmation and a dismissal a deterministic
+    validator proof decides, then the finding that shows more evidence, and on
+    equal evidence neither wins — the result is `unverified` with the conflict
+    reason, both rationales kept. Taking the more alarming answer by default is
+    the thing this replaces."""
+    if new["verdict"] == current["verdict"]:
+        winner, loser = (new, current) if _is_better(new, current) else (current, new)
+        _note_dedupe(winner, loser)
+        return winner
+    verdicts = {new["verdict"], current["verdict"]}
+    if VERDICT_UNVERIFIED in verdicts:
+        a_rank = _UNDECIDED_PREFERENCE.get(new["verdict"], 2)
+        b_rank = _UNDECIDED_PREFERENCE.get(current["verdict"], 2)
+        winner, loser = (new, current) if a_rank < b_rank else (current, new)
+        _note_dedupe(winner, loser)
+        return winner
+    proof_new, proof_current = _has_validator_proof(new), _has_validator_proof(current)
+    if proof_new != proof_current:
+        winner, loser = (new, current) if proof_new else (current, new)
+        _note_dedupe(winner, loser)
+        return winner
+    score_new, score_current = _evidence_score(new), _evidence_score(current)
+    if score_new != score_current:
+        winner, loser = (new, current) if score_new > score_current else (current, new)
+        _note_dedupe(winner, loser)
+        return winner
+    bump_counter(usage, "dedupe_conflicts", "total")
+    merged = dict(current)
+    reasons = [
+        f"[{f['verdict']}] {(f.get('verdict_reason') or 'no reason').strip()}" for f in (current, new)
+    ]
+    merged.update(
+        verdict=VERDICT_UNVERIFIED, unresolved_reason="conflict", confidence=None, ai_fix=None,
+        severity=min((current["severity"], new["severity"]), key=lambda s: _SEVERITY_RANK.get(s, 9)),
+        verdict_reason="Two reviews of this call disagree and show equal evidence. " + " | ".join(reasons),
+    )
+    _note_dedupe(merged, new, conflict=True)
+    return merged
+
+
+def merge_dedupe(
+    findings: List[Dict[str, Any]], usage: Optional[Dict[str, Any]] = None
+) -> List[Dict[str, Any]]:
+    """Merge findings that describe the same issue at the same AST node (same
+    cwe-or-topic key, and `_same_node`). See `_merge_pair` for which survives."""
     best: List[Tuple[tuple, Dict[str, Any]]] = []
     for f in sorted(findings, key=lambda x: x["line"]):
         key = _dedupe_key(f)
         for i, (other_key, current) in enumerate(best):
-            if other_key != key:
+            if other_key != key or not _same_node(f, current, key[1]):
                 continue
-            gap = abs(f["line"] - current["line"])
-            if gap == 0 or (key[1] and gap <= DEDUPE_LINE_WINDOW):
-                if _is_better(f, current):
-                    best[i] = (key, f)
-                break
+            best[i] = (key, _merge_pair(f, current, usage))
+            break
         else:
             best.append((key, f))
     return sorted((f for _, f in best), key=lambda f: (f["line"], f["rule_id"]))
@@ -1606,7 +1705,7 @@ def dedupe_and_finalize(
         findings, source_text, file_path=file_path, usage=usage, validators=occurrence_validators,
     )
     return finalize_findings(
-        merge_dedupe(findings), source_text,
+        merge_dedupe(findings, usage=usage), source_text,
         suppress_no_cwe=suppress_no_cwe, suppress_http_findings=suppress_http_findings,
         suppress_low_confidence_false_positives=suppress_low_confidence_false_positives,
         usage=usage,

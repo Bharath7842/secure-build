@@ -155,14 +155,17 @@ def test_normalize_finding_clamps_line_into_chunk_range(llm_file_scan):
     assert norm["line"] == 50
 
 
-def test_merge_dedupe_prefers_true_positive_over_false_positive(llm_file_scan):
+def test_merge_dedupe_does_not_pick_the_more_alarming_verdict_on_equal_evidence(llm_file_scan):
+    """A confirmation and a dismissal of one issue with nothing to tell them apart
+    is a conflict, not a true positive (SAST-01-050)."""
     findings = [
         {"rule_id": "r1", "line": 10, "verdict": "false_positive", "severity": "LOW", "title": "SQL injection"},
         {"rule_id": "r1", "line": 10, "verdict": "true_positive", "severity": "HIGH", "title": "SQL injection"},
     ]
     merged = llm_file_scan.merge_dedupe(findings)
     assert len(merged) == 1
-    assert merged[0]["verdict"] == "true_positive"
+    assert merged[0]["verdict"] == "unverified"
+    assert merged[0]["unresolved_reason"] == "conflict"
 
 
 def test_merge_dedupe_prefers_higher_severity_when_same_verdict(llm_file_scan):

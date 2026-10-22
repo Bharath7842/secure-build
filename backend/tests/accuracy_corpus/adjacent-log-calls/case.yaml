@@ -1,0 +1,48 @@
+id: adjacent-log-calls
+area: log-boundary
+polarity: positive
+seed_findings: [98]
+adjudication: dev_label_only
+# Two different log calls two lines apart: the first logs a number, the second an
+# exception message. They are two sinks, not one issue. Merging them by line
+# proximity used to let the unsafe call's verdict stand for both; each now keeps
+# its own finding and verdict.
+expected:
+  - rule_id: java-log-injection-unsanitized-input
+    cwe: CWE-117
+    file: src/main/java/com/acme/service/ReportService.java
+    sink_line: 10
+    verdict: false_positive
+  - rule_id: java-log-injection-unsanitized-input
+    cwe: CWE-117
+    file: src/main/java/com/acme/service/ReportService.java
+    sink_line: 11
+    verdict: true_positive
+scripted:
+  - step: scan_deep_files
+    when_user_contains: ["ReportService.java"]
+    response:
+      findings:
+        - line: 10
+          verdict: false_positive
+          confidence: 0.9
+          rule_id: java-log-injection-unsanitized-input
+          severity: LOW
+          cwe: CWE-117
+          title: Unsanitized data reaches a log call
+          owasp_category: "A09:2021-Security-Logging-and-Monitoring-Failures"
+          verdict_reason: Only an int is concatenated into the message; it cannot carry a newline.
+        - line: 11
+          verdict: true_positive
+          confidence: 0.8
+          rule_id: java-log-injection-unsanitized-input
+          severity: MEDIUM
+          cwe: CWE-117
+          title: Unsanitized data reaches a log call
+          owasp_category: "A09:2021-Security-Logging-and-Monitoring-Failures"
+          source: ex.getMessage() (exception message)
+          sink: log.warn
+          data_flow: the exception message is logged unsanitized
+          snippet: log.warn("failed {}", ex.getMessage());
+          verdict_reason: Exception messages can contain attacker-controlled newlines and are logged unchanged.
+          ai_fix: Sanitize or encode the message before logging.
