@@ -113,6 +113,10 @@ doesn't follow within N chars" — a consuming match pulls that trailing text
 into `matched_text`, which (absent `group_by_rule`) defeats grouping since the
 trailing content varies per occurrence even when the actual issue doesn't.
 
+### Derived wrapper rules
+
+`runtime-sink-*` rules are not authored here: `derive_rules` builds them per scan from the call graph, one per *wrapper method* (owner + signature), with the id `runtime-sink-<kind>-<name>-<8 hex>` and the extra fields `wrapper_owner`, `wrapper_signature`, `wrapper_arity` and `tainted_params`. Their pattern stays the candidate matcher (`\bname\s*\(`); the `wrapper_call_identity` validator decides, per call, that it resolves to that wrapper. A SQL wrapper whose parameters never reach SQL text derives no rule.
+
 ### Pattern idioms
 
 - **Not a log line.** Rules for concatenation (SQL, commands) start with a

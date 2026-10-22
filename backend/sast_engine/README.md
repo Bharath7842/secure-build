@@ -185,6 +185,10 @@ Every finding is decided as one concrete occurrence before it is grouped; no ver
 * **Publish filters, dedupe, group keys, per-member confirmation, explanation check**: described in the repository `CLAUDE.md` under *Per-occurrence decisions (EPIC-01)*. Entry points: `llm_file_scan.publish_decision`, `merge_dedupe`, `group_key_for_finding`, `confirm_finding_group` / `confirm_finding_group_batch`, `explanation_check.annotate`.
 * Counters land in `usage_summary` (`validators`, `publish_filter`, `dedupe_conflicts`, `explanation_contradictions`, `group_confirm_coverage`, `facts_coverage`).
 
+## SQL semantics
+
+CWE-89 findings are decided from the statement they point at (`pipeline/sql_semantics.py`, `validators/sql_binding.py`): which query a JDBC statement was prepared with, whether it is fixed text, whether every placeholder is bound on every path. Fixed text with every value bound is a negative proof (`sql_fixed_template_bound`); a number concatenated into SQL is `quality` (`sql_numeric_only`); string-built text, including a stored string reused as SQL (`sql_second_order`), is a positive fact. Helpers, facades, generated DAOs and field-held batch statements are judged from per-method summaries resolved by receiver and signature. `runtime-sink-sql-*` wrapper rules are derived only for methods whose parameter reaches SQL text and are keyed by owner and signature (`wrapper_call_identity` checks each call). Unsafe SQL in a provably unreferenced private method is a true positive with `issue_class=inactive`. Details: the repository `CLAUDE.md`, *SQL semantics (EPIC-02)*; counters in `usage_summary.validators` and `usage_summary.sql_summaries`; entry points and parse coverage are logged at the call-graph step.
+
 ## Joern (optional)
 
 When [Joern](https://joern.io) is installed (`joern` / `joern-parse` on
