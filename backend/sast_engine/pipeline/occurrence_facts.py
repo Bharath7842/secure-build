@@ -60,6 +60,13 @@ _PARSE_METHODS = frozenset({
 })
 _NUMBER_BOXES = frozenset({"Integer", "Long", "Short", "Byte", "Float", "Double"})
 _BIGDECIMAL_NUMERIC_CALLS = frozenset({"valueOf", "getBigDecimal"})
+# ResultSet column reads: numeric getters give a number, text getters give a
+# string that was *stored* by someone — untrusted when it is reused in SQL
+# (second-order injection, review §5.2).
+_RESULTSET_NUMERIC_GETTERS = frozenset({
+    "getInt", "getLong", "getShort", "getByte", "getDouble", "getFloat", "getBigDecimal",
+})
+_RESULTSET_TEXT_GETTERS = frozenset({"getString", "getObject", "getNString", "getClob", "getCharacterStream"})
 
 _JAVA_LANG = frozenset({
     "String", "Object", "Integer", "Long", "Short", "Byte", "Float", "Double", "Boolean",
@@ -563,6 +570,8 @@ def _java_kind(node: Any, scope: _Scope, jf: _JavaFile, depth: int = 0) -> str:
             return "numeric"
         if oname == "BigDecimal" and name in _BIGDECIMAL_NUMERIC_CALLS:
             return "numeric"
+        if name in _RESULTSET_NUMERIC_GETTERS and _is_resultset(obj, scope, jf):
+            return "numeric"
         return "call_result"
     if t == "object_creation_expression":
         tname = _simple_type(_f(node, "type"), src)
@@ -576,6 +585,61 @@ def _java_kind(node: Any, scope: _Scope, jf: _JavaFile, depth: int = 0) -> str:
     if t in ("array_creation_expression", "lambda_expression", "method_reference", "this", "array_initializer"):
         return "object"
     return "unknown"
+
+
+def _is_resultset(obj: Optional[Any], scope: _Scope, jf: _JavaFile) -> bool:
+    if obj is None or obj.type != "identifier":
+        return False
+    name = _t(obj, jf.src)
+    entry = scope.locals.get(name) or scope.fields.get(name)
+    return bool(entry) and (entry[0] == "ResultSet" or jf.resolve(entry[0]) == "java.sql.ResultSet")
+
+
+def _is_resultset_text_read(node: Optional[Any], scope: _Scope, jf: _JavaFile) -> bool:
+    if node is None or node.type != "method_invocation":
+        return False
+    name = _f(node, "name")
+    return (
+        name is not None and _t(name, jf.src) in _RESULTSET_TEXT_GETTERS
+        and _is_resultset(_f(node, "object"), scope, jf)
+    )
+
+
+def value_origin(node: Any, scope: _Scope, jf: _JavaFile) -> Optional[str]:
+    """Where a string value came from, when the code shows it: `persisted` for
+    a ResultSet text column (read here, or held in a local or field assigned
+    from one in this method), else None. A value read back from the database
+    stays untrusted: whoever stored it may have been an attacker."""
+    if _is_resultset_text_read(node, scope, jf):
+        return "persisted"
+    if node is None or node.type not in ("identifier", "field_access"):
+        return None
+    if node.type == "field_access":
+        obj, fld = _f(node, "object"), _f(node, "field")
+        if obj is None or fld is None or obj.type != "this":
+            return None
+        name = _t(fld, jf.src)
+    else:
+        name = _t(node, jf.src)
+    entry = scope.locals.get(name) or scope.fields.get(name)
+    if entry is not None and _is_resultset_text_read(entry[1], scope, jf):
+        return "persisted"
+    # `name = rs.getString(..)` assignments in the method body.
+    method = node
+    while method is not None and method.type not in _JAVA_METHOD_NODES:
+        method = method.parent
+    stack = [method] if method is not None else []
+    while stack:
+        n = stack.pop()
+        if n.type == "assignment_expression":
+            left, right = _f(n, "left"), _f(n, "right")
+            target = left
+            if left is not None and left.type == "field_access" and _f(left, "field") is not None:
+                target = _f(left, "field")
+            if target is not None and _t(target, jf.src) == name and _is_resultset_text_read(right, scope, jf):
+                return "persisted"
+        stack.extend(n.children)
+    return None
 
 
 def _call_via(node: Any, scope: _Scope, jf: _JavaFile) -> Optional[str]:

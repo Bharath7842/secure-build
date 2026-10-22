@@ -14,12 +14,19 @@ executions that run it.
   PreparedStatement executed with a *constant* SQL string: an API misuse, not
   injection (#54).
 * **Positive fact `sql_dynamic_text`** / **`sql_api_misuse_dynamic`** — the
-  executed text has a non-constant string, call result or unresolved part.
+  executed text has a non-constant string, call result or unresolved part;
+  **`sql_second_order`** when that string was read back from the database
+  (`ResultSet.getString` and friends), which stays untrusted (#53).
+* **Negative proof `sql_numeric_only`** (`issue_class=quality`) — every
+  dynamic part is a number (a primitive, a boxed or big integer, a `parseX`
+  result that is itself the value used): no SQL grammar can come of it, but
+  the value should still be bound (review §8). Numbers matter for other sinks;
+  this proof is SQL-only.
 * **Evidence gap** — the text is built by a helper or constant this method
   cannot see, or the statement lives in a field; the gap names what is missing.
-* **No opinion** — the anchor is not on any statement, only numeric parts are
-  dynamic, or a placeholder is not bound on some path (missing a bind is a bug,
-  not proof of safety or of injection).
+* **No opinion** — the anchor is not on any statement, an enum or boolean part
+  is dynamic, or a placeholder is not bound on some path (missing a bind is a
+  bug, not proof of safety or of injection).
 
 Never a negative proof for `prepareStatement(dynamicConcatenatedText)`, and
 never a SQL-text sink for `setX(...)` (review §5.2).
@@ -73,10 +80,17 @@ def _binds_text(fact: sq.StatementFact, ctx: sq.MethodContext) -> str:
     return "bound: " + "; ".join(binds) if binds else "no placeholders to bind"
 
 
-def _judge_text(qc: sq.QueryClass, line: int, *, misuse: bool) -> Optional[ValidatorResult]:
-    """Positive fact or evidence gap for one executed text; None when it is
-    fixed (or only numerically dynamic) and the binding check decides."""
-    if any(_is_text(p.kind) for p in qc.dynamic_parts):
+def _judge_text(qc: sq.QueryClass, line: int, ctx: sq.MethodContext, *, misuse: bool) -> Optional[ValidatorResult]:
+    """Positive fact, numeric proof or evidence gap for one executed text;
+    None when it is fixed and the binding check decides."""
+    text_parts = [p for p in qc.dynamic_parts if _is_text(p.kind)]
+    if text_parts:
+        persisted = [p for p in text_parts if p.origin == "persisted"]
+        if persisted and not misuse:
+            return positive_fact("sql_second_order", (
+                f"The SQL text executed at line {line} is built from `{persisted[0].text}`, a string read "
+                "back from the database: stored data is untrusted when it is reused as SQL text."
+            ))
         tag = "sql_api_misuse_dynamic" if misuse else "sql_dynamic_text"
         return positive_fact(tag, (
             f"The SQL text executed at line {line} is built from {_describe_parts(qc, text_only=True)}; "
@@ -86,9 +100,24 @@ def _judge_text(qc: sq.QueryClass, line: int, *, misuse: bool) -> Optional[Valid
         return evidence_gap(
             f"the SQL text at line {line} depends on `{qc.resolver}`, whose value is not resolved"
         )
+    if qc.dynamic_parts and all(p.kind == "numeric" for p in qc.dynamic_parts):
+        names = ", ".join(f"`{p.text[:40]}`" for p in qc.dynamic_parts[:2])
+        note = ""
+        if any(_is_bigdecimal(p, ctx) for p in qc.dynamic_parts):
+            note = " BigDecimal may print in scientific notation (1E+3): still no grammar."
+        # Proofs are cut at 200 characters; the note must survive the cut.
+        return negative_proof("sql_numeric_only", (
+            f"Parameterisation hygiene: numeric value concatenated; bind it. Line {line} adds only "
+            f"numbers ({names}) to the SQL.{note}"
+        ), issue_class="quality")
     if qc.dynamic_parts:
-        return no_opinion()  # numeric (or enum/boolean) parts only
+        return no_opinion()  # enum or boolean parts
     return None
+
+
+def _is_bigdecimal(part: sq.DynamicPart, ctx: sq.MethodContext) -> bool:
+    entry = ctx.scope.locals.get(part.text) or ctx.scope.fields.get(part.text)
+    return "BigDecimal" in part.text or bool(entry and entry[0] == "BigDecimal")
 
 
 def _incomplete_reason(fact: sq.StatementFact, ctx: sq.MethodContext) -> str:
@@ -105,22 +134,29 @@ def _incomplete_reason(fact: sq.StatementFact, ctx: sq.MethodContext) -> str:
 def _judge_statement(fact: sq.StatementFact, ctx: sq.MethodContext, folder: sq.QueryFolder) -> ValidatorResult:
     query_line = fact.alloc_line or (fact.executions[0].line if fact.executions else 0)
     qc = None
+    # A text that is unsafe or unresolved decides at once; a numeric-only
+    # proof waits until every text the statement runs has been checked.
+    numeric: Optional[ValidatorResult] = None
     if fact.query_expr is not None and fact.statement_type != "java.sql.Statement":
         qc = sq.classify_query(fact.query_expr, ctx, folder=folder)
-        verdict = _judge_text(qc, query_line, misuse=False)
-        if verdict is not None:
+        verdict = _judge_text(qc, query_line, ctx, misuse=False)
+        if verdict is not None and verdict.outcome != "negative_proof":
             return verdict
+        numeric = numeric or verdict
     # Every (String) execution runs its own text.
     misuse_constant: Optional[int] = None
     for execution in fact.executions:
         if not execution.has_sql_arg:
             continue
         exec_qc = sq.classify_query(execution.sql_arg, ctx, folder=folder)
-        verdict = _judge_text(exec_qc, execution.line, misuse=fact.api_misuse)
-        if verdict is not None:
+        verdict = _judge_text(exec_qc, execution.line, ctx, misuse=fact.api_misuse)
+        if verdict is not None and verdict.outcome != "negative_proof":
             return verdict
-        if fact.api_misuse:
+        numeric = numeric or verdict
+        if fact.api_misuse and verdict is None:
             misuse_constant = execution.line
+    if numeric is not None:
+        return numeric
     if not fact.complete:
         return evidence_gap(_incomplete_reason(fact, ctx))
     if misuse_constant is not None:

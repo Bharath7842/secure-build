@@ -390,6 +390,58 @@
         }
       ]
     },
+    "sql-numeric-concat": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/StatsDao.java",
+          "issue_class": "quality",
+          "line": 12,
+          "occurrence_id": "3f0e2525f4393af69a557fc0aeda7c860ff2d973ffebe910c797afe50f08eb8c",
+          "rule_id": "java-sql-string-concat",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "sql-parse-result-ignored": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/LookupDao.java",
+          "issue_class": "security",
+          "line": 13,
+          "occurrence_id": "27434d0dcb6c40bb7f6ba6e8718503e3d0f4323661262f6ce552f00f287ee951",
+          "rule_id": "java-sql-string-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "sql-second-order-numeric": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/CleanupByIdDao.java",
+          "issue_class": "quality",
+          "line": 14,
+          "occurrence_id": "1de6db2a4cf1837892035b91bac766787d8e29625b5038304c6aef441c0b3561",
+          "rule_id": "java-sql-string-concat",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "sql-second-order-string": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/CleanupDao.java",
+          "issue_class": "security",
+          "line": 14,
+          "occurrence_id": "e24c96096ebb95c5597c6f68b30baf6985a3080fec7dbd71bada10dfc85e1257",
+          "rule_id": "java-sql-string-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
     "sql-soap-bound": {
       "findings": [
         {

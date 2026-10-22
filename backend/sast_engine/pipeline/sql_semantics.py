@@ -758,7 +758,7 @@ class QueryFolder:
         ctx = self.ctx
         kind = of._java_kind(node, ctx.scope, ctx.jf)
         index = _param_index(ctx.text(node), ctx) if node.type == "identifier" else None
-        return Dyn(node=node, kind=kind, param_index=index)
+        return Dyn(node=node, kind=kind, param_index=index, origin=of.value_origin(node, ctx.scope, ctx.jf))
 
     def _fold_identifier(self, node: Any, depth: int) -> List[Variant]:
         ctx = self.ctx

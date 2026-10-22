@@ -1,0 +1,33 @@
+id: sql-second-order-numeric
+area: sql-binding
+polarity: negative
+seed_findings: []
+adjudication: dev_label_only
+expected:
+- rule_id: java-sql-string-concat
+  cwe: CWE-89
+  file: src/main/java/com/acme/dao/CleanupByIdDao.java
+  sink_line: 14
+  verdict: false_positive
+  issue_class: quality
+  reason_tag: sql_numeric_only
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - CleanupByIdDao.java
+  response:
+    findings:
+    - line: 14
+      verdict: true_positive
+      confidence: 0.85
+      rule_id: java-sql-string-concat
+      severity: HIGH
+      cwe: CWE-89
+      title: SQL injection through a JDBC statement
+      owasp_category: A03:2021-Injection
+      source: stale.getLong("session_id")
+      sink: stmt.executeUpdate(...)
+      data_flow: a stored id is concatenated into the DELETE
+      snippet: stmt.executeUpdate("DELETE FROM sessions WHERE session_id = " + sessionId);
+      verdict_reason: A value read back from the database is concatenated into the DELETE.
+      ai_fix: Bind the value with a PreparedStatement placeholder.

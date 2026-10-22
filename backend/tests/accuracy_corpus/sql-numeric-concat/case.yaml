@@ -1,0 +1,36 @@
+id: sql-numeric-concat
+area: sql-binding
+polarity: negative
+seed_findings:
+- 4
+- 5
+adjudication: dev_label_only
+expected:
+- rule_id: java-sql-string-concat
+  cwe: CWE-89
+  file: src/main/java/com/acme/dao/StatsDao.java
+  sink_line: 12
+  verdict: false_positive
+  issue_class: quality
+  reason_tag: sql_numeric_only
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - StatsDao.java
+  response:
+    findings:
+    - line: 12
+      verdict: true_positive
+      confidence: 0.85
+      rule_id: java-sql-string-concat
+      severity: HIGH
+      cwe: CWE-89
+      title: SQL injection through a JDBC statement
+      owasp_category: A03:2021-Injection
+      source: portId (method parameter)
+      sink: stmt.executeQuery(...)
+      data_flow: portId and month are concatenated into the query
+      snippet: return stmt.executeQuery("SELECT COUNT(*) FROM calls WHERE port_id = " + portId + " AND month = "
+        + month);
+      verdict_reason: The query is built by string concatenation instead of binding.
+      ai_fix: Bind the value with a PreparedStatement placeholder.

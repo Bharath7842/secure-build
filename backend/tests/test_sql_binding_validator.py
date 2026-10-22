@@ -165,3 +165,37 @@ def test_api_misuse_with_constant_text_moves_to_the_quality_class():
 def test_the_validator_runs_for_any_cwe_89_finding_whatever_its_rule():
     finding = _prepare("BoundSetObject.java", "prepareStatement", rule_id="llm-extra")
     assert finding["reason_tag"] == "sql_fixed_template_bound"
+
+
+# --- SAST-02-040: numbers and stored strings --------------------------------------
+
+@pytest.mark.parametrize("marker, outcome, tag", [
+    ("numeric", "negative_proof", "sql_numeric_only"),
+    ("inline-parse", "negative_proof", "sql_numeric_only"),
+    ("parse-ignored", "positive_fact", "sql_dynamic_text"),
+    ("stored-string", "positive_fact", "sql_second_order"),
+    ("stored-inline", "positive_fact", "sql_second_order"),
+    ("stored-field", "positive_fact", "sql_second_order"),
+    ("stored-numeric", "negative_proof", "sql_numeric_only"),
+    ("stored-int-inline", "negative_proof", "sql_numeric_only"),
+    ("bigdecimal", "negative_proof", "sql_numeric_only"),
+])
+def test_numeric_and_stored_values(marker, outcome, tag):
+    result = _decide("NumericAndStored.java", f"// N:{marker}")
+    assert (result.outcome, result.reason_tag) == (outcome, tag), result
+
+
+def test_a_numeric_only_query_is_quality_with_the_hygiene_reason():
+    result = _decide("NumericAndStored.java", "// N:numeric")
+    assert result.issue_class == "quality"
+    assert result.proof.startswith("Parameterisation hygiene: numeric value concatenated; bind it.")
+
+
+def test_the_bigdecimal_proof_notes_scientific_notation():
+    assert "scientific notation" in _decide("NumericAndStored.java", "// N:bigdecimal").proof
+
+
+def test_a_numeric_only_model_true_positive_moves_out_of_the_security_class():
+    finding = _prepare("NumericAndStored.java", "// N:numeric")
+    assert finding["verdict"] == "false_positive" and finding["issue_class"] == "quality"
+    assert finding["reason_tag"] == "sql_numeric_only"
