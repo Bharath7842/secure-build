@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5265,
+  "key": "7c92218ebef1d91fe131cb7a12387855cba6cabf36890e2c323dcabac2c5c332",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 160,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 12, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-jdbc-prepare-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"region (method parameter)\", \"sink\": \"connection.prepareStatement(VendorSql.reportFor(region))\", \"data_flow\": \"\", \"snippet\": \"PreparedStatement ps = connection.prepareStatement(VendorSql.reportFor(region));\", \"verdict_reason\": \"The SQL text is built by VendorSql.reportFor from the caller's region, if it concatenates.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
+}

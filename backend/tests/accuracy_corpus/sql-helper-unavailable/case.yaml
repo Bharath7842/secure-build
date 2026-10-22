@@ -1,0 +1,32 @@
+id: sql-helper-unavailable
+area: sql-binding
+polarity: uncertain
+seed_findings: []
+adjudication: dev_label_only
+expected:
+- rule_id: java-jdbc-prepare-concat
+  cwe: CWE-89
+  file: src/main/java/com/acme/dao/VendorReportDao.java
+  sink_line: 12
+  verdict: unverified
+  unresolved_reason: evidence_missing
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - VendorReportDao.java
+  response:
+    findings:
+    - line: 12
+      verdict: true_positive
+      confidence: 0.85
+      rule_id: java-jdbc-prepare-concat
+      severity: HIGH
+      cwe: CWE-89
+      title: SQL injection through a JDBC statement
+      owasp_category: A03:2021-Injection
+      source: region (method parameter)
+      sink: connection.prepareStatement(VendorSql.reportFor(region))
+      data_flow: ''
+      snippet: PreparedStatement ps = connection.prepareStatement(VendorSql.reportFor(region));
+      verdict_reason: The SQL text is built by VendorSql.reportFor from the caller's region, if it concatenates.
+      ai_fix: Bind the value with a PreparedStatement placeholder.

@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5277,
+  "key": "812d428cd425f0e61f23d7bc1621bafd8385b2107afb9aba5fb1cb4b08b577b2",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 147,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 11, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-jdbc-prepare-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"name (method parameter)\", \"sink\": \"connection.prepareStatement(...)\", \"data_flow\": \"\", \"snippet\": \"PreparedStatement ps = connection.prepareStatement(\\\"SELECT * FROM customers WHERE name = ?\\\");\", \"verdict_reason\": \"The facade's name parameter reaches a SQL statement.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
+}

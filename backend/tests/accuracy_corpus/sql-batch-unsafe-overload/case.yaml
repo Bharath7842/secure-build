@@ -1,0 +1,32 @@
+id: sql-batch-unsafe-overload
+area: sql-binding
+polarity: positive
+seed_findings: []
+adjudication: dev_label_only
+expected:
+- rule_id: java-sql-string-concat
+  cwe: CWE-89
+  file: src/main/java/com/acme/dao/AuditBatchWriter.java
+  sink_line: 22
+  verdict: true_positive
+  issue_class: security
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - AuditBatchWriter.java
+  response:
+    findings:
+    - line: 22
+      verdict: true_positive
+      confidence: 0.85
+      rule_id: java-sql-string-concat
+      severity: HIGH
+      cwe: CWE-89
+      title: SQL injection through a JDBC statement
+      owasp_category: A03:2021-Injection
+      source: table, msg (method parameters)
+      sink: st.executeUpdate(...)
+      data_flow: table and msg are concatenated into the INSERT text
+      snippet: st.executeUpdate("INSERT INTO " + table + " (msg) VALUES ('" + msg + "')");
+      verdict_reason: This overload concatenates table and msg into the SQL text instead of binding them.
+      ai_fix: Bind the value with a PreparedStatement placeholder.

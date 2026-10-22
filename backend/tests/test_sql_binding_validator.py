@@ -98,10 +98,19 @@ def test_a_helper_built_query_is_a_named_evidence_gap():
     assert "QueryHelper.getDefaultWhere" in result.missing
 
 
-def test_a_field_statement_is_a_named_evidence_gap():
-    result = _decide("FieldStatement.java", "insert.setString")
-    assert result.outcome == "evidence_gap"
-    assert "`insert` is a field of FieldStatement" in result.missing
+def test_a_field_statement_is_judged_across_its_class():
+    # #45/#46: allocated in open(), bound and batched in add(), executed in flush().
+    for needle in ("insert.setString", "insert.executeBatch", "insert = c.prepareStatement"):
+        result = _decide("FieldStatement.java", needle)
+        assert (result.outcome, result.reason_tag) == ("negative_proof", "sql_fixed_template_bound"), needle
+    assert "`insert` of FieldStatement" in _decide("FieldStatement.java", "insert.addBatch").proof
+
+
+def test_a_field_statement_never_allocated_in_its_class_is_a_named_gap():
+    finding, text = _finding("FieldStatement.java", "insert.setString")
+    text = text.replace('insert = c.prepareStatement("INSERT INTO log (msg) VALUES (?)");', "")
+    result = sb.sql_binding(finding, None, ValidatorContext(file_text={finding["file_path"]: text}))
+    assert result.outcome == "evidence_gap" and "never allocated" in result.missing
 
 
 def test_the_concatenation_line_of_a_query_variable_finds_its_statement():

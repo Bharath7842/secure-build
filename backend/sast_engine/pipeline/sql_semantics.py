@@ -342,6 +342,32 @@ def _alloc_call(node: Any, ctx: MethodContext) -> Optional[Tuple[str, Any]]:
     return method, (args[0] if args else None)
 
 
+def _is_append_link(node: Any, ctx: MethodContext) -> bool:
+    if node.type != "method_invocation":
+        return False
+    name = of._f(node, "name")
+    return name is not None and ctx.text(name) in ("append", "insert")
+
+
+def _append_chain_root(node: Any, ctx: MethodContext) -> Optional[Any]:
+    """The receiver an `append` chain starts from (`sb` in `sb.append(a).append(b)`)."""
+    if not _is_append_link(node, ctx):
+        return None
+    obj = of._f(node, "object")
+    while obj is not None and _is_append_link(obj, ctx):
+        obj = of._f(obj, "object")
+    return obj
+
+
+def _append_links(node: Any, ctx: MethodContext) -> List[Any]:
+    """The links of an append chain, innermost (first appended) first."""
+    links = []
+    while node is not None and _is_append_link(node, ctx):
+        links.append(node)
+        node = of._f(node, "object")
+    return list(reversed(links))
+
+
 def _is_assigned(invocation: Any) -> bool:
     """Is this allocation the value of a declaration, assignment or resource
     (so the statement has a variable)?"""
@@ -555,6 +581,17 @@ class Dyn:
     kind: str
     param_index: Optional[int] = None
     origin: Optional[str] = None
+    text: str = ""  # the expression's source, kept because summaries carry
+    line: int = 0   # segments out of the method (and file) that made them
+
+
+@dataclass
+class Param:
+    """A summary's placeholder for "the text of argument `index`", filled in
+    with the caller's own folded argument at each call site."""
+
+    index: int
+    kind: str = ""  # how the callee uses the argument (`string_var`: as text)
 
 
 @dataclass
@@ -631,17 +668,21 @@ class _Defs:
 
     plain: List[Any] = field(default_factory=list)
     appends: List[Tuple[Any, Branch]] = field(default_factory=list)
-    escapes: List[str] = field(default_factory=list)  # helpers the builder was handed to
+    # Helpers the builder was handed to: (method name, call node, argument index).
+    escapes: List[Tuple[str, Any, int]] = field(default_factory=list)
 
 
 class QueryFolder:
     """Folds query expressions within one method. `constants` resolves a
     constant of another class (`Other.NAME`) to its literal text, or None;
-    without it such constants are `unknown`, never assumed constant."""
+    without it such constants are `unknown`, never assumed constant. `calls`
+    (method summaries, SAST-02-050) folds what a project helper returns, or
+    appends to a builder it is handed; without it a helper is `unknown`."""
 
-    def __init__(self, ctx: MethodContext, constants: Optional[Any] = None) -> None:
+    def __init__(self, ctx: MethodContext, constants: Optional[Any] = None, calls: Optional[Any] = None) -> None:
         self.ctx = ctx
         self.constants = constants
+        self.calls = calls
         # Lines whose code contributed to a folded query: the declaration and
         # appends of `sql`, not only the statement line it is executed on.
         self.touched: set = set()
@@ -678,17 +719,42 @@ class QueryFolder:
                         defs.appends = []
             elif node.type == "method_invocation":
                 obj, mname = of._f(node, "object"), of._f(node, "name")
-                if obj is not None and obj.type == "identifier" and ctx.text(obj) == name and mname is not None:
-                    method = ctx.text(mname)
-                    if method in ("append", "insert"):
-                        args = _args(node)
-                        if args:
-                            defs.appends.append((args[-1], branch))
+                root = _append_chain_root(node, ctx)
+                if root is not None and root.type == "identifier" and ctx.text(root) == name and mname is not None:
+                    # `sb.append(a).append(b)`: every link is an append to `sb`;
+                    # the walk visits the outer link first, so record in order.
+                    if node.parent is None or not _is_append_link(node.parent, ctx):
+                        for link in _append_links(node, ctx):
+                            args = _args(link)
+                            if args:
+                                defs.appends.append((args[-1], branch))
                     continue
-                for arg in _args(node):
+                if obj is not None and obj.type == "identifier" and ctx.text(obj) == name and mname is not None:
+                    continue
+                for index, arg in enumerate(_args(node)):
                     if arg.type == "identifier" and ctx.text(arg) == name and mname is not None:
-                        defs.escapes.append(ctx.text(mname))
+                        defs.escapes.append((ctx.text(mname), node, index))
         return defs
+
+    def fold_param_appends(self, name: str) -> List[Variant]:
+        """What the method appends to its builder parameter `name`."""
+        defs = self._defs(name, self.ctx.node.end_byte)
+        if defs.escapes:
+            return self._escaped(defs, 0) or [[Unk(defs.escapes[0][0])]]
+        return self._builder_appends(defs, 0)
+
+    def _escaped(self, defs: _Defs, depth: int) -> Optional[List[Variant]]:
+        """What helpers append to a builder they were handed, in call order;
+        None when any of them cannot be resolved."""
+        if self.calls is None:
+            return None
+        out: List[Variant] = [[]]
+        for _name, call, index in defs.escapes:
+            appended = self.calls.escape_variants(call, index, self)
+            if appended is None:
+                return None
+            out = _product(out, appended)
+        return out
 
     def _builder_appends(self, defs: _Defs, depth: int) -> List[Variant]:
         variants: List[Variant] = [[]]
@@ -745,6 +811,12 @@ class QueryFolder:
             return self._fold_field_access(node, depth)
         if t == "method_invocation":
             return self._fold_call(node, depth)
+        if t in ("array_initializer", "array_creation_expression"):
+            init = of._f(node, "value") if t == "array_creation_expression" else node
+            items = of._code_children(init, of._JAVA_COMMENT_NODES) if init is not None else []
+            constant = self._constant_elements(items, depth) if init is not None else None
+            if constant is not None:
+                return constant
         if t == "object_creation_expression":
             tname = of._simple_type(of._f(node, "type"), ctx.src)
             args = _args(node)
@@ -754,11 +826,12 @@ class QueryFolder:
                 return self.fold(args[0], depth + 1)
         return [[self._dyn(node)]]
 
-    def _dyn(self, node: Any) -> Dyn:
+    def _dyn(self, node: Any, kind: Optional[str] = None) -> Dyn:
         ctx = self.ctx
-        kind = of._java_kind(node, ctx.scope, ctx.jf)
+        kind = kind or of._java_kind(node, ctx.scope, ctx.jf)
         index = _param_index(ctx.text(node), ctx) if node.type == "identifier" else None
-        return Dyn(node=node, kind=kind, param_index=index, origin=of.value_origin(node, ctx.scope, ctx.jf))
+        return Dyn(node=node, kind=kind, param_index=index, origin=of.value_origin(node, ctx.scope, ctx.jf),
+                   text=" ".join(ctx.text(node).split())[:200], line=node.start_point[0] + 1)
 
     def _fold_identifier(self, node: Any, depth: int) -> List[Variant]:
         ctx = self.ctx
@@ -768,10 +841,18 @@ class QueryFolder:
             if _param_index(name, ctx) is not None:
                 return [[self._dyn(node)]]
             defs = self._defs(name, node.start_byte)
+            escaped: List[Variant] = [[]]
             if defs.escapes and stype in _BUILDER_TYPES:
-                # The builder was handed to a helper that may append anything.
-                return [[Unk(defs.escapes[0], node)]]
-            if not defs.plain and not defs.appends:
+                # The builder was handed to helpers: what they append is known
+                # only from their summaries.
+                resolved = self._escaped(defs, depth)
+                if resolved is None:
+                    return [[Unk(defs.escapes[0][0], node)]]
+                escaped = resolved
+            if not defs.plain and not defs.appends and escaped == [[]]:
+                iterable = self._loop_iterable(name, node.start_byte)
+                if iterable is not None:
+                    return self._elements(iterable, depth)
                 return [[self._dyn(node)]]
             base: List[Variant] = [[]]
             if defs.plain:
@@ -779,7 +860,9 @@ class QueryFolder:
                 for value in defs.plain:
                     base.extend(self.fold(value, depth + 1))
                 base = base[:MAX_VARIANTS]
-            return _product(base, self._builder_appends(defs, depth))
+            # Appends made here and appends made by helpers are merged in no
+            # particular order; the grammar positions they produce are kept.
+            return _product(_product(base, self._builder_appends(defs, depth)), escaped)
         if name in ctx.scope.fields:
             _type, init, _final, static_final = ctx.scope.fields[name]
             if static_final and init is not None:
@@ -791,6 +874,35 @@ class QueryFolder:
             if text is not None:
                 return [[Lit(text)]]
         return [[Unk(name, node)]]
+
+    def _loop_iterable(self, name: str, before: int) -> Optional[Any]:
+        """The collection `name` iterates in `for (T name : collection)`."""
+        found = None
+        for node, _branch in self.nodes:
+            if node.start_byte >= before:
+                break
+            if node.type == "enhanced_for_statement":
+                ident = of._f(node, "name")
+                if ident is not None and self.ctx.text(ident) == name:
+                    found = of._f(node, "value")
+        return found
+
+    def _elements(self, collection: Any, depth: int) -> List[Variant]:
+        """The text of one element of `collection`: the elements of a constant
+        array or list are constants (a generated DAO's column names); an
+        element of a parameter is that parameter used as text."""
+        folded = self.fold(collection, depth + 1)
+        return [[Dyn(s.node, "string_var", s.param_index, s.origin, s.text, s.line)
+                 if isinstance(s, Dyn) and s.kind == "object" else s for s in v] for v in folded]
+
+    def _constant_elements(self, items: List[Any], depth: int) -> Optional[List[Variant]]:
+        texts = []
+        for item in items:
+            folded = self.fold(item, depth + 1)
+            if len(folded) != 1 or not all(isinstance(seg, Lit) for seg in folded[0]):
+                return None
+            texts.append("".join(seg.text for seg in folded[0]))
+        return [[Lit(",".join(texts))]]
 
     def _fold_field_access(self, node: Any, depth: int) -> List[Variant]:
         ctx = self.ctx
@@ -827,11 +939,19 @@ class QueryFolder:
             return self._fold_join(args, depth)
         if oname == "String" and method == "valueOf" and len(args) == 1:
             return self.fold(args[0], depth + 1)
+        if (oname, method) in (("List", "of"), ("Arrays", "asList"), ("Set", "of")) and args:
+            constant = self._constant_elements(args, depth)
+            if constant is not None:
+                return constant
         if obj is not None and method == "repeat" and len(args) == 1:
             folded = self.fold(obj, depth + 1)
             if all(all(isinstance(s, Lit) and _PLACEHOLDER_ONLY_RE.match(s.text) for s in v) for v in folded):
                 return [[PList(ctx.text(args[0]))]]
             return [[self._dyn(node)]]
+        if obj is not None and method in ("append", "insert") and args and self._is_builder(obj):
+            # `new StringBuilder("...").append(x)`, `return sb.append(x)`: the
+            # builder's text so far (definitions before this call), then x.
+            return _product(self.fold(obj, depth + 1), self.fold(args[-1], depth + 1))
         if obj is not None and method == "concat" and len(args) == 1:
             return _product(self.fold(obj, depth + 1), self.fold(args[0], depth + 1))
         if obj is not None and method in _TEXT_PRESERVING_CALLS and not args:
@@ -847,10 +967,29 @@ class QueryFolder:
         kind = of._java_kind(node, ctx.scope, ctx.jf)
         if kind == "numeric":
             return [[self._dyn(node)]]
+        if self.calls is not None:
+            summarised = self.calls.call_variants(node, self)
+            if summarised is not None:
+                return summarised
         resolver = self._project_helper(obj, method)
         if resolver is not None:
             return [[Unk(resolver, node)]]
         return [[self._dyn(node)]]
+
+    def _is_builder(self, expr: Any) -> bool:
+        """Is `expr` a StringBuilder/StringBuffer (a variable, a `new`, or an
+        append chain on one)?"""
+        ctx = self.ctx
+        while expr is not None and _is_append_link(expr, ctx):
+            expr = of._f(expr, "object")
+        if expr is None:
+            return False
+        if expr.type == "object_creation_expression":
+            return of._simple_type(of._f(expr, "type"), ctx.src) in _BUILDER_TYPES
+        if expr.type == "identifier":
+            entry = ctx.scope.locals.get(ctx.text(expr)) or ctx.scope.fields.get(ctx.text(expr))
+            return bool(entry) and entry[0] in _BUILDER_TYPES
+        return False
 
     def _project_helper(self, obj: Any, method: str) -> Optional[str]:
         """The `Type.method` a call's text would be resolved from, when the
@@ -908,7 +1047,12 @@ class QueryFolder:
         for position, item in enumerate(items):
             if position:
                 out = _product(out, sep)
-            out = _product(out, self.fold(item, depth + 1))
+            folded = self.fold(item, depth + 1)
+            if len(items) == 1:
+                # Joining a collection: its elements' text, not the object.
+                folded = [[Dyn(s.node, "string_var", s.param_index, s.origin, s.text, s.line)
+                           if isinstance(s, Dyn) and s.kind == "object" else s for s in v] for v in folded]
+            out = _product(out, folded)
         return out
 
 
@@ -957,7 +1101,11 @@ def classify_query(query_expr: Any, method_ctx: MethodContext, *, constants: Opt
     value is still a `dynamic_value` here; its kind travels in `dynamic_parts`
     and the SQL validator decides what it means."""
     folder = folder or QueryFolder(method_ctx, constants)
-    variants = folder.fold(query_expr)
+    return classify_variants(folder.fold(query_expr))
+
+
+def classify_variants(variants: List[Variant]) -> QueryClass:
+    """`classify_query` for already-folded variants."""
     parts: List[DynamicPart] = []
     unknown: List[str] = []
     templates: List[str] = []
@@ -978,14 +1126,17 @@ def classify_query(query_expr: Any, method_ctx: MethodContext, *, constants: Opt
                 if seg.resolver not in unknown:
                     unknown.append(seg.resolver)
                 template += "{?}"
+            elif isinstance(seg, Param):
+                # A bare summary template (never seen at a call site).
+                template += f"{{param{seg.index}}}"
+                text += "\x00"
             else:
-                key = (seg.node.start_byte, seg.node.end_byte)
+                key = (seg.text, seg.line, seg.kind)
                 template += f"{{{len(parts)}}}"
                 if key not in seen_parts:
                     seen_parts.add(key)
                     parts.append(DynamicPart(
-                        text=" ".join(method_ctx.text(seg.node).split())[:200], kind=seg.kind,
-                        position=_position(text), line=seg.node.start_point[0] + 1,
+                        text=seg.text, kind=seg.kind, position=_position(text), line=seg.line,
                         param_index=seg.param_index, origin=seg.origin,
                     ))
                 text += "\x00"
@@ -1076,3 +1227,713 @@ def unbound_placeholders(fact: StatementFact, qc: QueryClass, ctx: MethodContext
             if not _covered(execution.branch, binds, by_id):
                 missing.append(f"index {index} before {execution.method} at line {execution.line}")
     return missing
+
+
+# --- judging one statement ----------------------------------------------------------
+#
+# The decision the `sql_binding` validator reports and a method summary
+# aggregates. Kept here, with the facts, so the two can never disagree.
+
+# Dynamic parts that can carry SQL grammar. Numeric parts are judged on their
+# own; enum, boolean and object parts give no judgement.
+TEXT_KINDS = frozenset({"string_var", "call_result", "unknown"})
+POSITIVE_JUDGEMENTS = frozenset({"dynamic_text", "second_order", "misuse_dynamic"})
+NEGATIVE_JUDGEMENTS = frozenset({"fixed_bound", "numeric_only", "misuse_constant", "statement_constant",
+                                 "callee_no_sql"})
+GAP_JUDGEMENTS = frozenset({"unknown", "incomplete"})
+
+
+def is_text_kind(kind: str) -> bool:
+    return any(k in TEXT_KINDS for k in str(kind).split("+"))
+
+
+@dataclass
+class Judgement:
+    """What one statement (or one call into a summarised method) does with
+    SQL text. `tag` is one of the *_JUDGEMENTS sets above, or `unbound` (a
+    placeholder without a bind on some path), `no_text` (only enum/boolean
+    parts), `wrapper_constant` (a wrapper called with constants) or `none`."""
+
+    tag: str
+    line: int = 0
+    qc: Optional[QueryClass] = None
+    parts: List[DynamicPart] = field(default_factory=list)
+    missing: Optional[str] = None
+    detail: str = ""  # proof material: binds, the callee, the field
+    fact: Optional[StatementFact] = None
+    execution: Optional[Execution] = None
+    callee: Optional[str] = None
+
+
+def _judge_text(qc: QueryClass, line: int, *, misuse: bool) -> Optional[Judgement]:
+    text_parts = [p for p in qc.dynamic_parts if is_text_kind(p.kind)]
+    if text_parts:
+        persisted = [p for p in text_parts if p.origin == "persisted"]
+        if persisted and not misuse:
+            return Judgement("second_order", line, qc, persisted)
+        return Judgement("misuse_dynamic" if misuse else "dynamic_text", line, qc, text_parts)
+    if qc.unknown:
+        return Judgement("unknown", line, qc, missing=(
+            f"the SQL text at line {line} depends on `{qc.resolver}`, whose value is not resolved"
+        ))
+    if qc.dynamic_parts and all(p.kind == "numeric" for p in qc.dynamic_parts):
+        return Judgement("numeric_only", line, qc, list(qc.dynamic_parts))
+    if qc.dynamic_parts:
+        return Judgement("no_text", line, qc)
+    return None
+
+
+def binds_text(fact: StatementFact) -> str:
+    if fact.alloc == "jdbc_template":
+        return "bound through the template's arguments"
+    binds = [f"{b.index if b.index is not None else '?'} with {b.setter} (line {b.line})" for b in fact.binds[:3]]
+    return "bound: " + "; ".join(binds) if binds else "no placeholders to bind"
+
+
+def incomplete_reason(fact: StatementFact, ctx: MethodContext) -> str:
+    owner = ctx.scope.class_simple or "the class"
+    if not fact.var:
+        return (f"the statement prepared at line {fact.alloc_line} is returned or passed on; its binds "
+                "and executions are in code that is not summarised")
+    where = {"field": f"a field of {owner}", "param": "a method parameter"}.get(
+        fact.scope, "allocated by another method")
+    return (f"statement `{fact.var}` is {where}: its allocation, binds or executions are in other "
+            "methods, which are not summarised")
+
+
+def judge_statement(fact: StatementFact, ctx: MethodContext, folder: QueryFolder,
+                    *, fields: Optional[Any] = None) -> Judgement:
+    """Judge one statement: the texts it runs, then its binding. `fields`
+    (`SqlSummaries.field_judgement`) completes a statement held in a field."""
+    query_line = fact.alloc_line or (fact.executions[0].line if fact.executions else 0)
+    qc: Optional[QueryClass] = None
+    # A text that is unsafe or unresolved decides at once; a numeric-only
+    # judgement waits until every text the statement runs has been checked.
+    numeric: Optional[Judgement] = None
+    if fact.query_expr is not None and fact.statement_type != "java.sql.Statement":
+        qc = classify_query(fact.query_expr, ctx, folder=folder)
+        verdict = _judge_text(qc, query_line, misuse=False)
+        if verdict is not None and verdict.tag != "numeric_only":
+            if verdict.tag != "no_text":
+                verdict.fact = fact
+                return verdict
+        else:
+            numeric = numeric or verdict
+    misuse_constant: Optional[int] = None
+    for execution in fact.executions:
+        if not execution.has_sql_arg:
+            continue
+        exec_qc = classify_query(execution.sql_arg, ctx, folder=folder)
+        verdict = _judge_text(exec_qc, execution.line, misuse=fact.api_misuse)
+        if verdict is not None and verdict.tag not in ("numeric_only", "no_text"):
+            verdict.fact, verdict.execution = fact, execution
+            return verdict
+        numeric = numeric or (verdict if verdict is not None and verdict.tag == "numeric_only" else None)
+        if fact.api_misuse and verdict is None:
+            misuse_constant = execution.line
+    if numeric is not None:
+        numeric.fact = fact
+        return numeric
+    if not fact.complete:
+        if fact.scope == "field" and fields is not None:
+            joined = fields(ctx, fact)
+            if joined is not None:
+                return joined
+        return Judgement("incomplete", query_line, qc, missing=incomplete_reason(fact, ctx), fact=fact)
+    if misuse_constant is not None:
+        return Judgement("misuse_constant", misuse_constant, qc, fact=fact)
+    if fact.statement_type == "java.sql.Statement":
+        if not any(e.has_sql_arg for e in fact.executions):
+            return Judgement("none", query_line, fact=fact)
+        return Judgement("statement_constant", fact.executions[0].line, fact=fact)
+    if qc is None or not fact.executions:
+        return Judgement("none", query_line, qc, fact=fact)
+    if qc.dynamic_parts:
+        return Judgement("no_text", query_line, qc, fact=fact)
+    if unbound_placeholders(fact, qc, ctx):
+        return Judgement("unbound", query_line, qc, fact=fact)
+    return Judgement("fixed_bound", query_line, qc, fact=fact, execution=fact.executions[0],
+                     detail=binds_text(fact))
+
+
+# --- SAST-02-050: method summaries -----------------------------------------------------
+#
+# A method is summarised once per scan — does it execute SQL, with fixed or
+# dynamic text, which of its parameters reach SQL text versus a bind, and what
+# SQL text it returns or appends to a builder it is handed — and that summary
+# stands in for the method at every call. Calls resolve through the call graph
+# by resolved receiver and signature (`call_graph.resolve_targets`), never by
+# name: a facade is the union of its implementations, overloads stay apart.
+# Summaries are demand-driven (only what a finding or rule derivation asks
+# about), bounded in depth and time; past a bound, or around a recursion
+# cycle, a method is `unknown` and names why.
+
+SUMMARY_MAX_DEPTH = 6
+SUMMARY_TIME_BUDGET_SECONDS = 120.0
+_EXECUTES_RANK = {"dynamic": 0, "unknown": 1, "fixed_bound": 2, "none": 3}
+_RETURNS_RANK = {"dynamic": 0, "unknown": 1, "opaque": 2, "placeholder_list": 3, "fixed": 4, "none": 5}
+_TEXT_RETURN_TYPES = frozenset({"String", "CharSequence", "StringBuilder", "StringBuffer"})
+
+
+@dataclass
+class SqlSummary:
+    method: str  # call_graph.method_identity
+    executes: str = "none"  # none | fixed_bound | dynamic | unknown
+    positions: Tuple[int, ...] = ()  # parameters that reach executed SQL text
+    internal: bool = False  # executed dynamic text that is not from a parameter
+    returns_sql: str = "none"  # none | fixed | placeholder_list | dynamic | opaque | unknown
+    return_positions: Tuple[int, ...] = ()
+    return_variants: List[Variant] = field(default_factory=list)
+    appends: Dict[int, List[Variant]] = field(default_factory=dict)  # builder parameter -> appended text
+    binds_params: Tuple[int, ...] = ()
+    reason: Optional[str] = None  # why `unknown`: cycle, summary_depth_exceeded, unresolved, ...
+    missing: Optional[str] = None
+    detail: str = ""  # one line for proofs
+    truncated: bool = False  # cut by a cycle or a bound: not cached
+
+    @property
+    def decided(self) -> bool:
+        return self.executes != "unknown"
+
+
+def _merge(summaries: List[SqlSummary], label: str) -> SqlSummary:
+    """The union of what several methods may do (a facade's implementations)."""
+    if len(summaries) == 1:
+        return summaries[0]
+    out = SqlSummary(method=label)
+    out.executes = min((s.executes for s in summaries), key=_EXECUTES_RANK.__getitem__)
+    out.positions = tuple(sorted({p for s in summaries for p in s.positions}))
+    out.internal = any(s.internal for s in summaries)
+    out.returns_sql = min((s.returns_sql for s in summaries), key=_RETURNS_RANK.__getitem__)
+    out.return_positions = tuple(sorted({p for s in summaries for p in s.return_positions}))
+    out.return_variants = [v for s in summaries for v in s.return_variants][:MAX_VARIANTS]
+    out.binds_params = tuple(sorted({p for s in summaries for p in s.binds_params}))
+    unknown = [s for s in summaries if s.executes == "unknown"]
+    if unknown:
+        out.reason, out.missing = unknown[0].reason, unknown[0].missing
+    dynamic = [s for s in summaries if s.executes == "dynamic"]
+    out.detail = (dynamic or unknown or summaries)[0].detail
+    out.truncated = any(s.truncated for s in summaries)
+    return out
+
+
+def _to_template(variants: List[Variant]) -> List[Variant]:
+    """A callee's folded text with its parameters left open (`Param`)."""
+    out: List[Variant] = []
+    for variant in variants:
+        out.append([Param(s.param_index, s.kind) if isinstance(s, Dyn) and s.param_index is not None else s
+                    for s in variant])
+    return out
+
+
+def _returns_of(variants: List[Variant]) -> Tuple[str, Tuple[int, ...]]:
+    kinds, positions = set(), set()
+    for variant in variants:
+        for seg in variant:
+            if isinstance(seg, Unk):
+                kinds.add("unknown")
+            elif isinstance(seg, Param):
+                kinds.add("dynamic")
+                positions.add(seg.index)
+            elif isinstance(seg, Dyn) and is_text_kind(seg.kind):
+                kinds.add("opaque")
+            elif isinstance(seg, PList):
+                kinds.add("placeholder_list")
+    for kind in ("unknown", "dynamic", "opaque", "placeholder_list"):
+        if kind in kinds:
+            return kind, tuple(sorted(positions))
+    return "fixed", ()
+
+
+class _Calls:
+    """The `QueryFolder.calls` hook for one method: folds a project helper's
+    returned or appended text from its summary, at a given summary depth."""
+
+    def __init__(self, summaries: "SqlSummaries", method: Any, depth: int) -> None:
+        self.summaries, self.method, self.depth = summaries, method, depth
+
+    def _targets(self, node: Any, folder: QueryFolder) -> Optional[SqlSummary]:
+        return self.summaries.call_summary(self.method, folder.ctx, node, self.depth)
+
+    def _substitute(self, template: List[Variant], node: Any, folder: QueryFolder) -> List[Variant]:
+        args = _args(node)
+        out: List[Variant] = [[]]
+        for variant in template:
+            built: List[Variant] = [[]]
+            for seg in variant:
+                if isinstance(seg, Param):
+                    arg = args[seg.index] if seg.index < len(args) else None
+                    folded = folder.fold(arg) if arg is not None else [[Unk("missing argument")]]
+                    if is_text_kind(seg.kind):
+                        # The callee uses this argument as text (joins a list's
+                        # elements, say): an object passed here is text there.
+                        folded = [[Dyn(d.node, "string_var", d.param_index, d.origin, d.text, d.line)
+                                   if isinstance(d, Dyn) and d.kind == "object" else d for d in v] for v in folded]
+                    built = _product(built, folded)
+                else:
+                    built = _product(built, [[seg]])
+            out = built if out == [[]] else (out + built)[:MAX_VARIANTS]
+        return out
+
+    def call_variants(self, node: Any, folder: QueryFolder) -> Optional[List[Variant]]:
+        summary = self._targets(node, folder)
+        if summary is None or summary.returns_sql == "none":
+            return None
+        if summary.returns_sql == "unknown":
+            return [[Unk(summary.missing or summary.method, node)]]
+        if summary.returns_sql == "opaque":
+            return [[folder._dyn(node, "call_result")]]
+        return self._substitute(summary.return_variants, node, folder)
+
+    def escape_variants(self, node: Any, index: int, folder: QueryFolder) -> Optional[List[Variant]]:
+        summary = self._targets(node, folder)
+        if summary is None or index not in summary.appends:
+            return None
+        return self._substitute(summary.appends[index], node, folder)
+
+
+class SqlSummaries:
+    """Per-scan SQL summaries over a call graph (`call_graph.CallGraph`).
+    `read_text(path)` returns a repo file's text. Thread-safe: scan stages
+    share one instance."""
+
+    def __init__(self, graph: Any, read_text: Any, *, usage: Optional[Dict[str, Any]] = None,
+                 max_depth: int = SUMMARY_MAX_DEPTH, time_budget: float = SUMMARY_TIME_BUDGET_SECONDS) -> None:
+        import threading
+        import time
+
+        from pipeline import call_graph as cg
+
+        self.cg = cg
+        self.graph = graph
+        self.read_text = read_text
+        self.usage = usage
+        self.max_depth = max_depth
+        # Time spent summarising (not wall time since the scan started: the
+        # summaries are consulted throughout a long scan).
+        self.time_budget = time_budget
+        self.spent = 0.0
+        self._clock = time.monotonic
+        self._lock = threading.RLock()
+        self._memo: Dict[str, SqlSummary] = {}
+        self._stack: List[str] = []
+        self._contexts: Dict[str, Dict[int, MethodContext]] = {}
+        self.stats: Dict[str, int] = {}
+
+    @classmethod
+    def for_file(cls, path: str, text: str, *, usage: Optional[Dict[str, Any]] = None) -> "SqlSummaries":
+        """Summaries over a one-file graph: same-file helpers resolve, anything
+        else is a named gap. Used when the scan built no call graph."""
+        from pipeline import call_graph as cg
+
+        graph = cg.CallGraph()
+        graph._file_imports = {}  # type: ignore[attr-defined]
+        calls = cg._parse_java_file(path, text, graph)
+        graph.files_parsed = 1
+        cg._wire_calls(graph, calls)
+        return cls(graph, {path: text}.get, usage=usage)
+
+    # bookkeeping --------------------------------------------------------------
+
+    def _count(self, key: str, n: int = 1) -> None:
+        self.stats[key] = self.stats.get(key, 0) + n
+        if self.usage is not None:
+            from llm_client import bump_counter
+
+            bump_counter(self.usage, "sql_summaries", key, n)
+
+    def method_for(self, path: str, line: int) -> Any:
+        return self.cg.method_at_line(self.graph, path, line)
+
+    def context(self, method: Any) -> Optional[MethodContext]:
+        by_line = self._contexts.get(method.file)
+        if by_line is None:
+            text = self.read_text(method.file)
+            by_line = {c.start_line: c for c in methods_in_file(text)} if text else {}
+            self._contexts[method.file] = by_line
+        return by_line.get(method.start_line)
+
+    def folder(self, method: Any, ctx: MethodContext, depth: int = 0) -> QueryFolder:
+        return QueryFolder(ctx, constants=self.constant_text, calls=_Calls(self, method, depth))
+
+    # constants ----------------------------------------------------------------
+
+    def constant_text(self, owner: Optional[str], name: str) -> Optional[str]:
+        """The literal text of `Owner.NAME`, a `static final` (or interface)
+        String constant of a type parsed in this repo; None otherwise — a
+        constant from a jar is never assumed."""
+        if owner is None:
+            return None
+        matches = self.graph.types_by_simple.get(owner) or []
+        if len(matches) != 1:
+            return None
+        jtype = self.graph.types[matches[0]]
+        text = self.read_text(jtype.file)
+        parsed = of._parse("java", text) if text else None
+        if parsed is None:
+            return None
+        root, src, _memo = parsed
+        return _constant_in(root, src, owner, name, self, 0)
+
+    # resolution ----------------------------------------------------------------
+
+    def _arg_types(self, method: Any, invocation: Any, ctx: MethodContext) -> List[str]:
+        types = []
+        for arg in _args(invocation):
+            if arg.type in ("string_literal", "text_block"):
+                types.append("String")
+            elif arg.type == "null_literal":
+                types.append("null")
+            elif arg.type == "decimal_integer_literal":
+                types.append("int")
+            elif arg.type == "identifier":
+                types.append(method.locals.get(ctx.text(arg), ""))
+            else:
+                types.append("")
+        return types
+
+    def targets(self, method: Any, ctx: MethodContext, invocation: Any) -> Tuple[List[str], Optional[str]]:
+        call = self.cg.call_site_for(method, invocation, ctx.src)
+        return self.cg.resolve_targets(self.graph, method, call, arg_types=self._arg_types(method, invocation, ctx))
+
+    def call_summary(self, method: Any, ctx: MethodContext, invocation: Any, depth: int) -> Optional[SqlSummary]:
+        """The merged summary of every method `invocation` may run; None for a
+        JDK/framework call; `unknown` (naming the callee) when it cannot be
+        resolved inside the repo."""
+        obj = of._f(invocation, "object")
+        if obj is not None:
+            _text, fqn, _simple = of._java_receiver(obj, ctx.scope, ctx.jf)
+            if fqn and fqn.startswith(_EXTERNAL_PREFIXES):
+                return None  # a JDK or framework call: not project code
+        keys, reason = self.targets(method, ctx, invocation)
+        name_node = of._f(invocation, "name")
+        callee = ctx.text(name_node) if name_node is not None else "call"
+        if reason is not None:
+            obj = of._f(invocation, "object")
+            label = f"{ctx.text(obj)}.{callee}" if obj is not None else callee
+            return SqlSummary(method=label, executes="unknown", returns_sql="unknown", reason="unresolved",
+                              missing=f"callee `{label}(...)` body not resolved ({reason})")
+        if not keys:
+            return None
+        summaries = [self._summarise(k, depth + 1) for k in keys]
+        return _merge(summaries, f"{callee} ({len(keys)} implementations)" if len(keys) > 1 else summaries[0].method)
+
+    # summaries -----------------------------------------------------------------
+
+    def summarise(self, method_key: str) -> SqlSummary:
+        """The summary of one graph method (by its graph key)."""
+        return self._summarise(method_key, 0)
+
+    def _summarise(self, key: str, depth: int) -> SqlSummary:
+        with self._lock:
+            method = self.graph.methods.get(key)
+            if method is None:
+                return SqlSummary(method=key, executes="unknown", returns_sql="unknown", reason="unresolved",
+                                  missing=f"method `{key}` not in the call graph")
+            ident = self.cg.method_identity(method)
+            if ident in self._memo:
+                self._count("cache_hits")
+                return self._memo[ident]
+            if ident in self._stack:
+                return SqlSummary(method=ident, executes="unknown", returns_sql="unknown", reason="cycle",
+                                  missing=f"`{ident}` is part of a recursion cycle", truncated=True)
+            if depth > self.max_depth or self.spent > self.time_budget:
+                reason = "summary_depth_exceeded" if depth > self.max_depth else "summary_time_exceeded"
+                self._count(reason)
+                return SqlSummary(method=ident, executes="unknown", returns_sql="unknown", reason=reason,
+                                  missing=f"`{ident}` is past the summary bound ({reason})", truncated=True)
+            ctx = self.context(method)
+            if ctx is None:
+                summary = SqlSummary(method=ident, executes="unknown", returns_sql="unknown", reason="unparsed",
+                                     missing=f"`{ident}` could not be parsed")
+            else:
+                top = not self._stack
+                started = self._clock()
+                self._stack.append(ident)
+                try:
+                    summary = self._compute(method, ctx, ident, depth)
+                finally:
+                    self._stack.pop()
+                    if top:
+                        elapsed = self._clock() - started
+                        self.spent += elapsed
+                        self._count("milliseconds", int(elapsed * 1000))
+            self._count("methods")
+            if summary.executes == "unknown":
+                self._count(f"unknown.{summary.reason or 'unresolved'}")
+            if not summary.truncated:
+                self._memo[ident] = summary
+            return summary
+
+    def _compute(self, method: Any, ctx: MethodContext, ident: str, depth: int) -> SqlSummary:
+        out = SqlSummary(method=ident)
+        folder = self.folder(method, ctx, depth)
+        judgements = [judge_statement(f, ctx, folder, fields=self.field_judgement)
+                      for f in statements_in_method(ctx.node, ctx.src, ctx)]
+        executes: List[str] = []
+        positions: set = set()
+        binds = set()
+        cut = False
+        for j in judgements:
+            if j.tag in POSITIVE_JUDGEMENTS:
+                executes.append("dynamic")
+                own = {p.param_index for p in j.parts if p.param_index is not None}
+                positions |= own
+                out.internal = out.internal or len(own) < len(j.parts)
+                out.detail = out.detail or f"line {j.line} builds SQL text from `{j.parts[0].text}`"
+            elif j.tag in GAP_JUDGEMENTS:
+                executes.append("unknown")
+                out.reason, out.missing = out.reason or "unresolved", out.missing or j.missing
+            elif j.tag != "none":
+                executes.append("fixed_bound")
+                out.detail = out.detail or f"line {j.line} runs fixed SQL text"
+            if j.fact is not None:
+                for b in j.fact.binds:
+                    if b.value is not None and b.value.type == "identifier":
+                        index = _param_index(ctx.text(b.value), ctx)
+                        if index is not None:
+                            binds.add(index)
+        # Calls into other project methods execute their summaries.
+        jdbc_lines = {line for j in judgements if j.fact is not None for line in fact_lines(j.fact)}
+        for node, _branch in folder.nodes:
+            if node.type != "method_invocation" or node.start_point[0] + 1 in jdbc_lines:
+                continue
+            callee = self.call_summary(method, ctx, node, depth)
+            if callee is None:
+                continue
+            cut = cut or callee.truncated
+            if callee.executes == "dynamic":
+                reach = self._reaching(callee, node, folder)
+                if reach is None:
+                    continue  # the call passes constants into the parameters that reach SQL
+                executes.append("dynamic")
+                positions |= reach[0]
+                out.internal = out.internal or reach[1] or callee.internal
+                out.detail = out.detail or f"calls `{callee.method}`, whose SQL text {callee.detail or 'is dynamic'}"
+            elif callee.executes == "unknown" and callee.reason not in ("cycle",):
+                if callee.reason == "unresolved" and not self._passes_text(node, folder):
+                    continue  # an unresolved call that is handed no text cannot build our SQL
+                executes.append("unknown")
+                out.reason, out.missing = out.reason or callee.reason, out.missing or callee.missing
+            elif callee.executes == "fixed_bound":
+                executes.append("fixed_bound")
+        if executes:
+            out.executes = min(executes, key=_EXECUTES_RANK.__getitem__)
+        elif cut:
+            out.executes, out.reason = "unknown", "cycle"
+            out.missing = f"`{ident}` is part of a recursion cycle"
+        out.positions = tuple(sorted(positions))
+        out.binds_params = tuple(sorted(binds))
+        out.truncated = cut and out.executes == "unknown"
+        self._returns(out, ctx, folder)
+        return out
+
+    def _reaching(self, callee: SqlSummary, node: Any, folder: QueryFolder) -> Optional[Tuple[set, bool]]:
+        """(our parameters, any non-parameter text) that reach the callee's SQL
+        text through the arguments at its tainted positions; None when every
+        such argument is a constant here."""
+        args = _args(node)
+        positions, internal, any_text = set(), False, False
+        for index in callee.positions or ():
+            if index >= len(args):
+                continue
+            qc = classify_variants(folder.fold(args[index]))
+            text_parts = [p for p in qc.dynamic_parts if is_text_kind(p.kind)]
+            if text_parts or qc.unknown:
+                any_text = True
+            for p in text_parts:
+                if p.param_index is not None:
+                    positions.add(p.param_index)
+                else:
+                    internal = True
+        if callee.internal:
+            return positions, True
+        return (positions, internal) if any_text else None
+
+    def _passes_text(self, node: Any, folder: QueryFolder) -> bool:
+        for arg in _args(node):
+            qc = classify_variants(folder.fold(arg))
+            if any(is_text_kind(p.kind) for p in qc.dynamic_parts):
+                return True
+            if any(_SQL_WORD_RE.search(v) for v in qc.variants):
+                return True
+        return False
+
+    def _returns(self, out: SqlSummary, ctx: MethodContext, folder: QueryFolder) -> None:
+        rtype = of._simple_type(of._f(ctx.node, "type"), ctx.src)
+        params = of._f(ctx.node, "parameters")
+        for index, p in enumerate(of._named(params) if params is not None else []):
+            if of._simple_type(of._f(p, "type"), ctx.src) in _BUILDER_TYPES:
+                pname = of._f(p, "name")
+                if pname is not None:
+                    out.appends[index] = _to_template(folder.fold_param_appends(ctx.text(pname)))
+        if rtype not in _TEXT_RETURN_TYPES:
+            return
+        variants: List[Variant] = []
+        for node, _branch in folder.nodes:
+            if node.type == "return_statement":
+                value = of._code_children(node, of._JAVA_COMMENT_NODES)
+                if value:
+                    variants.extend(folder.fold(value[0]))
+        variants = _to_template(variants[:MAX_VARIANTS])
+        if not variants:
+            return
+        out.return_variants = variants
+        out.returns_sql, out.return_positions = _returns_of(variants)
+
+    # field statements -----------------------------------------------------------
+
+    def field_judgement(self, ctx: MethodContext, fact: StatementFact) -> Optional[Judgement]:
+        """Complete a statement held in field `fact.var` by joining every
+        allocation, bind and execution of that field across its class's
+        methods (#45/#46). None when the class is not in the graph."""
+        owner = self.graph.types.get(ctx.scope.class_fqn)
+        if owner is None:
+            return None
+        allocs: List[Tuple[StatementFact, MethodContext, Any]] = []
+        all_facts: List[StatementFact] = []
+        for key in owner.methods:
+            method = self.graph.methods.get(key)
+            mctx = self.context(method) if method is not None else None
+            if mctx is None:
+                continue
+            for other in statements_in_method(mctx.node, mctx.src, mctx):
+                if other.scope != "field" or other.var != fact.var:
+                    continue
+                all_facts.append(other)
+                if other.alloc:
+                    allocs.append((other, mctx, method))
+        name = f"`{fact.var}` of {owner.simple_name}"
+        if not allocs:
+            return Judgement("incomplete", fact.alloc_line or 0, missing=(
+                f"field statement {name} is never allocated in its class"), fact=fact)
+        placeholders = 0
+        plist = False
+        for alloc, mctx, method in allocs:
+            folder = self.folder(method, mctx)
+            qc = classify_query(alloc.query_expr, mctx, folder=folder) if alloc.query_expr is not None else None
+            if qc is None:
+                return Judgement("incomplete", alloc.alloc_line or 0, missing=f"field statement {name} has no query")
+            verdict = _judge_text(qc, alloc.alloc_line or 0, misuse=False)
+            if verdict is not None and verdict.tag not in ("numeric_only", "no_text"):
+                verdict.fact = alloc
+                verdict.detail = f"field statement {name}"
+                return verdict
+            placeholders = max(placeholders, qc.placeholders)
+            plist = plist or bool(qc.placeholder_list)
+        for other in all_facts:
+            for execution in other.executions:
+                if execution.has_sql_arg:
+                    return Judgement("misuse_dynamic", execution.line, fact=other, missing=None,
+                                     detail=f"field statement {name} is executed with its own SQL string")
+        binds = [b for other in all_facts for b in other.binds]
+        literal = {b.index for b in binds if isinstance(b.index, int)}
+        computed = [b for b in binds if not isinstance(b.index, int)]
+        needed = placeholders - (1 if plist else 0)
+        if (plist and not computed) or (not computed and not set(range(1, needed + 1)) <= literal):
+            return Judgement("unbound", fact.alloc_line or 0, fact=fact)
+        alloc = allocs[0][0]
+        bind_lines = ", ".join(str(b.line) for b in binds[:3]) or "none needed"
+        return Judgement("fixed_bound", alloc.alloc_line or 0, fact=fact, detail=(
+            f"field statement {name}: allocated at line {alloc.alloc_line} with fixed SQL text, "
+            f"bound in the class (line {bind_lines})"))
+
+    # call sites ------------------------------------------------------------------
+
+    def judge_call(self, method: Any, ctx: MethodContext, invocation: Any) -> Optional[Judgement]:
+        """Judge a call into a project method from the callee's summary: does
+        what this call passes reach the callee's SQL text?"""
+        summary = self.call_summary(method, ctx, invocation, 0)
+        if summary is None:
+            return None
+        line = invocation.start_point[0] + 1
+        callee = summary.method
+        if summary.executes == "unknown":
+            return Judgement("unknown", line, missing=summary.missing, callee=callee)
+        if summary.executes == "none":
+            return Judgement("callee_no_sql", line, callee=callee) if summary.returns_sql in ("none", "fixed") else None
+        if summary.executes == "fixed_bound":
+            return Judgement("fixed_bound", line, callee=callee, detail=summary.detail)
+        folder = self.folder(method, ctx)
+        args = _args(invocation)
+        parts: List[DynamicPart] = []
+        for index in summary.positions:
+            if index < len(args):
+                qc = classify_variants(folder.fold(args[index]))
+                parts.extend(p for p in qc.dynamic_parts if is_text_kind(p.kind))
+                if qc.unknown:
+                    return Judgement("unknown", line, missing=(
+                        f"argument {index + 1} of `{callee}` depends on `{qc.resolver}`"), callee=callee)
+        if parts:
+            return Judgement("dynamic_text", line, parts=parts, callee=callee, detail=summary.detail)
+        if summary.internal:
+            return None  # the callee's own text is dynamic; that is the callee's finding
+        return Judgement("wrapper_constant", line, callee=callee)
+
+
+_SQL_WORD_RE = re.compile(r"\b(?:SELECT|INSERT|UPDATE|DELETE|MERGE|WHERE|FROM)\b", re.IGNORECASE)
+
+
+def _constant_in(root: Any, src: bytes, owner: str, name: str, summaries: Optional[SqlSummaries], depth: int) -> Optional[str]:
+    """Literal text of constant `owner.name` declared in this file."""
+    if depth > 4:
+        return None
+    for node in _iter(root):
+        if node.type not in of._JAVA_TYPE_NODES:
+            continue
+        tname = of._f(node, "name")
+        if tname is None or of._t(tname, src) != owner:
+            continue
+        is_interface = node.type == "interface_declaration"
+        body = of._f(node, "body")
+        fields: Dict[str, Any] = {}
+        for child in (body.children if body is not None else []):
+            if child.type not in ("field_declaration", "constant_declaration"):
+                continue
+            constant = is_interface or (of._has_modifier(child, src, "static") and of._has_modifier(child, src, "final"))
+            if not constant:
+                continue
+            for decl in of._named(child):
+                if decl.type == "variable_declarator" and of._f(decl, "name") is not None:
+                    fields[of._t(of._f(decl, "name"), src)] = of._f(decl, "value")
+        if name in fields and fields[name] is not None:
+            return _constant_value(fields[name], src, owner, fields, summaries, depth + 1)
+    return None
+
+
+def _constant_value(node: Any, src: bytes, owner: str, fields: Dict[str, Any],
+                    summaries: Optional[SqlSummaries], depth: int) -> Optional[str]:
+    if node is None or depth > 8:
+        return None
+    t = node.type
+    if t in ("string_literal", "text_block"):
+        raw = of._t(node, src)
+        return (raw[3:-3] if t == "text_block" else raw[1:-1]).replace('\\"', '"')
+    if t in of._JAVA_LITERALS:
+        return of._t(node, src)
+    if t == "parenthesized_expression":
+        inner = of._code_children(node, of._JAVA_COMMENT_NODES)
+        return _constant_value(inner[0], src, owner, fields, summaries, depth + 1) if inner else None
+    if t == "binary_expression":
+        op = of._f(node, "operator")
+        if op is None or op.type != "+":
+            return None
+        left = _constant_value(of._f(node, "left"), src, owner, fields, summaries, depth + 1)
+        right = _constant_value(of._f(node, "right"), src, owner, fields, summaries, depth + 1)
+        return None if left is None or right is None else left + right
+    if t == "identifier":
+        ident = of._t(node, src)
+        return _constant_value(fields.get(ident), src, owner, fields, summaries, depth + 1) if ident in fields else None
+    if t == "field_access" and summaries is not None:
+        obj, fld = of._f(node, "object"), of._f(node, "field")
+        if obj is not None and fld is not None and obj.type == "identifier":
+            return summaries.constant_text(of._t(obj, src), of._t(fld, src))
+    return None
+
+
+def _iter(root: Any):
+    stack = [root]
+    while stack:
+        n = stack.pop()
+        yield n
+        stack.extend(n.children)

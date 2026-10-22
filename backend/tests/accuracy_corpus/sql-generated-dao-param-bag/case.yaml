@@ -1,0 +1,33 @@
+id: sql-generated-dao-param-bag
+area: sql-binding
+polarity: negative
+seed_findings:
+- 73
+adjudication: dev_label_only
+expected:
+- rule_id: java-jdbc-prepare-concat
+  cwe: CWE-89
+  file: src/main/java/com/acme/dao/OrderRowDao.java
+  sink_line: 11
+  verdict: false_positive
+  reason_tag: sql_fixed_template_bound
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - OrderRowDao.java
+  response:
+    findings:
+    - line: 11
+      verdict: true_positive
+      confidence: 0.85
+      rule_id: java-jdbc-prepare-concat
+      severity: HIGH
+      cwe: CWE-89
+      title: SQL injection through a JDBC statement
+      owasp_category: A03:2021-Injection
+      source: values (method parameter)
+      sink: connection.prepareStatement(InsertSql.forTable(...))
+      data_flow: ''
+      snippet: PreparedStatement ps = connection.prepareStatement(InsertSql.forTable("ORDERS", COLUMNS));
+      verdict_reason: The INSERT text is built by a helper, so it may include caller data.
+      ai_fix: Bind the value with a PreparedStatement placeholder.

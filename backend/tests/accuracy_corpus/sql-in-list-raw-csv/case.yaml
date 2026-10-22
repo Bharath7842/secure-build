@@ -1,0 +1,32 @@
+id: sql-in-list-raw-csv
+area: sql-binding
+polarity: positive
+seed_findings: []
+adjudication: dev_label_only
+expected:
+- rule_id: java-jdbc-prepare-concat
+  cwe: CWE-89
+  file: src/main/java/com/acme/dao/TicketSearchDao.java
+  sink_line: 12
+  verdict: true_positive
+  issue_class: security
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - TicketSearchDao.java
+  response:
+    findings:
+    - line: 12
+      verdict: true_positive
+      confidence: 0.85
+      rule_id: java-jdbc-prepare-concat
+      severity: HIGH
+      cwe: CWE-89
+      title: SQL injection through a JDBC statement
+      owasp_category: A03:2021-Injection
+      source: ids (method parameter)
+      sink: connection.prepareStatement(...)
+      data_flow: the raw ids are joined into the IN list text
+      snippet: PreparedStatement ps = connection.prepareStatement(
+      verdict_reason: The caller's id strings are joined straight into the SQL text.
+      ai_fix: Bind the value with a PreparedStatement placeholder.

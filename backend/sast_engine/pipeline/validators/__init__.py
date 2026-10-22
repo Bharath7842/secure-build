@@ -42,6 +42,7 @@ from .base import (
     NEGATIVE,
     NO_OPINION,
     POSITIVE,
+    VALIDATOR_CONTEXT_USAGE_KEY,
     ValidatorContext,
     ValidatorFn,
     ValidatorResult,
@@ -57,7 +58,8 @@ VERDICT_UNVERIFIED = "unverified"
 MAX_OUTCOMES_PER_FINDING = 4
 
 __all__ = [
-    "GAP", "NEGATIVE", "NO_OPINION", "POSITIVE", "ValidatorContext", "ValidatorResult",
+    "GAP", "NEGATIVE", "NO_OPINION", "POSITIVE", "VALIDATOR_CONTEXT_USAGE_KEY", "ValidatorContext",
+    "ValidatorResult",
     "apply_precedence", "apply_validators", "evidence_gap", "negative_proof", "no_opinion",
     "positive_fact", "register", "registered", "reapply_precedence", "render_deterministic_facts",
     "run_validators",
@@ -264,11 +266,12 @@ def apply_validators(
     usage: Optional[Dict[str, Any]] = None,
     ctx: Optional[ValidatorContext] = None,
 ) -> int:
-    """Run the registry on one file's findings; returns how many were changed."""
+    """Run the registry on one file's findings; returns how many were changed.
+    Without `ctx`, the scan's context on `usage` is used when there is one."""
     if not _REGISTRY:
         return 0
     path = file_path
-    ctx = ctx or ValidatorContext()
+    ctx = ctx or (usage or {}).get(VALIDATOR_CONTEXT_USAGE_KEY) or ValidatorContext()
     changed = 0
     for finding in findings:
         fpath = finding.get("file_path") or path

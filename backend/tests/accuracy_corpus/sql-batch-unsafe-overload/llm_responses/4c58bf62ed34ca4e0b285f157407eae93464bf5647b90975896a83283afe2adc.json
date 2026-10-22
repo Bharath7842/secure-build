@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5344,
+  "key": "4c58bf62ed34ca4e0b285f157407eae93464bf5647b90975896a83283afe2adc",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 163,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 22, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-sql-string-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"table, msg (method parameters)\", \"sink\": \"st.executeUpdate(...)\", \"data_flow\": \"table and msg are concatenated into the INSERT text\", \"snippet\": \"st.executeUpdate(\\\"INSERT INTO \\\" + table + \\\" (msg) VALUES ('\\\" + msg + \\\"')\\\");\", \"verdict_reason\": \"This overload concatenates table and msg into the SQL text instead of binding them.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
+}

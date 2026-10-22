@@ -1,0 +1,59 @@
+id: sql-facade-two-impls-one-unsafe
+area: sql-binding
+polarity: positive
+seed_findings:
+- 38
+- 74
+adjudication: dev_label_only
+expected:
+- rule_id: java-jdbc-prepare-concat
+  cwe: CWE-89
+  file: src/main/java/com/acme/dao/BoundCustomerLookup.java
+  sink_line: 11
+  verdict: false_positive
+  reason_tag: sql_fixed_template_bound
+- rule_id: java-sql-string-concat
+  cwe: CWE-89
+  file: src/main/java/com/acme/dao/LegacyCustomerLookup.java
+  sink_line: 12
+  verdict: true_positive
+  issue_class: security
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - BoundCustomerLookup.java
+  response:
+    findings:
+    - line: 11
+      verdict: true_positive
+      confidence: 0.85
+      rule_id: java-jdbc-prepare-concat
+      severity: HIGH
+      cwe: CWE-89
+      title: SQL injection through a JDBC statement
+      owasp_category: A03:2021-Injection
+      source: name (method parameter)
+      sink: connection.prepareStatement(...)
+      data_flow: ''
+      snippet: PreparedStatement ps = connection.prepareStatement("SELECT * FROM customers WHERE name = ?");
+      verdict_reason: The facade's name parameter reaches a SQL statement.
+      ai_fix: Bind the value with a PreparedStatement placeholder.
+- step: scan_deep_files
+  when_user_contains:
+  - LegacyCustomerLookup.java
+  response:
+    findings:
+    - line: 12
+      verdict: true_positive
+      confidence: 0.85
+      rule_id: java-sql-string-concat
+      severity: HIGH
+      cwe: CWE-89
+      title: SQL injection through a JDBC statement
+      owasp_category: A03:2021-Injection
+      source: name (method parameter)
+      sink: st.executeQuery(...)
+      data_flow: name is concatenated into the query
+      snippet: return st.executeQuery("SELECT * FROM customers WHERE name = '" + name + "'");
+      verdict_reason: name is concatenated into the SQL text.
+      ai_fix: Bind the value with a PreparedStatement placeholder.

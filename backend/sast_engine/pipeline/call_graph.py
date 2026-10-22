@@ -1003,6 +1003,138 @@ def _wire_calls(graph: CallGraph, calls: List[CallSite]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Signature-level resolution (SQL method summaries)
+# ---------------------------------------------------------------------------
+#
+# `_resolve_callee_keys` above is deliberately strict for flow discovery: an
+# interface with two implementations or two same-arity overloads stop the walk.
+# Method summaries need the opposite: every method a call *may* run, told apart
+# by signature, so a facade is judged by all its implementations and an
+# overload by its own body. This never adds graph edges.
+
+_BOXES = {
+    "int": "Integer", "long": "Long", "short": "Short", "byte": "Byte", "double": "Double",
+    "float": "Float", "char": "Character", "boolean": "Boolean",
+}
+
+
+def method_identity(method: JavaMethod) -> str:
+    """`owner.FQN#name(ParamType,...)` — what a method *is*, independent of
+    file position. Two overloads, or two same-named methods of different
+    owners, never share one."""
+    return f"{method.fqcn}#{method.name}({','.join(method.param_types)})"
+
+
+def _type_fits(param: str, arg: str) -> bool:
+    if not arg or not param or param == arg or param == "Object":
+        return True
+    if arg == "null":
+        return param not in _BOXES
+    return _BOXES.get(param) == arg or _BOXES.get(arg) == param
+
+
+def _pick_overloads(graph: CallGraph, keys: List[str], arg_types: Sequence[str]) -> List[str]:
+    if len(keys) <= 1:
+        return keys
+    fitting = [
+        k for k in keys
+        if all(_type_fits(p, a) for p, a in zip(graph.methods[k].param_types, arg_types))
+    ]
+    exact = [k for k in fitting if list(graph.methods[k].param_types) == list(arg_types)]
+    return exact if len(exact) == 1 else fitting
+
+
+def _lookup_inherited(graph: CallGraph, fqcn: str, name: str, argc: int, seen: Optional[Set[str]] = None) -> List[str]:
+    """`fqcn.name(argc)` declared on the type or inherited from an in-repo
+    supertype (nearest first)."""
+    seen = seen if seen is not None else set()
+    if fqcn in seen:
+        return []
+    seen.add(fqcn)
+    keys = _lookup_methods(graph, fqcn, name, argc)
+    if keys:
+        return keys
+    jtype = graph.types.get(fqcn)
+    if jtype is None:
+        return []
+    package, imports, stars = graph._file_imports.get(jtype.file, ("", {}, set()))  # type: ignore[attr-defined]
+    for super_name in jtype.super_types:
+        resolved = _resolve_simple(super_name, package=package, imports=imports, stars=stars, graph=graph)
+        if resolved and resolved in graph.types:
+            found = _lookup_inherited(graph, resolved, name, argc, seen)
+            if found:
+                return found
+    return []
+
+
+def resolve_targets(
+    graph: CallGraph,
+    caller: JavaMethod,
+    call: CallSite,
+    *,
+    arg_types: Sequence[str] = (),
+) -> Tuple[List[str], Optional[str]]:
+    """Every in-repo method a call may run, and why there are none.
+
+    Returns (method keys, reason). An interface receiver gives the union of
+    its implementations; same-arity overloads are told apart by `arg_types`
+    (simple type names, "" when unknown). An empty list with reason None
+    means the callee is JDK/framework code (not project code at all)."""
+    package, imports, stars = graph._file_imports.get(caller.file, ("", {}, set()))  # type: ignore[attr-defined]
+    receiver = _resolve_receiver_fqcn(graph, call, caller, package, imports, stars)
+    if receiver is None:
+        return [], "unresolved_type"
+    if _is_jdk_or_framework(receiver):
+        return [], None
+    jtype = graph.types.get(receiver)
+    if jtype is None:
+        return [], "unresolved_type"
+    if jtype.kind == "interface":
+        keys: List[str] = []
+        for impl in graph.impls_of.get(receiver) or []:
+            keys.extend(_pick_overloads(graph, _lookup_inherited(graph, impl, call.method_name, call.argc), arg_types))
+        if not keys:
+            return [], "unresolved_interface"
+        return keys, None
+    keys = _pick_overloads(graph, _lookup_inherited(graph, receiver, call.method_name, call.argc), arg_types)
+    if len(keys) > 1:
+        return [], "unresolved_overload"
+    if not keys:
+        return [], "unresolved_type"
+    return keys, None
+
+
+def call_site_for(method: JavaMethod, invocation: Any, src: bytes) -> CallSite:
+    """A `CallSite` for one `method_invocation` node of `method`'s body, the
+    way the graph builder makes them, so `resolve_targets` can resolve it."""
+    name_node = _field(invocation, "name")
+    kind, simple, _extra = _receiver_of_invocation(invocation, src)
+    return CallSite(
+        file=method.file, line=invocation.start_point[0] + 1, caller_key=method.key,
+        method_name=_text(name_node, src) if name_node is not None else "",
+        argc=_arg_count(_field(invocation, "arguments")), receiver_simple=simple,
+        receiver_kind=kind, is_constructor=False, syntactic_runtime_exec=False,
+        syntactic_process_builder=False,
+    )
+
+
+def method_at_line(graph: CallGraph, file: str, line: int) -> Optional[JavaMethod]:
+    """The innermost graph method of `file` whose span holds `line`."""
+    by_file = getattr(graph, "_methods_by_file", None)
+    if by_file is None:
+        by_file = defaultdict(list)
+        for method in graph.methods.values():
+            by_file[method.file].append(method)
+        graph._methods_by_file = by_file  # type: ignore[attr-defined]
+    best: Optional[JavaMethod] = None
+    for method in by_file.get(file, ()):
+        if method.start_line <= line <= method.end_line:
+            if best is None or method.start_line >= best.start_line:
+                best = method
+    return best
+
+
+# ---------------------------------------------------------------------------
 # Public: build graph
 # ---------------------------------------------------------------------------
 

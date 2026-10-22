@@ -286,6 +286,32 @@
         }
       ]
     },
+    "sql-batch-field-statement": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/AuditBatchDao.java",
+          "issue_class": "security",
+          "line": 17,
+          "occurrence_id": "60181d8546050fb30e70f4c777e497a325f02c489d7e516c213feeab44670ba8",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "sql-batch-unsafe-overload": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/AuditBatchWriter.java",
+          "issue_class": "security",
+          "line": 22,
+          "occurrence_id": "07251089b5b747a88ff5df5c119332fcc26a0e1fb2256fb60aec8b121c9bf5b9",
+          "rule_id": "java-sql-string-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
     "sql-bound-numeric-param": {
       "findings": [
         {
@@ -358,6 +384,80 @@
           "issue_class": "security",
           "line": 11,
           "occurrence_id": "bb5bc743d713f50a2e99eeb9c45053c427b1968fb28a4f369ce89eed7125f033",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "sql-facade-two-impls-one-unsafe": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/BoundCustomerLookup.java",
+          "issue_class": "security",
+          "line": 11,
+          "occurrence_id": "fc5248968b5ad9fb325d5b6b8c91eda97ad0a69f7025481ab47c8efd995fa919",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        },
+        {
+          "file_path": "src/main/java/com/acme/dao/LegacyCustomerLookup.java",
+          "issue_class": "security",
+          "line": 12,
+          "occurrence_id": "599e1f0144893325277575afd507d899f106223167229d0be255c8cdf0f3c110",
+          "rule_id": "java-sql-string-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "sql-generated-dao-param-bag": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/OrderRowDao.java",
+          "issue_class": "security",
+          "line": 11,
+          "occurrence_id": "6256651f97c3da21a4f0cf8a5e326165d71d5b5992d10c5dbf7c3d12bae8d8d1",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "sql-helper-unavailable": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/VendorReportDao.java",
+          "issue_class": "security",
+          "line": 12,
+          "occurrence_id": "733ca53e13b6243c173e6b4879b4116cb227b2d81a774065e757769e0a6f241c",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": "evidence_missing",
+          "verdict": "unverified"
+        }
+      ]
+    },
+    "sql-in-list-placeholders": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/TicketDao.java",
+          "issue_class": "security",
+          "line": 12,
+          "occurrence_id": "0a9e637fa2bbf3a4384496bf37b9cb32fb24dc372fd6b88195f79c18bd2c30d9",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "sql-in-list-raw-csv": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/TicketSearchDao.java",
+          "issue_class": "security",
+          "line": 12,
+          "occurrence_id": "39699b25dc19e743f3f02e8edffe885946a32c9aee73dd805de663ba15005a89",
           "rule_id": "java-jdbc-prepare-concat",
           "unresolved_reason": null,
           "verdict": "true_positive"

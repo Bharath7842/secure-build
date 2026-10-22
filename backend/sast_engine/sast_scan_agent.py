@@ -73,6 +73,8 @@ from llm_client import RESULT_CACHE_USAGE_KEY, init_usage, usage_cost_summary  #
 import ast_struct  # noqa: E402
 from pipeline import call_graph, call_graph_python, dependency_scan, derive_rules, flow_verify, llm_file_scan, regex_scan, rg_prefilter  # noqa: E402
 from pipeline import joern_findings, joern_flows, joern_runner, occurrence, reachability  # noqa: E402
+from pipeline import sql_semantics  # noqa: E402
+from pipeline.validators import VALIDATOR_CONTEXT_USAGE_KEY, ValidatorContext  # noqa: E402
 
 # ===========================================================================
 # 0. CONFIG — extension map, skip dirs, per-stack risk profiles
@@ -1765,12 +1767,44 @@ def _rank_deep_scan_by_attack_surface(
     return module_plan, swapped_in
 
 
+def _attach_validator_context(state: SastState, graph: Any) -> None:
+    """Give the per-occurrence validators this scan's repository, call graph
+    and SQL method summaries (EPIC-02), on the shared usage dict."""
+    usage = state.get("usage")
+    if usage is None or not state.get("occurrence_validators", True):
+        return
+    ctx = ValidatorContext(repo_root=_resolve_scan_root(state), call_graph=graph)
+    if isinstance(graph, call_graph.CallGraph):
+        ctx.sql = sql_semantics.SqlSummaries(graph, ctx.read_text, usage=usage)
+    usage[VALIDATOR_CONTEXT_USAGE_KEY] = ctx
+
+
+def _validators_need_graph(state: SastState) -> bool:
+    """The SQL validators resolve helpers, facades and field statements
+    through the Java call graph, so it is built for them even when inter-file
+    flow tracing is off (it costs CPU, never an LLM call)."""
+    return (
+        bool(state.get("occurrence_validators", True))
+        and ast_struct.tree_sitter_available()
+        and call_graph.is_java_stack(state)
+    )
+
+
 def node_build_call_graph(state: SastState) -> dict:
     tracer: AgentTrace = state["_tracer"]
     if not _tree_sitter_graph_enabled(state):
         tracer.log(5, "build_call_graph", "Skipping call graph — disabled or not a Java/Python scan",
                     narrative="Inter-file call-graph tracing is off for this run "
                               "(flag, no LLM, missing tree-sitter, or not maven-java/python).")
+        if _validators_need_graph(state):
+            # Validators only: no attack-surface ranking, no flows.
+            graph = call_graph.build_call_graph(
+                _resolve_scan_root(state), call_graph.java_paths_from_scan(state.get("scan")))
+            _attach_validator_context(state, graph)
+            tracer.log(5, "build_call_graph",
+                       f"Built the Java call graph for the SQL checks only: {len(graph.methods)} method(s)",
+                       narrative="The SQL-injection checks still resolve helpers and facades through "
+                                 "the call graph; no flows are traced from it.")
         return {"call_graph": {"files_parsed": 0, "methods": 0, "edges": 0, "sinks": 0,
                                "unresolved": [], "entry_tier": "", "_graph_lang": None}}
 
@@ -1790,6 +1824,7 @@ def node_build_call_graph(state: SastState) -> dict:
                 narrative=f"Parsing {len(paths)} {lang_label} file(s) into a call graph "
                           f"(typed sinks, name+argc overloads)...")
     graph = lang_module.build_call_graph(root, paths)
+    _attach_validator_context(state, graph)
     # Per-reason breakdown, not just a total: which failure dominates says
     # whether receiver types aren't resolving (unresolved_type) or interfaces
     # have no single in-repo implementor (unresolved_interface, e.g. Spring

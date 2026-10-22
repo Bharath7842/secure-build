@@ -46,6 +46,12 @@ NO_OPINION = "no_opinion"
 
 PROOF_MAX_CHARS = 200
 
+# The scan's ValidatorContext rides on the shared usage dict under this key (as
+# the LLM result cache does under llm_client.RESULT_CACHE_USAGE_KEY), so every
+# stage that already passes `usage` reaches the call graph and SQL summaries
+# without a new parameter. Never serialized: usage_cost_summary reads named keys.
+VALIDATOR_CONTEXT_USAGE_KEY = "_validator_ctx"
+
 
 def _cut(text: Optional[str]) -> Optional[str]:
     if text is None:
