@@ -578,47 +578,85 @@ def _java_kind(node: Any, scope: _Scope, jf: _JavaFile, depth: int = 0) -> str:
     return "unknown"
 
 
+def _call_via(node: Any, scope: _Scope, jf: _JavaFile) -> Optional[str]:
+    """For an argument built from calls (`ex.toString()`, `"a" + cal.getTime()`),
+    what the calls are made on: `<declared type>.<method>`, with every
+    exception class folded to `throwable`. Two arguments that are both "a call
+    result" are still different when one is an exception's text and the other
+    a Calendar's."""
+    vias: List[str] = []
+    for operand in _flatten_plus(node):
+        if operand.type != "method_invocation":
+            continue
+        name_node, obj = _f(operand, "name"), _f(operand, "object")
+        if name_node is None:
+            continue
+        declared = ""
+        if obj is not None and obj.type == "identifier":
+            ident = _t(obj, jf.src)
+            if ident in scope.locals:
+                declared = scope.locals[ident][0]
+            elif ident in scope.fields:
+                declared = scope.fields[ident][0]
+            else:
+                declared = ident
+        elif obj is not None and obj.type == "field_access":
+            declared = _t(obj, jf.src)
+        if declared == "Throwable" or _THROWABLE_RE.search(declared or ""):
+            declared = "throwable"
+        vias.append(f"{declared or '?'}.{_t(name_node, jf.src)}")
+    return ",".join(dict.fromkeys(vias)) or None
+
+
 def _java_receiver(
     obj: Optional[Any], scope: _Scope, jf: _JavaFile
-) -> Tuple[Optional[str], Optional[str]]:
-    """(receiver expression text, resolved receiver FQN or None)."""
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """(receiver expression text, resolved receiver FQN or None, declared simple
+    type name or None). The simple name survives when the FQN cannot be
+    resolved (a type from another file of the package), so two receivers of
+    different declared types are still told apart."""
     src = jf.src
     if obj is None:
-        return None, scope.class_fqn or None
+        return None, scope.class_fqn or None, scope.class_simple or None
     text = _cut(_t(obj, src))
     t = obj.type
     if t == "this" or t == "super":
-        return text, scope.class_fqn or None
+        return text, scope.class_fqn or None, scope.class_simple or None
     if t == "identifier":
         name = _t(obj, src)
         if name in scope.locals:
-            return text, jf.resolve(scope.locals[name][0])
+            declared = scope.locals[name][0]
+            return text, jf.resolve(declared), declared or None
         if name in scope.fields:
-            return text, jf.resolve(scope.fields[name][0])
+            declared = scope.fields[name][0]
+            return text, jf.resolve(declared), declared or None
         if name == "log" and scope.lombok_log:
-            return text, scope.lombok_log
-        return text, jf.resolve(name)  # a static call on a type name
+            return text, scope.lombok_log, scope.lombok_log.rsplit(".", 1)[-1]
+        return text, jf.resolve(name), name  # a static call on a type name
     if t == "field_access":
         o, field = _f(obj, "object"), _f(obj, "field")
         if o is not None and field is not None:
             oname, fname = _t(o, src), _t(field, src)
             if oname == "System" and fname in ("out", "err"):
-                return text, "java.io.PrintStream"
+                return text, "java.io.PrintStream", "PrintStream"
             if oname == "this" and fname in scope.fields:
-                return text, jf.resolve(scope.fields[fname][0])
+                declared = scope.fields[fname][0]
+                return text, jf.resolve(declared), declared or None
             if oname in jf.type_names or oname in jf.imports:
-                return text, jf.resolve(oname)
-        return text, None
+                return text, jf.resolve(oname), oname
+        return text, None, None
     if t == "method_invocation":
         o, name_node = _f(obj, "object"), _f(obj, "name")
         if o is not None and name_node is not None:
             key = (_t(o, src), _t(name_node, src))
             if key in _LOGGER_FACTORIES:
-                return text, _LOGGER_FACTORIES[key]
-        return text, None
+                fqn = _LOGGER_FACTORIES[key]
+                return text, fqn, fqn.rsplit(".", 1)[-1]
+        return text, None, None
     if t == "object_creation_expression":
-        return text, jf.resolve(_simple_type(_f(obj, "type"), src))
-    return text, None
+        declared = _simple_type(_f(obj, "type"), src)
+        return text, jf.resolve(declared), declared or None
+    return text, None, None
 
 
 def _call_candidates(root: Any, row: int) -> List[Any]:
@@ -759,12 +797,12 @@ def _java_facts(root: Any, src: bytes, memo: Dict[str, Any], text: str, line: in
         if chosen is not None:
             if chosen.type == "method_invocation":
                 obj, name_node = _f(chosen, "object"), _f(chosen, "name")
-                receiver, receiver_fqn = _java_receiver(obj, scope, jf)
+                receiver, receiver_fqn, receiver_type = _java_receiver(obj, scope, jf)
                 callee = _t(name_node, src) if name_node is not None else ""
             else:
                 tnode = _f(chosen, "type")
                 callee = _simple_type(tnode, src)
-                receiver, receiver_fqn = None, jf.resolve(callee)
+                receiver, receiver_fqn, receiver_type = None, jf.resolve(callee), callee
             arg_node = _f(chosen, "arguments")
             arg_nodes = _code_children(arg_node, _JAVA_COMMENT_NODES) if arg_node is not None else []
             owner_fqn = receiver_fqn
@@ -773,13 +811,21 @@ def _java_facts(root: Any, src: bytes, memo: Dict[str, Any], text: str, line: in
                 "is_constructor": chosen.type == "object_creation_expression",
                 "receiver": receiver,
                 "receiver_fqn": receiver_fqn,
+                "receiver_type": receiver_type,
                 "owner_fqn": owner_fqn,
                 "arity": len(arg_nodes),
                 "start_line": chosen.start_point[0] + 1,
                 "start_col": chosen.start_point[1],
                 "end_line": chosen.end_point[0] + 1,
             }
-            args = [{"kind": _java_kind(a, scope, jf), "text": _cut(_t(a, src))} for a in arg_nodes]
+            args = []
+            for a in arg_nodes:
+                arg = {"kind": _java_kind(a, scope, jf), "text": _cut(_t(a, src))}
+                if "call_result" in arg["kind"]:
+                    via = _call_via(a, scope, jf)
+                    if via:
+                        arg["via"] = via
+                args.append(arg)
             call["text"] = _cut(_t(chosen, src), CALL_TEXT_MAX_CHARS)
             statement = _statement_text(chosen, src)
         else:
@@ -1088,6 +1134,7 @@ def _ts_facts(root: Any, src: bytes, memo: Dict[str, Any], text: str, line: int,
                 "is_constructor": chosen.type == "new_expression",
                 "receiver": receiver,
                 "receiver_fqn": receiver_type,
+                "receiver_type": receiver_type,
                 "receiver_module": module,
                 "owner_fqn": receiver_type,
                 "arity": len(arg_nodes),
@@ -1213,9 +1260,13 @@ def semantic_signature(facts: Optional[Dict[str, Any]]) -> str:
         return "comment"
     call = facts.get("call")
     if call:
-        kinds = ",".join(a.get("kind", "unknown") for a in facts.get("args") or [])
-        owner = call.get("owner_fqn") or "?"
-        receiver = call.get("receiver_fqn") or "?"
+        kinds = ",".join(
+            a.get("kind", "unknown") + (f":{a['via']}" if a.get("via") else "")
+            for a in facts.get("args") or []
+        )
+        declared = call.get("receiver_type")
+        owner = call.get("owner_fqn") or (f"~{declared}" if declared else "?")
+        receiver = call.get("receiver_fqn") or (f"~{declared}" if declared else "?")
         return f"call:{owner}.{call.get('callee')}/{call.get('arity')}|{receiver}|({kinds})"
     enclosing = facts.get("enclosing") or {}
     if facts.get("is_declaration"):

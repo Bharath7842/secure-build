@@ -1500,7 +1500,8 @@ def test_group_confirm_unverified_findings_one_call_per_group(tmp_path, llm_file
         finding = file_result["findings"][0]
         assert finding["verdict"] == "true_positive"
         assert finding["confidence"] == 0.9
-        assert "confirmed via grouped review of 3 occurrence(s)" in finding["verdict_reason"]
+        assert "Reviewed 3 of 3 occurrences" in finding["verdict_reason"]
+        assert finding["review_coverage"] == {"reviewed": 3, "total": 3}
 
     assert {p for p, _ in writer_calls} == {"a.py", "b.py", "c.py"}
     for _path, updates in writer_calls:

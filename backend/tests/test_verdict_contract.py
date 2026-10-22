@@ -211,7 +211,8 @@ def test_group_confirm_call_failure_is_recorded_as_llm_call_failed(
     assert finding["unresolved_reason"] == "llm_call_failed"
     (_path, updates), = written
     assert updates == [{"rule_id": "secret-password-assign", "line": 1,
-                        "unresolved_reason": "llm_call_failed"}]
+                        "unresolved_reason": "llm_call_failed",
+                        "review_coverage": {"reviewed": 0, "total": 1}}]
 
 
 def test_group_confirm_budget_exhaustion_is_recorded_as_such(

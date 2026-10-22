@@ -227,8 +227,11 @@ def test_group_confirm_prompt_carries_evidence_and_floor(agent, rc, tmp_path):
         verdict_updates_writer=lambda p, u: writes.append((p, u)),
     )
     (user,) = prompts
-    # The occurrence with a path is the representative, and its path is shown.
-    assert "Representative occurrence — B.java" in user
+    # The occurrence with a path comes first (m1), and its path is shown. The two
+    # occurrences are identical code with identical (absent) facts, so one
+    # decision covers both.
+    assert "m1 | B.java:2" in user
+    assert "Evidence for m1" in user
     assert "Dataflow evidence (Joern, sql sink)" in user and "@RequestParam String id" in user
     # Group verdict applies to both; only the reached one gets the floor.
     assert plain["confidence"] == 0.5
@@ -236,9 +239,8 @@ def test_group_confirm_prompt_carries_evidence_and_floor(agent, rc, tmp_path):
     # file_path is stamped from the file result, so the writer gets real paths.
     assert sorted(p for p, _ in writes) == ["A.java", "B.java"]
 
-    system, user = lfs.build_group_confirm_prompt(
-        representative=plain, occurrence_paths=["A.java"], source_text="a\nb\n", rule=None,
-    )
+    entry = {"group_index": 0, "members": [plain], "rule": None, "text_for": lambda path: "a\nb\n"}
+    system, user = lfs.build_group_confirm_prompt(entry=entry, shown=[0])
     assert "Dataflow evidence" not in user
 
 

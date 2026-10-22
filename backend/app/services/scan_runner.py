@@ -329,6 +329,11 @@ def reconcile_unverified_findings(scan_id: str, *, capped: bool = False) -> None
                     "kind": row.kind,
                     "file_path": file_path,
                     "reachability": row.reachability,
+                    # The occurrence facts decide which findings are one group
+                    # (and carry any validator outcomes the model's answer must
+                    # still respect); rebuilt without them the sweep would group
+                    # differently from the scan that wrote these rows.
+                    "facts": row.facts,
                 }
             )
 

@@ -58,6 +58,7 @@ from llm_client import (
 from . import reachability
 from .finding_facts import prepare_findings
 from .occurrence_facts import LOGGER_PACKAGES, semantic_signature
+from .validators import reapply_precedence, render_deterministic_facts
 from .owasp_map import OWASP_TOP_10_2021, owasp_for_rule
 from .regex_scan import (
     PROCESS_POOL_MIN_FILES,
@@ -2463,7 +2464,7 @@ def _triage_prompts_for_candidates(
             shown = ", ".join(str(m["line"]) for m in members[:TRIAGE_GROUP_WINDOWS])
             more = "" if len(members) <= TRIAGE_GROUP_WINDOWS else ", …"
             where = (f"{len(members)} occurrences of the same match in this file "
-                     f"(lines {shown}{more}; one verdict covers all)")
+                     f"(lines {shown}{more}; your verdict covers only the occurrences shown here)")
         return (f"{c['id']} | {c['rule_id']} | {where} | matched: "
                 + json.dumps(c["matched_text"][:200], ensure_ascii=False))
 
@@ -2708,12 +2709,29 @@ def triage_regex_hits(
     if missing:
         errors.append(f"{len(missing)} candidate(s) left unverified (no decision)")
 
-    reviewed = [
-        _triage_finding(m, decided[c["id"]], file_path=file_path,
-                        source_text=source_text, rules_by_id=rules_by_id)
-        for c in candidates if c["id"] in decided
-        for m in c["members"]
-    ]
+    reviewed = []
+    not_shown: List[Dict[str, Any]] = []
+    for c in candidates:
+        if c["id"] not in decided:
+            continue
+        shown_members = c["members"][:TRIAGE_GROUP_WINDOWS]
+        reviewed.extend(
+            _triage_finding(m, decided[c["id"]], file_path=file_path,
+                            source_text=source_text, rules_by_id=rules_by_id)
+            for m in shown_members
+        )
+        # A verdict is for the occurrences the model was shown. The others of a
+        # repeated match are not given it: they stay unverified, not_in_sample.
+        for m in c["members"][TRIAGE_GROUP_WINDOWS:]:
+            skipped = _triage_finding(
+                m, None, file_path=file_path, source_text=source_text,
+                rules_by_id=rules_by_id, unresolved_reason="not_in_sample",
+            )
+            skipped["verdict_reason"] = (
+                f"Not reviewed: only the first {TRIAGE_GROUP_WINDOWS} of {len(c['members'])} "
+                f"identical matches in this file were shown for review."
+            )
+            not_shown.append(skipped)
     reviewed = [f for f in reviewed if f["verdict"] != VERDICT_UNVERIFIED]
     merged = dedupe_and_finalize(
         reviewed, source_text, file_path=file_path, usage=usage,
@@ -2738,6 +2756,7 @@ def triage_regex_hits(
                             raw_verdict=raw_verdict)
             for m in c["members"]
         )
+    unverified.extend(not_shown)
     findings = merged + unverified
     for finding in findings:
         finding["kind"] = "regex"
@@ -3028,26 +3047,38 @@ def scan_triage_files(
 # agent_bridge.py's lazy-import rationale). If scan_export._finding_group_key's
 # regex branch changes, mirror the change here too.
 
+# Grouped confirmation decides every member it shows (SAST-01-070). Each member
+# gets an excerpt of its own code, up to a character budget per group; members
+# the budget cannot show are never given a sibling's verdict — they stay
+# unverified, `not_in_sample`.
+GROUP_CONFIRM_MEMBER_CHAR_BUDGET = 16_000
+GROUP_CONFIRM_WINDOW_LINES = 4
+GROUP_CONFIRM_LINE_MAX_CHARS = 240
+GROUP_CONFIRM_EVIDENCE_MEMBERS = 3
+CONFIRM_STEP = "group_confirm_triage_findings"
+
 _GROUP_CONFIRM_SYSTEM = (
-    "You confirm whether a regex-matched code pattern is a real vulnerability. "
-    "You are shown one representative occurrence of a pattern that was matched "
-    "identically at one or more locations in this repository; the verdict you "
-    "give will be applied to every occurrence of this exact pattern, so judge "
-    "whether the construct itself — not just this one location — is generally "
-    "a real issue.\n"
-    "A hit is a false_positive when the match is a test fixture, placeholder, "
-    "comment, sample data, or otherwise not a real vulnerability.\n"
+    "You confirm whether regex-matched code occurrences are real vulnerabilities. "
+    "You are shown several occurrences of one pattern, each with an id (m1, m2, ...) "
+    "and an excerpt of its own code. Decide EACH occurrence on its own code: "
+    "occurrences of one pattern can differ in what they call, in what they pass to it, "
+    "and in whether a value is a number or attacker-controlled text, and a verdict for "
+    "one says nothing about another unless the code shown is the same.\n"
+    "An occurrence is a false_positive when the match is a test fixture, placeholder, "
+    "comment, sample data, a declaration rather than a call, or otherwise not a real "
+    "vulnerability.\n"
     "Respond with the JSON object described under Output format only. No prose, "
     "no markdown fences."
 )
 
-_GROUP_RESPONSE_SCHEMA = """Output format — one JSON object with exactly one decision:
+_GROUP_RESPONSE_SCHEMA = """Output format — one JSON object with exactly one decision per occurrence shown:
 {"decisions": [{
+  "member": "<the occurrence id, e.g. m1>",
   "verdict": "true_positive" | "false_positive",
   "confidence": <0.0-1.0>,
-  "verdict_reason": "<why this construct is/isn't a real issue — required, at most 2 sentences>",
+  "verdict_reason": "<why this occurrence is/isn't a real issue — required, at most 2 sentences>",
   "ai_fix": "<at most 2 sentences; only when verdict is true_positive>"
-}]}"""
+}, ...]}"""
 
 
 def group_key_for_finding(finding: Dict[str, Any]) -> tuple:
@@ -3071,293 +3102,6 @@ def group_key_for_finding(finding: Dict[str, Any]) -> tuple:
     topic = re.sub(r"[^a-z0-9]+", " ", str(finding.get("title") or "").lower()).strip()
     topic = " ".join(topic.split()[:3])
     return ("topic", str(finding.get("cwe") or "").strip().upper(), topic, matched, signature)
-
-
-def build_group_confirm_prompt(
-    *,
-    representative: Dict[str, Any],
-    occurrence_paths: Sequence[str],
-    source_text: str,
-    rule: Optional[RegexRule],
-    stack_context: str = "",
-) -> Tuple[str, str]:
-    """System + user prompt for one grouped-confirmation call. Carries only the
-    representative occurrence's context window plus a list of the other
-    affected files — the full body of every occurrence is never sent."""
-    line = int(representative.get("line") or 1)
-    context = build_code_context(source_text, line, representative.get("matched_text") or "")
-    shown = list(occurrence_paths[:10])
-    extra = len(occurrence_paths) - len(shown)
-    occurrence_note = ", ".join(shown) + (f", +{extra} more" if extra > 0 else "")
-    candidate = {
-        "rule_id": representative.get("rule_id"),
-        "title": (rule.title if rule else representative.get("title")) or "",
-        "description": (rule.description if rule else "") or "",
-        "cwe": (rule.cwe if rule else representative.get("cwe")) or "",
-        "severity": (rule.severity if rule else representative.get("severity")) or "LOW",
-        "owasp": (rule.owasp if rule else representative.get("owasp_category")) or "",
-        "matched_text": representative.get("matched_text") or "",
-        "occurrence_count": len(occurrence_paths),
-        "occurrence_files": occurrence_note,
-    }
-    system = (
-        f"{_GROUP_CONFIRM_SYSTEM}\n\n{_GROUP_RESPONSE_SCHEMA}\n\n"
-        f"Tech stack: {stack_context or 'unknown'}\n"
-        f"OWASP Top 10:2021 categories: {', '.join(OWASP_TOP_10_2021)}"
-    )
-    user = (
-        f"Pattern (matched identically in {len(occurrence_paths)} location(s); "
-        f"files: {occurrence_note}):\n"
-        f"{json.dumps(candidate, ensure_ascii=False)}\n\n"
-        f"Representative occurrence — {representative.get('file_path')}:\n"
-        f"```\n{context}\n```\n"
-    )
-    if representative.get("reachability"):
-        user += "\n" + reachability.render_evidence(representative["reachability"]) + "\n"
-    return system, user
-
-
-def _confirm_result_from_item(
-    item: Dict[str, Any], *, usage: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
-    verdict, problem = parse_verdict(item.get("verdict"))
-    if verdict not in ("true_positive", "false_positive"):
-        # A missing, unrecognised or literally "unverified" verdict is not a
-        # dismissal — leave the group unverified and say why.
-        _record_verdict_problem(usage, "group_confirm_triage_findings", problem)
-        raw = item.get("verdict")
-        return {
-            "verdict": VERDICT_UNVERIFIED, "confidence": None,
-            "verdict_reason": "", "ai_fix": None,
-            "error": (
-                "missing verdict" if problem == "llm_missing_verdict"
-                else f"unrecognised verdict: {' '.join(str(raw).split())[:VERDICT_REASON_MAX_CHARS]}"
-            ),
-            "unresolved_reason": problem or "evidence_missing",
-        }
-    confidence = _normalize_confidence(item.get("confidence"), verdict)
-    reason = str(item.get("verdict_reason") or "").strip() or "No reason provided by the model."
-    ai_fix = item.get("ai_fix")
-    ai_fix = str(ai_fix).strip() if verdict == "true_positive" and ai_fix else None
-    return {
-        "verdict": verdict, "confidence": confidence,
-        "verdict_reason": reason, "ai_fix": ai_fix, "error": None,
-        "unresolved_reason": None,
-    }
-
-
-def confirm_finding_group(
-    *,
-    representative: Dict[str, Any],
-    occurrence_paths: Sequence[str],
-    source_text: str,
-    rule: Optional[RegexRule],
-    stack_context: str = "",
-    usage: Optional[Dict[str, Any]] = None,
-    llm_provider: Optional[str] = None,
-    llm_model: Optional[str] = None,
-    call_llm_fn: Callable[..., str] = call_llm,
-) -> Dict[str, Any]:
-    """One LLM call to TP/FP-confirm a group of identical unverified findings.
-
-    Returns {"verdict", "confidence", "verdict_reason", "ai_fix", "error"}. On
-    any failure (LLM error, unparseable response), returns verdict=unverified
-    unchanged with `error` set, so callers can leave that group's findings
-    untouched rather than mislabel them.
-    """
-    system, user = build_group_confirm_prompt(
-        representative=representative, occurrence_paths=occurrence_paths,
-        source_text=source_text, rule=rule, stack_context=stack_context,
-    )
-
-    def _call(prompt: str) -> str:
-        with _INFLIGHT:
-            return call_llm_fn(
-                system, prompt,
-                max_tokens=512, temperature=0.0,
-                usage=usage, step="group_confirm_triage_findings",
-                provider=llm_provider, model=llm_model, json_mode=True,
-            )
-
-    try:
-        raw_text = _call(user)
-        items, err = parse_llm_json_array(raw_text)
-        if err and not items:
-            retry_user = (
-                user
-                + "\n\nYour previous response could not be parsed as JSON. "
-                'Respond with the {"decisions": [...]} JSON object only '
-                "— no prose, no markdown fences."
-            )
-            raw_text = _call(retry_user)
-            items, err = parse_llm_json_array(raw_text)
-    except Exception as exc:  # one bad group must not kill the whole pass
-        return {
-            "verdict": VERDICT_UNVERIFIED, "confidence": None,
-            "verdict_reason": "", "ai_fix": None,
-            "error": f"{type(exc).__name__}: {exc}",
-            "unresolved_reason": unresolved_reason_for_exception(exc),
-        }
-
-    item = items[0] if items and isinstance(items[0], dict) else None
-    if item is None:
-        return {
-            "verdict": VERDICT_UNVERIFIED, "confidence": None,
-            "verdict_reason": "", "ai_fix": None,
-            "error": err or "empty or unparseable response",
-            "unresolved_reason": "llm_call_failed",
-        }
-
-    result = _confirm_result_from_item(item, usage=usage)
-    result["result_cache_hit"] = last_call_was_cache_hit()
-    return result
-
-
-_GROUP_CONFIRM_BATCH_SYSTEM = (
-    _GROUP_CONFIRM_SYSTEM + "\n\n"
-    "You will be shown multiple independent patterns, each tagged with a "
-    "group_index. Return exactly one verdict object per pattern shown, each "
-    "carrying that same group_index — never merge, skip, or invent patterns."
-)
-
-_GROUP_BATCH_RESPONSE_SCHEMA = """Output format — one JSON object with exactly one decision per pattern shown:
-{"decisions": [{
-  "group_index": <int, matches the pattern's group_index>,
-  "verdict": "true_positive" | "false_positive",
-  "confidence": <0.0-1.0>,
-  "verdict_reason": "<why this construct is/isn't a real issue — required, at most 2 sentences>",
-  "ai_fix": "<at most 2 sentences; only when verdict is true_positive>"
-}, ...]}"""
-
-
-def build_group_confirm_batch_prompt(
-    *,
-    entries: Sequence[Dict[str, Any]],
-    stack_context: str = "",
-) -> Tuple[str, str]:
-    """System + user prompt for one batched confirmation call covering
-    len(entries) groups. Candidate metadata for all groups is one compact
-    JSON array (no code); each group's representative-occurrence snippet
-    follows as a separately labeled block ("Pattern <group_index> — <file>:"),
-    so index alignment between request and response never depends on JSON
-    array order in the model's response."""
-    candidates = []
-    context_blocks = []
-    for entry in entries:
-        representative = entry["representative"]
-        rule = entry["rule"]
-        occurrence_paths = entry["occurrence_paths"]
-        shown = list(occurrence_paths[:10])
-        extra = len(occurrence_paths) - len(shown)
-        occurrence_note = ", ".join(shown) + (f", +{extra} more" if extra > 0 else "")
-        candidates.append({
-            "group_index": entry["group_index"],
-            "rule_id": representative.get("rule_id"),
-            "title": (rule.title if rule else representative.get("title")) or "",
-            "description": (rule.description if rule else "") or "",
-            "cwe": (rule.cwe if rule else representative.get("cwe")) or "",
-            "severity": (rule.severity if rule else representative.get("severity")) or "LOW",
-            "owasp": (rule.owasp if rule else representative.get("owasp_category")) or "",
-            "matched_text": representative.get("matched_text") or "",
-            "occurrence_count": len(occurrence_paths),
-            "occurrence_files": occurrence_note,
-        })
-        line = int(representative.get("line") or 1)
-        context = build_code_context(entry["source_text"], line, representative.get("matched_text") or "")
-        block = f"Pattern {entry['group_index']} — {representative.get('file_path')}:\n```\n{context}\n```"
-        if representative.get("reachability"):
-            block += "\n" + reachability.render_evidence(representative["reachability"])
-        context_blocks.append(block)
-    system = (
-        f"{_GROUP_CONFIRM_BATCH_SYSTEM}\n\n{_GROUP_BATCH_RESPONSE_SCHEMA}\n\n"
-        f"Tech stack: {stack_context or 'unknown'}\n"
-        f"OWASP Top 10:2021 categories: {', '.join(OWASP_TOP_10_2021)}"
-    )
-    user = (
-        f"Patterns ({len(entries)}), one per line:\n"
-        + "\n".join(json.dumps(c, ensure_ascii=False) for c in candidates) + "\n\n"
-        + "\n\n".join(context_blocks) + "\n"
-    )
-    return system, user
-
-
-def confirm_finding_group_batch(
-    *,
-    entries: Sequence[Dict[str, Any]],
-    stack_context: str = "",
-    usage: Optional[Dict[str, Any]] = None,
-    llm_provider: Optional[str] = None,
-    llm_model: Optional[str] = None,
-    call_llm_fn: Callable[..., str] = call_llm,
-) -> Dict[int, Dict[str, Any]]:
-    """One LLM call to TP/FP-confirm len(entries) groups at once, falling back
-    to a per-group confirm_finding_group call for anything the batch didn't
-    resolve. Returns
-    {group_index: {"verdict", "confidence", "verdict_reason", "ai_fix", "error"}}
-    for every entry.
-
-    A batch call that raises, or whose response is entirely unparseable even
-    after one retry, does not leave its groups unverified outright — each
-    entry gets its own confirm_finding_group call instead (that path has its
-    own internal retry). Likewise, a response that parses but is missing some
-    group_index values falls back per-group for just those. Only an entry
-    whose fallback call *also* fails ends up unverified with `error` set —
-    the batch is purely a cost optimization, never a coverage reduction.
-    """
-    system, user = build_group_confirm_batch_prompt(entries=entries, stack_context=stack_context)
-    max_tokens = max(512, 160 * len(entries))
-
-    def _call(prompt: str) -> str:
-        with _INFLIGHT:
-            return call_llm_fn(
-                system, prompt,
-                max_tokens=max_tokens, temperature=0.0,
-                usage=usage, step="group_confirm_triage_findings",
-                provider=llm_provider, model=llm_model, json_mode=True,
-            )
-
-    results: Dict[int, Dict[str, Any]] = {}
-    unresolved: List[Dict[str, Any]] = list(entries)
-
-    try:
-        raw_text = _call(user)
-        items, err = parse_llm_json_array(raw_text)
-        if err and not items:
-            retry_user = (
-                user
-                + "\n\nYour previous response could not be parsed as JSON. "
-                'Respond with the {"decisions": [...]} JSON object only — no prose, '
-                "no markdown fences."
-            )
-            raw_text = _call(retry_user)
-            items, err = parse_llm_json_array(raw_text)
-
-        batch_cache_hit = last_call_was_cache_hit()
-        by_index = {
-            item.get("group_index"): item
-            for item in items or []
-            if isinstance(item, dict) and isinstance(item.get("group_index"), int)
-        }
-        unresolved = []
-        for entry in entries:
-            item = by_index.get(entry["group_index"])
-            if item is None:
-                unresolved.append(entry)
-                continue
-            result = _confirm_result_from_item(item, usage=usage)
-            result["result_cache_hit"] = batch_cache_hit
-            results[entry["group_index"]] = result
-    except Exception:
-        pass  # whole batch failed to call/parse — every entry falls back below
-
-    for entry in unresolved:
-        results[entry["group_index"]] = confirm_finding_group(
-            representative=entry["representative"], occurrence_paths=entry["occurrence_paths"],
-            source_text=entry["source_text"], rule=entry["rule"], stack_context=stack_context,
-            usage=usage, llm_provider=llm_provider, llm_model=llm_model, call_llm_fn=call_llm_fn,
-        )
-
-    return results
 
 
 def group_unverified_findings(
@@ -3446,6 +3190,499 @@ def group_unverified_findings(
     }
 
 
+def _confirm_result_from_item(
+    item: Dict[str, Any], *, usage: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    verdict, problem = parse_verdict(item.get("verdict"))
+    if verdict not in ("true_positive", "false_positive"):
+        # A missing, unrecognised or literally "unverified" verdict is not a
+        # dismissal — leave the member unverified and say why.
+        _record_verdict_problem(usage, CONFIRM_STEP, problem)
+        raw = item.get("verdict")
+        return {
+            "verdict": VERDICT_UNVERIFIED, "confidence": None,
+            "verdict_reason": "", "ai_fix": None,
+            "error": (
+                "missing verdict" if problem == "llm_missing_verdict"
+                else f"unrecognised verdict: {' '.join(str(raw).split())[:VERDICT_REASON_MAX_CHARS]}"
+            ),
+            "unresolved_reason": problem or "evidence_missing",
+        }
+    confidence = _normalize_confidence(item.get("confidence"), verdict)
+    reason = str(item.get("verdict_reason") or "").strip() or "No reason provided by the model."
+    ai_fix = item.get("ai_fix")
+    ai_fix = str(ai_fix).strip() if verdict == "true_positive" and ai_fix else None
+    return {
+        "verdict": verdict, "confidence": confidence,
+        "verdict_reason": reason, "ai_fix": ai_fix, "error": None,
+        "unresolved_reason": None,
+    }
+
+
+# A group entry is what the confirmer works on:
+#   {"group_index": int, "members": [finding dicts, strongest evidence first],
+#    "rule": RegexRule | None, "text_for": path -> source text}
+# Members are addressed in prompts as m1..mN by position in `members`.
+
+def _member_id(index: int) -> str:
+    return f"m{index + 1}"
+
+
+def _member_window(entry: Dict[str, Any], index: int) -> Tuple[int, int, List[str]]:
+    member = entry["members"][index]
+    lines = entry["text_for"](member.get("file_path") or "").splitlines()
+    line = int(member.get("line") or 1)
+    lo = max(1, line - GROUP_CONFIRM_WINDOW_LINES)
+    hi = min(max(len(lines), 1), line + GROUP_CONFIRM_WINDOW_LINES)
+    return lo, hi, lines
+
+
+def _excerpt_signature(entry: Dict[str, Any], index: int) -> str:
+    """The code around a member with line numbers and layout taken away: two
+    members with the same one have nothing to tell them apart."""
+    lo, hi, lines = _member_window(entry, index)
+    return "\n".join(" ".join(lines[n - 1].split()) for n in range(lo, hi + 1) if n - 1 < len(lines))
+
+
+def _is_uniform(entry: Dict[str, Any]) -> bool:
+    """Every member has the same semantic signature (the group key guarantees
+    it) and the same normalized excerpt, so one decision is a decision for all."""
+    members = entry["members"]
+    if len(members) < 2:
+        return False
+    signatures = {semantic_signature(m.get("facts")) for m in members}
+    if len(signatures) != 1:
+        return False
+    first = _excerpt_signature(entry, 0)
+    return all(_excerpt_signature(entry, i) == first for i in range(1, len(members)))
+
+
+def _fact_summary(member: Dict[str, Any]) -> str:
+    facts = member.get("facts") if isinstance(member.get("facts"), dict) else None
+    call = (facts or {}).get("call")
+    if not call:
+        if facts and facts.get("is_declaration"):
+            shape = "a stub" if facts.get("is_stub") else "an implementation"
+            return f"declaration of {(facts.get('enclosing') or {}).get('method')} ({shape})"
+        return ""
+    kinds = ", ".join(a.get("kind", "unknown") for a in facts.get("args") or [])
+    receiver = call.get("receiver_fqn") or call.get("receiver") or "?"
+    return f"calls {call.get('callee')} on {receiver}; argument kinds: ({kinds})"
+
+
+def _plan_members(
+    entry: Dict[str, Any], indices: Sequence[int], budget: Optional[int] = None
+) -> Tuple[List[int], List[int], bool]:
+    """(shown, left over, uniform): as many of `indices`, in order, as fit the
+    character budget — always at least one. A uniform group shows its first
+    member and leaves nothing over."""
+    if budget is None:
+        budget = GROUP_CONFIRM_MEMBER_CHAR_BUDGET
+    if list(indices) == list(range(len(entry["members"]))) and _is_uniform(entry):
+        return [indices[0]], [], True
+    shown: List[int] = []
+    used = 0
+    for idx in indices:
+        lo, hi, lines = _member_window(entry, idx)
+        cost = 120 + sum(
+            min(len(lines[n - 1]), GROUP_CONFIRM_LINE_MAX_CHARS) + 8
+            for n in range(lo, hi + 1) if n - 1 < len(lines)
+        )
+        if shown and used + cost > budget:
+            break
+        shown.append(idx)
+        used += cost
+    taken = set(shown)
+    return shown, [i for i in indices if i not in taken], False
+
+
+def _render_members(entry: Dict[str, Any], shown: Sequence[int], uniform: bool) -> str:
+    """The occurrences block of a prompt: one header line per member, then the
+    code, windows of one file merged and each member's line marked."""
+    members = entry["members"]
+    lines_out: List[str] = []
+    if uniform:
+        lines_out.append(
+            f"All {len(members)} occurrences are identical: the same code around the match and "
+            f"the same resolved call. m1 stands for all of them; your decision for m1 is the "
+            f"decision for every occurrence."
+        )
+    for idx in shown:
+        m = members[idx]
+        summary = _fact_summary(m)
+        lines_out.append(
+            f"{_member_id(idx)} | {m.get('file_path')}:{m.get('line')}" + (f" | {summary}" if summary else "")
+        )
+    by_file: Dict[str, List[int]] = {}
+    for idx in shown:
+        by_file.setdefault(members[idx].get("file_path") or "", []).append(idx)
+    for path, idxs in by_file.items():
+        file_lines = entry["text_for"](path).splitlines()
+        markers: Dict[int, List[str]] = {}
+        for idx in idxs:
+            markers.setdefault(int(members[idx].get("line") or 1), []).append(_member_id(idx))
+        windows = merged_context_windows(
+            list(markers), len(file_lines),
+            before=GROUP_CONFIRM_WINDOW_LINES, after=GROUP_CONFIRM_WINDOW_LINES,
+        )
+        for lo, hi in windows:
+            block = [f"--- {path} lines {lo}-{hi} ---"]
+            for n in range(lo, hi + 1):
+                text = file_lines[n - 1] if n - 1 < len(file_lines) else ""
+                if len(text) > GROUP_CONFIRM_LINE_MAX_CHARS:
+                    text = text[:GROUP_CONFIRM_LINE_MAX_CHARS] + "…"
+                mark = f"  <-- {', '.join(markers[n])}" if n in markers else ""
+                block.append(f"{n}: {text}{mark}")
+            lines_out.append("\n".join(block))
+    evidence = [
+        f"Evidence for {_member_id(idx)}:\n" + reachability.render_evidence(members[idx]["reachability"])
+        for idx in shown if members[idx].get("reachability")
+    ][:GROUP_CONFIRM_EVIDENCE_MEMBERS]
+    facts_block = render_deterministic_facts(
+        [members[idx] for idx in shown], labels=[_member_id(idx) for idx in shown],
+    )
+    return "\n".join(lines_out) + (("\n\n" + "\n\n".join(evidence)) if evidence else "") + (
+        ("\n\n" + facts_block) if facts_block else ""
+    )
+
+
+def _candidate_json(entry: Dict[str, Any]) -> Dict[str, Any]:
+    members = entry["members"]
+    representative = members[0]
+    rule = entry["rule"]
+    paths: List[str] = []
+    for m in members:
+        p = m.get("file_path") or ""
+        if p and p not in paths:
+            paths.append(p)
+    shown = paths[:10]
+    extra = len(paths) - len(shown)
+    return {
+        "rule_id": representative.get("rule_id"),
+        "title": (rule.title if rule else representative.get("title")) or "",
+        "description": (rule.description if rule else "") or "",
+        "cwe": (rule.cwe if rule else representative.get("cwe")) or "",
+        "severity": (rule.severity if rule else representative.get("severity")) or "LOW",
+        "owasp": (rule.owasp if rule else representative.get("owasp_category")) or "",
+        "matched_text": representative.get("matched_text") or "",
+        "occurrence_count": len(members),
+        "occurrence_files": ", ".join(shown) + (f", +{extra} more" if extra > 0 else ""),
+    }
+
+
+def build_group_confirm_prompt(
+    *,
+    entry: Dict[str, Any],
+    shown: Sequence[int],
+    uniform: bool = False,
+    stack_context: str = "",
+) -> Tuple[str, str]:
+    """System + user prompt for one grouped-confirmation call: the pattern, then
+    a numbered excerpt for each member in `shown` (not one representative and a
+    list of file names)."""
+    system = (
+        f"{_GROUP_CONFIRM_SYSTEM}\n\n{_GROUP_RESPONSE_SCHEMA}\n\n"
+        f"Tech stack: {stack_context or 'unknown'}\n"
+        f"OWASP Top 10:2021 categories: {', '.join(OWASP_TOP_10_2021)}"
+    )
+    candidate = _candidate_json(entry)
+    user = (
+        f"Pattern ({candidate['occurrence_count']} occurrence(s) in this repository; "
+        f"files: {candidate['occurrence_files']}):\n"
+        f"{json.dumps(candidate, ensure_ascii=False)}\n\n"
+        f"Occurrences to decide ({len(shown)} shown"
+        + (f" of {candidate['occurrence_count']}" if len(shown) < candidate["occurrence_count"] and not uniform else "")
+        + "):\n"
+        + _render_members(entry, shown, uniform) + "\n"
+    )
+    return system, user
+
+
+_GROUP_CONFIRM_BATCH_SYSTEM = (
+    _GROUP_CONFIRM_SYSTEM + "\n\n"
+    "You will be shown multiple independent patterns, each tagged with a "
+    "group_index and each with its own occurrence ids (m1, m2, ...). Return one "
+    "decision per occurrence shown, each carrying its pattern's group_index and "
+    "its occurrence id — never merge, skip, or invent patterns or occurrences."
+)
+
+_GROUP_BATCH_RESPONSE_SCHEMA = """Output format — one JSON object with exactly one decision per occurrence shown:
+{"decisions": [{
+  "group_index": <int, matches the pattern's group_index>,
+  "member": "<the occurrence id within that pattern, e.g. m1>",
+  "verdict": "true_positive" | "false_positive",
+  "confidence": <0.0-1.0>,
+  "verdict_reason": "<why this occurrence is/isn't a real issue — required, at most 2 sentences>",
+  "ai_fix": "<at most 2 sentences; only when verdict is true_positive>"
+}, ...]}"""
+
+
+def build_group_confirm_batch_prompt(
+    *,
+    plans: Sequence[Dict[str, Any]],
+    stack_context: str = "",
+) -> Tuple[str, str]:
+    """System + user prompt for one batched call covering several groups. Each
+    plan is {"entry", "shown", "uniform"}; candidate metadata for all groups is
+    one compact JSON array and each group's numbered occurrence excerpts follow
+    as a separately labeled block, so index alignment never depends on the
+    order of the model's response."""
+    candidates = []
+    blocks = []
+    for plan in plans:
+        entry = plan["entry"]
+        candidates.append({"group_index": entry["group_index"], **_candidate_json(entry)})
+        blocks.append(
+            f"Pattern {entry['group_index']} — occurrences to decide ({len(plan['shown'])} shown):\n"
+            + _render_members(entry, plan["shown"], plan["uniform"])
+        )
+    system = (
+        f"{_GROUP_CONFIRM_BATCH_SYSTEM}\n\n{_GROUP_BATCH_RESPONSE_SCHEMA}\n\n"
+        f"Tech stack: {stack_context or 'unknown'}\n"
+        f"OWASP Top 10:2021 categories: {', '.join(OWASP_TOP_10_2021)}"
+    )
+    user = (
+        f"Patterns ({len(plans)}), one per line:\n"
+        + "\n".join(json.dumps(c, ensure_ascii=False) for c in candidates) + "\n\n"
+        + "\n\n".join(blocks) + "\n"
+    )
+    return system, user
+
+
+def _decisions_by_member(
+    items: Sequence[Any], shown: Sequence[int], group_index: Optional[int] = None
+) -> Dict[int, Dict[str, Any]]:
+    """Which shown member each decision is about. Ids are matched exactly; a
+    decision without an id is accepted only when it is the one decision for the
+    one member shown. Decisions about occurrences that were not shown are ignored."""
+    ids = {_member_id(i): i for i in shown}
+    scoped = [
+        it for it in items or []
+        if isinstance(it, dict) and (group_index is None or it.get("group_index") == group_index)
+    ]
+    out: Dict[int, Dict[str, Any]] = {}
+    for item in scoped:
+        member = str(item.get("member") or "").strip().lower()
+        if member in ids and ids[member] not in out:
+            out[ids[member]] = item
+    if not out and len(shown) == 1 and len(scoped) == 1 and not scoped[0].get("member"):
+        out[shown[0]] = scoped[0]
+    return out
+
+
+def _new_state(entry: Dict[str, Any]) -> Dict[str, Any]:
+    return {"entry": entry, "results": {}, "shown": set(), "reasons": {}, "failure": None,
+            "uniform": False, "detail": {}}
+
+
+def _record_round(
+    state: Dict[str, Any], shown: Sequence[int], decisions: Dict[int, Dict[str, Any]],
+    *, uniform: bool, cache_hit: bool, usage: Optional[Dict[str, Any]],
+) -> None:
+    for idx in shown:
+        state["shown"].add(idx)
+        item = decisions.get(idx)
+        if item is None:
+            # Keep a more specific earlier reason (an unrecognised verdict) over
+            # the blanket "nothing came back" of a follow-up that found nothing.
+            state["reasons"].setdefault(idx, "llm_missing_verdict")
+            continue
+        result = _confirm_result_from_item(item, usage=usage)
+        if result["error"] is not None:
+            state["reasons"][idx] = result["unresolved_reason"]
+            state["detail"][idx] = result["error"]
+            continue
+        result["result_cache_hit"] = cache_hit
+        state["reasons"].pop(idx, None)
+        if uniform:
+            state["uniform"] = True
+            for every in range(len(state["entry"]["members"])):
+                state["results"][every] = dict(result)
+        else:
+            state["results"][idx] = result
+
+
+def _finalize_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Per-member results, aligned with `entry["members"]`; every member that no
+    decision covers is unverified with the reason it is."""
+    entry = state["entry"]
+    total = len(entry["members"])
+    results: List[Dict[str, Any]] = []
+    for idx in range(total):
+        if idx in state["results"]:
+            results.append(state["results"][idx])
+            continue
+        if state["failure"]:
+            reason = state["failure"]
+        elif idx in state["reasons"]:
+            reason = state["reasons"][idx]
+        else:
+            reason = "llm_missing_verdict" if idx in state["shown"] else "not_in_sample"
+        results.append({
+            "verdict": VERDICT_UNVERIFIED, "confidence": None, "verdict_reason": "", "ai_fix": None,
+            "error": state["detail"].get(idx) or reason, "unresolved_reason": reason,
+        })
+    reviewed = len(state["results"])
+    return {
+        "results": results, "reviewed": reviewed, "total": total, "uniform": state["uniform"],
+        "not_in_sample": sum(1 for r in results if r["unresolved_reason"] == "not_in_sample"),
+        "error": None if reviewed else (results[0]["error"] if results else "empty group"),
+    }
+
+
+def _follow_up_indices(state: Dict[str, Any]) -> List[int]:
+    """Members still without a decision, shown-but-unanswered first."""
+    total = len(state["entry"]["members"])
+    undecided = [i for i in range(total) if i not in state["results"]]
+    return [i for i in undecided if i in state["shown"]] + [i for i in undecided if i not in state["shown"]]
+
+
+def _ask_group(
+    state: Dict[str, Any], indices: Sequence[int], *, stack_context: str,
+    usage: Optional[Dict[str, Any]], llm_provider: Optional[str], llm_model: Optional[str],
+    call_llm_fn: Callable[..., str],
+) -> None:
+    """One call for one group over `indices`: plan, ask (one JSON retry), record."""
+    entry = state["entry"]
+    shown, _left, uniform = _plan_members(entry, indices)
+    system, user = build_group_confirm_prompt(
+        entry=entry, shown=shown, uniform=uniform, stack_context=stack_context,
+    )
+
+    def _call(prompt: str) -> str:
+        with _INFLIGHT:
+            return call_llm_fn(
+                system, prompt, max_tokens=max(512, 130 * len(shown)), temperature=0.0,
+                usage=usage, step=CONFIRM_STEP,
+                provider=llm_provider, model=llm_model, json_mode=True,
+            )
+
+    try:
+        raw_text = _call(user)
+        items, err = parse_llm_json_array(raw_text)
+        if err and not items:
+            raw_text = _call(
+                user + "\n\nYour previous response could not be parsed as JSON. "
+                'Respond with the {"decisions": [...]} JSON object only '
+                "— no prose, no markdown fences."
+            )
+            items, err = parse_llm_json_array(raw_text)
+    except Exception as exc:  # one bad group must not kill the whole pass
+        state["failure"] = unresolved_reason_for_exception(exc)
+        state["detail"].update({i: f"{type(exc).__name__}: {exc}" for i in shown})
+        state["shown"].update(shown)
+        return
+    _record_round(
+        state, shown, _decisions_by_member(items, shown), uniform=uniform,
+        cache_hit=last_call_was_cache_hit(), usage=usage,
+    )
+
+
+def confirm_finding_group(
+    *,
+    entry: Dict[str, Any],
+    stack_context: str = "",
+    usage: Optional[Dict[str, Any]] = None,
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    call_llm_fn: Callable[..., str] = call_llm,
+    state: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """TP/FP-confirm a group member by member.
+
+    One call shows as many members as the character budget allows, each with
+    its own excerpt, and asks for one decision per member id. Members the
+    response left out, and members the budget could not show, get one follow-up
+    call carrying just their excerpts. What is still undecided after that is
+    `unverified`: `llm_missing_verdict` when it was shown, `not_in_sample` when
+    it never fit. No member ever takes a sibling's verdict — except in a group
+    whose members all have the same signature *and* the same excerpt, where one
+    decision is, verifiably, a decision for each.
+
+    Returns {"results" (one per member, in `entry["members"]` order),
+    "reviewed", "total", "not_in_sample", "uniform", "error"}; `error` is set
+    only when no member could be decided at all."""
+    kwargs = dict(stack_context=stack_context, usage=usage, llm_provider=llm_provider,
+                  llm_model=llm_model, call_llm_fn=call_llm_fn)
+    state = state or _new_state(entry)
+    if not state["shown"]:
+        _ask_group(state, list(range(len(entry["members"]))), **kwargs)
+    remaining = _follow_up_indices(state)
+    if remaining and not state["failure"]:
+        _ask_group(state, remaining, **kwargs)
+    return _finalize_state(state)
+
+
+def confirm_finding_group_batch(
+    *,
+    entries: Sequence[Dict[str, Any]],
+    stack_context: str = "",
+    usage: Optional[Dict[str, Any]] = None,
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    call_llm_fn: Callable[..., str] = call_llm,
+) -> Dict[int, Dict[str, Any]]:
+    """Member-by-member confirmation of several groups in one LLM call, falling
+    back to `confirm_finding_group` for what the batch did not resolve.
+
+    A batch call that raises, or whose response is unparseable even after one
+    retry, does not leave its groups unverified: each group gets its own
+    confirm_finding_group call. A response that parses but decides only some
+    members of a group sends the rest of that group to a follow-up call. Only a
+    group whose fallback call also fails ends up unverified with `error` set —
+    the batch is purely a cost optimization, never a coverage reduction.
+    Returns {group_index: confirm_finding_group's outcome} for every entry."""
+    kwargs = dict(stack_context=stack_context, usage=usage, llm_provider=llm_provider,
+                  llm_model=llm_model, call_llm_fn=call_llm_fn)
+    states: Dict[int, Dict[str, Any]] = {e["group_index"]: _new_state(e) for e in entries}
+    plans = []
+    for entry in entries:
+        shown, _left, uniform = _plan_members(entry, list(range(len(entry["members"]))))
+        plans.append({"entry": entry, "shown": shown, "uniform": uniform})
+    system, user = build_group_confirm_batch_prompt(plans=plans, stack_context=stack_context)
+    max_tokens = max(512, 130 * sum(len(p["shown"]) for p in plans))
+
+    def _call(prompt: str) -> str:
+        with _INFLIGHT:
+            return call_llm_fn(
+                system, prompt, max_tokens=max_tokens, temperature=0.0,
+                usage=usage, step=CONFIRM_STEP,
+                provider=llm_provider, model=llm_model, json_mode=True,
+            )
+
+    answered: Set[int] = set()
+    try:
+        raw_text = _call(user)
+        items, err = parse_llm_json_array(raw_text)
+        if err and not items:
+            raw_text = _call(
+                user + "\n\nYour previous response could not be parsed as JSON. "
+                'Respond with the {"decisions": [...]} JSON object only — no prose, '
+                "no markdown fences."
+            )
+            items, err = parse_llm_json_array(raw_text)
+        cache_hit = last_call_was_cache_hit()
+        for plan in plans:
+            gi = plan["entry"]["group_index"]
+            decisions = _decisions_by_member(items, plan["shown"], gi)
+            if decisions:
+                answered.add(gi)
+                _record_round(states[gi], plan["shown"], decisions, uniform=plan["uniform"],
+                              cache_hit=cache_hit, usage=usage)
+    except Exception:
+        pass  # whole batch failed to call/parse — every group falls back below
+
+    outcomes: Dict[int, Dict[str, Any]] = {}
+    for entry in entries:
+        gi = entry["group_index"]
+        # A group the batch never answered starts over on its own; one it answered
+        # in part only asks about what is still undecided.
+        outcomes[gi] = confirm_finding_group(
+            entry=entry, state=states[gi] if gi in answered else None, **kwargs,
+        )
+    return outcomes
+
+
 def group_confirm_unverified_findings(
     *,
     file_results: List[Dict[str, Any]],
@@ -3464,22 +3701,27 @@ def group_confirm_unverified_findings(
     groups_per_call: int = 1,
 ) -> Dict[str, Any]:
     """Group unverified findings (via `group_unverified_findings`) and confirm
-    each group with an LLM call, mutating every member finding dict in place.
+    every member of each group with an LLM, mutating each member finding dict
+    in place (see `confirm_finding_group` for how members are decided and what
+    stays unverified).
 
     `group_cap`, when set, confirms only the top-N groups by occurrence count
     (the biggest collapses first) and leaves the rest unverified — a backstop
     against repos with hundreds of groups. `groups_per_call` batches multiple
-    groups into one LLM call (1 = today's one-call-per-group behavior) to
-    amortize the shared system-prompt/OWASP-label overhead across a batch.
+    groups into one LLM call (1 = one call per group) to amortize the shared
+    system-prompt/OWASP-label overhead across a batch.
 
     `verdict_updates_writer(file_path, updates)`, when given, is called once
     per distinct file among all group members with the per-finding update
-    dicts ({rule_id, line, verdict, confidence, verdict_reason, ai_fix}) so a
-    caller can persist the change onto already-written DB rows.
+    dicts ({rule_id, line, verdict, confidence, verdict_reason, ai_fix,
+    review_coverage, ...}) so a caller can persist the change onto
+    already-written DB rows.
     """
     grouping = group_unverified_findings(file_results, severities=severities)
     groups = grouping["members_by_key"]
-    by_occurrence = sorted(grouping["group_order"], key=lambda k: len(groups[k]), reverse=True)
+    # Biggest collapses first; ties by key, so the order (and with it every
+    # prompt) does not depend on the order files happened to finish scanning.
+    by_occurrence = sorted(grouping["group_order"], key=lambda k: (-len(groups[k]), repr(k)))
     confirm_keys = by_occurrence[:group_cap] if group_cap else by_occurrence
     skipped_keys = by_occurrence[group_cap:] if group_cap else []
 
@@ -3497,127 +3739,147 @@ def group_confirm_unverified_findings(
             text_cache[path] = text
         return text
 
-    def _occurrence_paths(members: List[Dict[str, Any]]) -> List[str]:
-        occurrence_paths: List[str] = []
-        seen: Set[str] = set()
-        for m in members:
-            p = m.get("file_path") or ""
-            if p and p not in seen:
-                seen.add(p)
-                occurrence_paths.append(p)
-        return occurrence_paths
+    def _entry(group_index: int, key: tuple) -> Dict[str, Any]:
+        # Members with the strongest reachability evidence come first: they are
+        # the most informative to show when the budget cannot show them all.
+        # Ties are ordered by location, so a prompt (and its cache entry) does
+        # not depend on the order files happened to finish scanning.
+        ordered = sorted(
+            groups[key],
+            key=lambda m: (
+                reachability.evidence_rank(m.get("reachability")),
+                m.get("file_path") or "", int(m.get("line") or 0),
+            ),
+        )
+        return {
+            "group_index": group_index,
+            "members": ordered,
+            "rule": rules_by_id.get(ordered[0].get("rule_id") or ""),
+            "text_for": _text_for,
+        }
 
-    def _representative(members: List[Dict[str, Any]]) -> Dict[str, Any]:
-        # The occurrence with the strongest reachability evidence is the most
-        # informative one to show; ties keep first-seen order.
-        return min(members, key=lambda m: reachability.evidence_rank(m.get("reachability")))
-
-    def _apply_result(members: List[Dict[str, Any]], result: Dict[str, Any]) -> None:
-        if result.get("error") is not None:
-            # Still unverified, but say why nobody decided it.
-            for m in members:
-                m["unresolved_reason"] = result.get("unresolved_reason") or "llm_call_failed"
-            return
-        for m in members:
-            m["unresolved_reason"] = None
-            m["result_cache_hit"] = bool(result.get("result_cache_hit"))
-            m["verdict"] = result["verdict"]
-            m["confidence"] = result["confidence"]
-            m["verdict_reason"] = (
-                f"{result['verdict_reason']} "
-                f"(confirmed via grouped review of {len(members)} occurrence(s) of this pattern)"
-            )
+    def _apply_outcome(entry: Dict[str, Any], outcome: Dict[str, Any]) -> None:
+        members = entry["members"]
+        coverage = {"reviewed": outcome["reviewed"], "total": outcome["total"]}
+        note = f"Reviewed {outcome['reviewed']} of {outcome['total']} occurrences"
+        for member, result in zip(members, outcome["results"]):
+            member["review_coverage"] = coverage
+            if result.get("error") is not None:
+                reason = result.get("unresolved_reason") or "llm_call_failed"
+                member["unresolved_reason"] = reason
+                if reason == "not_in_sample":
+                    member["verdict_reason"] = (
+                        f"Not reviewed: only {outcome['reviewed']} of {outcome['total']} occurrences "
+                        f"of this pattern fit in the confirmation sample, and a verdict for one "
+                        f"occurrence is not given to another."
+                    )
+                continue
+            member["unresolved_reason"] = None
+            member["result_cache_hit"] = bool(result.get("result_cache_hit"))
+            member["verdict"] = result["verdict"]
+            member["confidence"] = result["confidence"]
+            member["verdict_reason"] = f"{result['verdict_reason']} ({note})"
             if result["verdict"] == "true_positive" and result.get("ai_fix"):
-                m["ai_fix"] = result["ai_fix"]
-            reachability.apply_confidence(m)
+                member["ai_fix"] = result["ai_fix"]
+            # A deterministic proof or fact on this occurrence still outranks
+            # the model's answer for it.
+            reapply_precedence(member)
+            reachability.apply_confidence(member)
 
-    def _run(key: tuple) -> Dict[str, Any]:
-        members = groups[key]
-        representative = _representative(members)
-        occurrence_paths = _occurrence_paths(members)
-        source_text = _text_for(representative.get("file_path") or "")
-        result = confirm_finding_group(
-            representative=representative, occurrence_paths=occurrence_paths,
-            source_text=source_text, rule=rules_by_id.get(representative.get("rule_id") or ""),
-            stack_context=stack_context, usage=usage,
+    def _outcome_record(entry: Dict[str, Any], outcome: Dict[str, Any]) -> Dict[str, Any]:
+        results = outcome["results"]
+        decided = [r for r in results if r.get("error") is None]
+        verdicts = {r["verdict"] for r in decided}
+        return {
+            "key": entry["key"], "members": entry["members"], **outcome,
+            "verdict": "true_positive" if "true_positive" in verdicts
+            else ("false_positive" if verdicts else VERDICT_UNVERIFIED),
+        }
+
+    def _run(item: Tuple[int, tuple]) -> Dict[str, Any]:
+        entry = _entry(*item)
+        entry["key"] = item[1]
+        outcome = confirm_finding_group(
+            entry=entry, stack_context=stack_context, usage=usage,
             llm_provider=llm_provider, llm_model=llm_model, call_llm_fn=call_llm_fn,
         )
-        _apply_result(members, result)
-        return {"key": key, "members": members, **result}
+        _apply_outcome(entry, outcome)
+        return _outcome_record(entry, outcome)
 
-    def _run_batch(batch_keys: List[tuple]) -> List[Dict[str, Any]]:
+    def _run_batch(batch: List[Tuple[int, tuple]]) -> List[Dict[str, Any]]:
         entries = []
-        for i, key in enumerate(batch_keys):
-            members = groups[key]
-            representative = _representative(members)
-            entries.append({
-                "group_index": i,
-                "representative": representative,
-                "occurrence_paths": _occurrence_paths(members),
-                "source_text": _text_for(representative.get("file_path") or ""),
-                "rule": rules_by_id.get(representative.get("rule_id") or ""),
-            })
-        results_by_index = confirm_finding_group_batch(
+        for i, (_n, key) in enumerate(batch):
+            entry = _entry(i, key)
+            entry["key"] = key
+            entries.append(entry)
+        outcomes_by_index = confirm_finding_group_batch(
             entries=entries, stack_context=stack_context, usage=usage,
             llm_provider=llm_provider, llm_model=llm_model, call_llm_fn=call_llm_fn,
         )
-        batch_outcomes = []
-        for i, key in enumerate(batch_keys):
-            members = groups[key]
-            result = results_by_index[i]
-            _apply_result(members, result)
-            batch_outcomes.append({"key": key, "members": members, **result})
-        return batch_outcomes
+        records = []
+        for entry in entries:
+            outcome = outcomes_by_index[entry["group_index"]]
+            _apply_outcome(entry, outcome)
+            records.append(_outcome_record(entry, outcome))
+        return records
 
+    numbered = list(enumerate(confirm_keys))
     outcomes: List[Dict[str, Any]] = []
     if groups_per_call <= 1:
-        if len(confirm_keys) > 1 and group_workers > 1:
-            with ThreadPoolExecutor(max_workers=min(group_workers, len(confirm_keys))) as pool:
-                outcomes = list(pool.map(_run, confirm_keys))
+        if len(numbered) > 1 and group_workers > 1:
+            with ThreadPoolExecutor(max_workers=min(group_workers, len(numbered))) as pool:
+                outcomes = list(pool.map(_run, numbered))
         else:
-            outcomes = [_run(key) for key in confirm_keys]
+            outcomes = [_run(item) for item in numbered]
     else:
-        batches = [confirm_keys[i:i + groups_per_call] for i in range(0, len(confirm_keys), groups_per_call)]
+        batches = [numbered[i:i + groups_per_call] for i in range(0, len(numbered), groups_per_call)]
         if len(batches) > 1 and group_workers > 1:
             with ThreadPoolExecutor(max_workers=min(group_workers, len(batches))) as pool:
                 outcomes = [o for batch_outcomes in pool.map(_run_batch, batches) for o in batch_outcomes]
         else:
-            outcomes = [o for batch_keys in batches for o in _run_batch(batch_keys)]
+            outcomes = [o for batch in batches for o in _run_batch(batch)]
 
     for key in skipped_keys:
         for m in groups[key]:
             m["unresolved_reason"] = "cap_reached"
 
+    for outcome in outcomes:
+        bump_counter(usage, "group_confirm_coverage", "members_reviewed", outcome["reviewed"])
+        bump_counter(usage, "group_confirm_coverage", "members_total", outcome["total"])
+        bump_counter(usage, "group_confirm_coverage", "members_not_in_sample", outcome["not_in_sample"])
+
     if verdict_updates_writer is not None:
         updates_by_file: Dict[str, List[Dict[str, Any]]] = {}
         for outcome in outcomes:
-            for m in outcome["members"]:
+            coverage = {"reviewed": outcome["reviewed"], "total": outcome["total"]}
+            for m, result in zip(outcome["members"], outcome["results"]):
                 path = m.get("file_path") or ""
-                if outcome.get("error") is not None:
-                    # Verdict, confidence and reasoning stay as they were; only
-                    # the reason the group is still undecided is recorded.
+                if result.get("error") is not None:
+                    # Verdict, confidence and reasoning stay as they were (apart
+                    # from the note a member that never fit is given); only the
+                    # reason it is still undecided is recorded.
                     update = {
-                        "rule_id": m.get("rule_id"),
-                        "line": m.get("line"),
+                        "rule_id": m.get("rule_id"), "line": m.get("line"),
                         "unresolved_reason": m.get("unresolved_reason"),
+                        "review_coverage": coverage,
                     }
+                    if m.get("unresolved_reason") == "not_in_sample":
+                        update["verdict_reason"] = m.get("verdict_reason")
                 else:
                     update = {
-                        "rule_id": m.get("rule_id"),
-                        "line": m.get("line"),
-                        "verdict": m.get("verdict"),
-                        "confidence": m.get("confidence"),
-                        "verdict_reason": m.get("verdict_reason"),
-                        "ai_fix": m.get("ai_fix"),
-                        "unresolved_reason": None,
+                        "rule_id": m.get("rule_id"), "line": m.get("line"),
+                        "verdict": m.get("verdict"), "confidence": m.get("confidence"),
+                        "verdict_reason": m.get("verdict_reason"), "ai_fix": m.get("ai_fix"),
+                        "unresolved_reason": m.get("unresolved_reason"),
+                        "reason_tag": m.get("reason_tag"),
+                        "review_coverage": coverage,
                         "result_cache_hit": bool(m.get("result_cache_hit")),
                     }
                 updates_by_file.setdefault(path, []).append(update)
         for key in skipped_keys:
             for m in groups[key]:
                 updates_by_file.setdefault(m.get("file_path") or "", []).append({
-                    "rule_id": m.get("rule_id"),
-                    "line": m.get("line"),
+                    "rule_id": m.get("rule_id"), "line": m.get("line"),
                     "unresolved_reason": "cap_reached",
                 })
         for path, updates in updates_by_file.items():
@@ -3627,9 +3889,9 @@ def group_confirm_unverified_findings(
         for outcome in outcomes:
             on_group(outcome)
 
-    tp = sum(1 for o in outcomes if o.get("verdict") == "true_positive")
-    fp = sum(1 for o in outcomes if o.get("verdict") == "false_positive")
-    errors = sum(1 for o in outcomes if o.get("error") is not None)
+    tp = sum(1 for o in outcomes if o["verdict"] == "true_positive")
+    fp = sum(1 for o in outcomes if o["verdict"] == "false_positive")
+    errors = sum(1 for o in outcomes if o["error"] is not None)
     return {
         "candidate_count": grouping["candidate_count"],
         "group_count": len(by_occurrence),
@@ -3638,5 +3900,8 @@ def group_confirm_unverified_findings(
         "tp_group_count": tp,
         "fp_group_count": fp,
         "error_group_count": errors,
-        "confirmed_finding_count": sum(len(o["members"]) for o in outcomes if o.get("error") is None),
+        "confirmed_finding_count": sum(o["reviewed"] for o in outcomes),
+        "members_reviewed": sum(o["reviewed"] for o in outcomes),
+        "members_total": sum(o["total"] for o in outcomes),
+        "members_not_in_sample": sum(o["not_in_sample"] for o in outcomes),
     }

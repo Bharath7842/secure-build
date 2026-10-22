@@ -272,23 +272,27 @@ def apply_validators(
     return changed
 
 
-def render_deterministic_facts(findings: Sequence[Dict[str, Any]], *, label: str = "") -> str:
+def render_deterministic_facts(
+    findings: Sequence[Dict[str, Any]], *, labels: Optional[Sequence[str]] = None
+) -> str:
     """The ``Deterministic facts:`` block for a prompt: what validators proved
     or could not resolve about these occurrences. Empty string when there is
     nothing to say, so a finding with nothing to add keeps a byte-identical
-    prompt (and its cache entry)."""
+    prompt (and its cache entry). ``labels`` names each finding the way the
+    prompt does (m1, m2, ...); the default is its position."""
     lines: List[str] = []
-    for index, finding in enumerate(findings, start=1):
+    for position, finding in enumerate(findings):
+        label = labels[position] if labels else str(position + 1)
         facts = finding.get("facts") if isinstance(finding.get("facts"), dict) else None
         for outcome in (facts or {}).get("validators") or []:
             if outcome["outcome"] == POSITIVE:
-                lines.append(f"- {label}{index}: {outcome.get('proof')}")
+                lines.append(f"- {label}: {outcome.get('proof')}")
             elif outcome["outcome"] == GAP:
-                lines.append(f"- {label}{index}: not resolved — {outcome.get('missing')}")
+                lines.append(f"- {label}: not resolved — {outcome.get('missing')}")
             elif outcome["outcome"] == NEGATIVE:
-                lines.append(f"- {label}{index}: ruled out — {outcome.get('proof')}")
+                lines.append(f"- {label}: ruled out — {outcome.get('proof')}")
         for note in finding.get("contradictions") or []:
-            lines.append(f"- {label}{index}: {note}")
+            lines.append(f"- {label}: {note}")
     if not lines:
         return ""
     return "Deterministic facts:\n" + "\n".join(lines)

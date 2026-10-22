@@ -3,10 +3,10 @@ area: aggregation
 polarity: positive
 seed_findings: [78]
 adjudication: dev_label_only
-# One representative's verdict is applied to every member of a group. Here the
-# representative formats a numeric id, so the whole group is dismissed, including
-# ReportC, which formats an attacker-controlled string into the query.
-xfail: EPIC-01
+# Three occurrences of one pattern. Two format a numeric id into the query, one
+# formats an attacker-controlled string. Each occurrence is shown to the model with
+# its own code and decided on its own: the numeric ones are dismissed, the string
+# one is not, instead of one sampled verdict being copied to the whole group.
 state_overrides: {}
 expected:
   - rule_id: java-jdbc-statement-exec-variable
@@ -34,10 +34,23 @@ scripted:
     response:
       decisions:
         - group_index: 0
+          member: m1
           verdict: false_positive
           confidence: 0.2
           verdict_reason: The formatted value is a numeric id, so it cannot change the query.
+        - group_index: 0
+          member: m2
+          verdict: false_positive
+          confidence: 0.2
+          verdict_reason: The formatted value is a numeric id, so it cannot change the query.
+        - group_index: 0
+          member: m3
+          verdict: true_positive
+          confidence: 0.85
+          verdict_reason: The name is formatted into the query text as a quoted string.
+          ai_fix: Bind the name with a PreparedStatement parameter.
         - group_index: 1
+          member: m1
           verdict: true_positive
           confidence: 0.85
           verdict_reason: The name is formatted into the query text as a quoted string.

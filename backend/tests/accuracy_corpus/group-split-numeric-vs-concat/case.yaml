@@ -1,0 +1,35 @@
+id: group-split-numeric-vs-concat
+area: aggregation
+polarity: positive
+seed_findings: [78]
+adjudication: dev_label_only
+# The same SQL-concatenation rule matches two statements that look alike but pass
+# different kinds of values: an int id and a String name. They are not one
+# construct (the facts say the arguments differ), so they are two groups and each
+# is decided on its own: the numeric one cannot inject, the string one can.
+expected:
+  - rule_id: java-sql-string-concat
+    cwe: CWE-89
+    file: src/main/java/com/acme/util/ById.java
+    sink_line: 7
+    verdict: false_positive
+  - rule_id: java-sql-string-concat
+    cwe: CWE-89
+    file: src/main/java/com/acme/util/ByName.java
+    sink_line: 7
+    verdict: true_positive
+scripted:
+  - step: group_confirm_triage_findings
+    response:
+      decisions:
+        - group_index: 0
+          member: m1
+          verdict: false_positive
+          confidence: 0.2
+          verdict_reason: Only an int is concatenated, so no SQL text can be injected.
+        - group_index: 1
+          member: m1
+          verdict: true_positive
+          confidence: 0.9
+          verdict_reason: The String name is concatenated into a quoted SQL literal.
+          ai_fix: Bind the name with a PreparedStatement parameter.

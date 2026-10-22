@@ -679,6 +679,13 @@ def usage_cost_summary(usage: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         for key, count in counters.items():
             bucket[key] = count
             verdict_totals[key] = verdict_totals.get(key, 0) + count
+    coverage = (usage.get("_counters") or {}).get("group_confirm_coverage") or {}
+    if coverage:
+        confirm_bucket = by_step.setdefault(
+            "group_confirm_triage_findings", {"calls": 0, "input_tokens": 0, "output_tokens": 0}
+        )
+        for key in ("members_reviewed", "members_total", "members_not_in_sample"):
+            confirm_bucket[key] = int(coverage.get(key) or 0)
     # Prefer accumulated per-call cost (correct after mid-scan Bedrock→Ollama switch).
     cost = usage.get("cost_usd")
     if cost is None:
@@ -879,7 +886,9 @@ def call_llm(
 # should invalidate previously cached responses even if the prompt bytes match.
 #   "3": EPIC-01 — validator precedence is applied to a model verdict (a proof
 #        can overrule it, a proven fact turns a dismissal into a conflict).
-RESULT_CACHE_VERSION = "3"
+#   "4": EPIC-01 — grouped confirmation answers per member (`member` ids), not
+#        one verdict per group; the prompt and response schema changed.
+RESULT_CACHE_VERSION = "4"
 # The cache object rides on the shared scan usage dict — the one object every
 # LLM-calling stage already threads through — rather than a new parameter on
 # every call site. It must expose get(key) -> {text, input_tokens,

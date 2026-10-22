@@ -1138,11 +1138,13 @@ def test_node_confirm_triage_groups_writer_receives_updates(agent, monkeypatch, 
     writer_calls = []
     state["verdict_updates_writer"] = lambda file_path, updates: writer_calls.append((file_path, updates))
 
-    def fake_confirm_finding_group(**_kwargs):
-        return {
-            "verdict": "true_positive", "confidence": 0.9,
-            "verdict_reason": "real secret", "ai_fix": None, "error": None,
-        }
+    def fake_confirm_finding_group(*, entry, **_kwargs):
+        decided = {"verdict": "true_positive", "confidence": 0.9,
+                   "verdict_reason": "real secret", "ai_fix": None, "error": None,
+                   "unresolved_reason": None}
+        n = len(entry["members"])
+        return {"results": [dict(decided) for _ in range(n)], "reviewed": n, "total": n,
+                "uniform": False, "not_in_sample": 0, "error": None}
 
     monkeypatch.setattr(agent.llm_file_scan, "confirm_finding_group", fake_confirm_finding_group)
     result = agent.node_confirm_triage_groups(state)

@@ -452,10 +452,11 @@ def test_triage_call_failure_keeps_every_candidate(lfs, rules):
     assert all(f["verdict"] == "unverified" for f in result["findings"])
 
 
-def test_triage_asks_once_per_repeated_construct_and_fans_the_verdict_out(lfs, rules):
+def test_triage_asks_once_per_repeated_construct_and_decides_only_the_occurrences_shown(lfs, rules):
     """The same matched text five times in one file is one candidate (with an
     occurrence count and only its first three excerpts); its verdict lands on
-    every occurrence."""
+    the occurrences the model saw. The others stay unverified, not_in_sample:
+    a verdict for three is not a verdict for the other two (SAST-01-070)."""
     lines = [f"filler{i}" for i in range(1, 201)]
     repeated = [10, 50, 90, 130, 170]
     for n in repeated:
@@ -482,7 +483,13 @@ def test_triage_asks_once_per_repeated_construct_and_fans_the_verdict_out(lfs, r
     assert "c3 |" not in user
     assert "<-- c1" in user and "130:" not in user  # only the first three occurrences are excerpted
     verdicts = {f["line"]: f["verdict"] for f in result["findings"]}
-    assert verdicts == {**{n: "false_positive" for n in repeated}, 195: "true_positive"}
+    assert verdicts == {
+        **{n: "false_positive" for n in repeated[:3]}, **{n: "unverified" for n in repeated[3:]},
+        195: "true_positive",
+    }
+    skipped = [f for f in result["findings"] if f["line"] in repeated[3:]]
+    assert {f["unresolved_reason"] for f in skipped} == {"not_in_sample"}
+    assert result["unverified_count"] == 2
 
 
 # --- flows: shared hops sent once -----------------------------------------------

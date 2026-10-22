@@ -52,9 +52,13 @@ def semantic_signature(facts: Mapping[str, Any] | None) -> str:
         return "comment"
     call = facts.get("call")
     if call:
-        kinds = ",".join(a.get("kind", "unknown") for a in facts.get("args") or [])
-        owner = call.get("owner_fqn") or "?"
-        receiver = call.get("receiver_fqn") or "?"
+        kinds = ",".join(
+            a.get("kind", "unknown") + (f":{a['via']}" if a.get("via") else "")
+            for a in facts.get("args") or []
+        )
+        declared = call.get("receiver_type")
+        owner = call.get("owner_fqn") or (f"~{declared}" if declared else "?")
+        receiver = call.get("receiver_fqn") or (f"~{declared}" if declared else "?")
         return f"call:{owner}.{call.get('callee')}/{call.get('arity')}|{receiver}|({kinds})"
     enclosing = facts.get("enclosing") or {}
     if facts.get("is_declaration"):

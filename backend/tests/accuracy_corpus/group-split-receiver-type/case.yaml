@@ -1,0 +1,34 @@
+id: group-split-receiver-type
+area: aggregation
+polarity: positive
+seed_findings: [284]
+adjudication: dev_label_only
+# `logger-exception-tostring` matches `logger.error(... x.toString())`. In one file x
+# is an exception, in the other a Calendar: different receiver types, so two groups,
+# and the Calendar's toString is not judged like an exception's.
+expected:
+  - rule_id: logger-exception-tostring
+    cwe: CWE-209
+    file: src/main/java/com/acme/util/CalendarLog.java
+    sink_line: 11
+    verdict: false_positive
+  - rule_id: logger-exception-tostring
+    cwe: CWE-209
+    file: src/main/java/com/acme/util/ExceptionLog.java
+    sink_line: 10
+    verdict: true_positive
+scripted:
+  - step: group_confirm_triage_findings
+    response:
+      decisions:
+        - group_index: 0
+          member: m1
+          verdict: false_positive
+          confidence: 0.2
+          verdict_reason: A Calendar's toString holds a date, not exception detail.
+        - group_index: 1
+          member: m1
+          verdict: true_positive
+          confidence: 0.6
+          verdict_reason: The exception's toString writes its message and type into the log.
+          ai_fix: Pass the exception as the logger's last argument instead.

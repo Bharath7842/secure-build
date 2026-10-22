@@ -1,0 +1,8 @@
+{
+  "input_tokens": 704,
+  "key": "922af88cda1eb1f5806e38b0b43259a029598132e8fd6d4496c03cff165e7c19",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 58,
+  "step": "group_confirm_triage_findings",
+  "text": "{\"decisions\": [{\"group_index\": 0, \"verdict\": \"true_positive\", \"confidence\": 0.7, \"verdict_reason\": \"The number reaches the wrapper's query from the service layer.\", \"ai_fix\": \"Bind the number as a parameter and validate its format.\"}]}"
+}
