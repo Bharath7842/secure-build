@@ -171,8 +171,10 @@ def check_explanation(
                 CHECK_FIX, f"the suggested fix `{span}` is what the code at line {finding.get('line')} already does"))
             break
 
-    # 5. "no callers" with a call graph that cannot prove it
-    if not call_graph_complete and _unnegated(_NO_CALLERS_PHRASES, reason):
+    # 5. "no callers" with a call graph that cannot prove it (EPIC-02: the SQL
+    # check records a proven `unreferenced` status on the facts)
+    proven = (facts or {}).get("reachability_status") == "unreferenced"
+    if not call_graph_complete and not proven and _unnegated(_NO_CALLERS_PHRASES, reason):
         found.append(_contradiction(
             CHECK_CALLERS,
             "the reason claims the code has no callers or is dead, but the call graph is incomplete "

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ejb-jar xmlns="http://java.sun.com/xml/ns/javaee" version="3.0">
+  <enterprise-beans>
+    <session>
+      <ejb-name>Orders</ejb-name>
+      <remote>com.acme.ejb.OrderRemote</remote>
+      <ejb-class>com.acme.ejb.OrderBean</ejb-class>
+    </session>
+  </enterprise-beans>
+</ejb-jar>

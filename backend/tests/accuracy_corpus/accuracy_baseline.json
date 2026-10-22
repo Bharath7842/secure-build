@@ -500,6 +500,19 @@
         }
       ]
     },
+    "sql-inactive-unreferenced-method": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/TariffDao.java",
+          "issue_class": "inactive",
+          "line": 12,
+          "occurrence_id": "858ad813ac795cfbb8a438717f047b3461a749606ab604a74785c34d47cbe23b",
+          "rule_id": "java-sql-string-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
     "sql-live-concat-below-comment": {
       "findings": [
         {
@@ -546,6 +559,32 @@
           "issue_class": "security",
           "line": 13,
           "occurrence_id": "27434d0dcb6c40bb7f6ba6e8718503e3d0f4323661262f6ce552f00f287ee951",
+          "rule_id": "java-sql-string-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "sql-reachable-via-ejb-descriptor": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/TariffSessionBean.java",
+          "issue_class": "security",
+          "line": 12,
+          "occurrence_id": "cdb034d58f93d2d4fd3df1e32393ff42b6a4e2ae69f9fa3e355d703ab5646a19",
+          "rule_id": "java-sql-string-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "sql-reachable-via-ejb-interface": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/TariffBean.java",
+          "issue_class": "security",
+          "line": 12,
+          "occurrence_id": "9fbe99723708008c4504543a409c777803c9539b8a8f9d6292aef2137fa11b36",
           "rule_id": "java-sql-string-concat",
           "unresolved_reason": null,
           "verdict": "true_positive"

@@ -33,6 +33,14 @@ on a *call* into a project method (a `runtime-sink-sql-*` call site) is judged
 from the callee's summary: `sql_callee_no_sql` when the resolved callee runs
 no SQL at all, `sql_fixed_template_bound` when it runs only fixed bound SQL,
 `sql_dynamic_text` when this call's argument reaches its SQL text.
+
+Unsafe SQL in a *private* method the call graph proves unreferenced
+(`call_graph.reachability_status`, SAST-02-070: no call, entry point,
+descriptor or reflection names it, and every file parsed) stays a true
+positive with `issue_class=inactive` — still visible, not dismissed. Anything
+short of that proof leaves the class alone. The status is recorded on the
+facts (`reachability_status`), so the "no callers" explanation check can tell
+a proven claim from a guess.
 * **No opinion** — the anchor is not on any statement, an enum or boolean part
   is dynamic, or a placeholder is not bound on some path (missing a bind is a
   bug, not proof of safety or of injection).
@@ -221,10 +229,28 @@ def decide(finding: Dict[str, Any], facts: Optional[Dict[str, Any]], text: str,
     for outcome in ("positive_fact", "evidence_gap"):
         for result in results:
             if result.outcome == outcome:
-                return result
+                return _inactive(result, summaries, method, facts) if outcome == "positive_fact" else result
     if all(r.outcome == "negative_proof" for r in results):
         return results[0]
     return no_opinion()
+
+
+def _inactive(result: ValidatorResult, summaries: sq.SqlSummaries, method: Any,
+              facts: Optional[Dict[str, Any]]) -> ValidatorResult:
+    """Relabel unsafe SQL as inactive code when its method is proven unreferenced."""
+    if method is None:
+        return result
+    from pipeline import call_graph as cg
+
+    status, _checked = cg.reachability_status(summaries.graph, method.key)
+    if isinstance(facts, dict):
+        facts["reachability_status"] = status
+    if status != "unreferenced":
+        return result
+    return positive_fact(result.reason_tag, (
+        f"Inactive code: {method.name}() builds SQL text from its input, but nothing calls it — no "
+        "call, entry point, descriptor or reflection names it, and every file parsed."
+    ), issue_class="inactive")
 
 
 @register("sql_binding", 1, rule_ids=SQL_RULE_IDS, rule_prefixes=("runtime-sink-sql-",), cwes=(89,))

@@ -1526,7 +1526,7 @@ class SqlSummaries:
         else is a named gap. Used when the scan built no call graph."""
         from pipeline import call_graph as cg
 
-        graph = cg.CallGraph()
+        graph = cg.CallGraph(partial=True)
         graph._file_imports = {}  # type: ignore[attr-defined]
         calls = cg._parse_java_file(path, text, graph)
         graph.files_parsed = 1

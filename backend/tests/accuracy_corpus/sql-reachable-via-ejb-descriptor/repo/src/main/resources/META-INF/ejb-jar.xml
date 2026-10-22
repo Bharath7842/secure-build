@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ejb-jar xmlns="http://java.sun.com/xml/ns/javaee" version="3.0">
+  <enterprise-beans>
+    <session>
+      <ejb-name>Tariffs</ejb-name>
+      <ejb-class>com.acme.dao.TariffSessionBean</ejb-class>
+    </session>
+  </enterprise-beans>
+</ejb-jar>

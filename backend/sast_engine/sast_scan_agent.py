@@ -1790,6 +1790,24 @@ def _validators_need_graph(state: SastState) -> bool:
     )
 
 
+def _descriptor_paths(state: SastState) -> List[str]:
+    """XML files that may register entry points (web.xml, ejb-jar.xml, Spring
+    beans, ...): `entry_points` keeps only the descriptors it recognises."""
+    files = (state.get("scan") or {}).get("files") or []
+    return [f["path"] for f in files if str(f.get("ext") or "").lower() == ".xml"]
+
+
+def _log_entry_points(tracer: "AgentTrace", graph: Any) -> None:
+    counts = call_graph.entry_point_counts(graph)
+    total = graph.files_parsed + graph.files_failed
+    tracer.log(5, "build_call_graph",
+               f"Entry points: {sum(counts.values())} "
+               f"({', '.join(f'{k}={v}' for k, v in sorted(counts.items())) or 'none'}); "
+               f"parse coverage {graph.files_parsed - graph.files_failed}/{total} file(s) clean",
+               narrative="Entry points come from annotations, deployment descriptors, EJB interfaces, JMS "
+                         "listeners and reflection; a method is called unused only with full parse coverage.")
+
+
 def node_build_call_graph(state: SastState) -> dict:
     tracer: AgentTrace = state["_tracer"]
     if not _tree_sitter_graph_enabled(state):
@@ -1799,7 +1817,9 @@ def node_build_call_graph(state: SastState) -> dict:
         if _validators_need_graph(state):
             # Validators only: no attack-surface ranking, no flows.
             graph = call_graph.build_call_graph(
-                _resolve_scan_root(state), call_graph.java_paths_from_scan(state.get("scan")))
+                _resolve_scan_root(state), call_graph.java_paths_from_scan(state.get("scan")),
+                descriptor_paths=_descriptor_paths(state))
+            _log_entry_points(tracer, graph)
             _attach_validator_context(state, graph)
             tracer.log(5, "build_call_graph",
                        f"Built the Java call graph for the SQL checks only: {len(graph.methods)} method(s)",
@@ -1823,7 +1843,11 @@ def node_build_call_graph(state: SastState) -> dict:
                 f"Building {lang_label} call graph from {len(paths)} .{file_ext} file(s)",
                 narrative=f"Parsing {len(paths)} {lang_label} file(s) into a call graph "
                           f"(typed sinks, name+argc overloads)...")
-    graph = lang_module.build_call_graph(root, paths)
+    if is_python:
+        graph = lang_module.build_call_graph(root, paths)
+    else:
+        graph = lang_module.build_call_graph(root, paths, descriptor_paths=_descriptor_paths(state))
+        _log_entry_points(tracer, graph)
     _attach_validator_context(state, graph)
     # Per-reason breakdown, not just a total: which failure dominates says
     # whether receiver types aren't resolving (unresolved_type) or interfaces

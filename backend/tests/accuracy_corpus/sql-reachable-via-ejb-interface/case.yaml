@@ -1,0 +1,41 @@
+id: sql-reachable-via-ejb-interface
+area: sql-binding
+polarity: positive
+seed_findings:
+- 29
+- 30
+- 31
+- 55
+- 57
+- 60
+- 76
+adjudication: dev_label_only
+# The same method on a bean implementing an @Remote business interface: the container
+# calls it, so it is not inactive code; it stays a security true positive.
+expected:
+- rule_id: java-sql-string-concat
+  cwe: CWE-89
+  file: src/main/java/com/acme/dao/TariffBean.java
+  sink_line: 12
+  verdict: true_positive
+  issue_class: security
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - TariffBean.java
+  response:
+    findings:
+    - line: 12
+      verdict: true_positive
+      confidence: 0.85
+      rule_id: java-sql-string-concat
+      severity: HIGH
+      cwe: CWE-89
+      title: SQL injection through a JDBC statement
+      owasp_category: A03:2021-Injection
+      source: region (remote business method parameter)
+      sink: st.executeQuery(...)
+      data_flow: region is concatenated into the query text
+      snippet: return st.executeQuery("SELECT * FROM tariffs WHERE region = '" + region + "'");
+      verdict_reason: region is concatenated into the SQL text of a remote business method.
+      ai_fix: Bind the value with a PreparedStatement placeholder.

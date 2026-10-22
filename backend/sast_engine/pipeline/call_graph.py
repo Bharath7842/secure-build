@@ -416,6 +416,25 @@ class CallGraph:
     # Where `file` paths are relative to, so a consumer (SQL summaries) can
     # read a method's file again.
     repo_root: Optional[Path] = None
+    # Parse coverage: files that could not be read or parsed cleanly. A method
+    # is provably unreferenced only when this is 0 (SAST-02-070).
+    files_failed: int = 0
+    # True for a graph over part of the repo (one file): nothing it lacks
+    # can be called unreferenced.
+    partial: bool = False
+    # (callee name, argc) of every call that resolved to no method: any of
+    # them may be a reference to a same-named method.
+    unresolved_calls: Counter = field(default_factory=Counter)
+    # Entry points by method key -> source (annotation, descriptor, interface,
+    # jms, reflection, main, servlet).
+    entry_points: Dict[str, str] = field(default_factory=dict)
+    # Classes and method names a descriptor or reflection string names.
+    descriptor_classes: Dict[str, str] = field(default_factory=dict)
+    reflection_classes: Set[str] = field(default_factory=set)
+    reflection_methods: Set[str] = field(default_factory=set)
+    method_references: Set[str] = field(default_factory=set)
+    # EJB business interface -> bean classes, from ejb-jar.xml.
+    descriptor_impls: Dict[str, Set[str]] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -725,13 +744,18 @@ def _index_type(
 def _parse_java_file(rel_path: str, source_text: str, graph: CallGraph) -> List[CallSite]:
     parser = ast_struct.parser_for_lang("java")
     if parser is None:
+        graph.files_failed += 1
         return []
     src = source_text.encode("utf-8", errors="replace")
     try:
         tree = parser.parse(src)
     except Exception:  # noqa: BLE001
+        graph.files_failed += 1
         return []
     root = tree.root_node
+    if root.has_error:
+        # Still indexed, but a repaired parse may have lost a call.
+        graph.files_failed += 1
     package, imports, stars = _parse_imports(root, src)
     graph._file_imports = getattr(graph, "_file_imports", {})  # type: ignore[attr-defined]
     graph._file_imports[rel_path] = (package, imports, stars)  # type: ignore[attr-defined]
@@ -971,6 +995,12 @@ def _build_impl_index(graph: CallGraph) -> None:
             )
             if resolved and resolved in graph.types and graph.types[resolved].kind == "interface":
                 graph.impls_of[resolved].append(fqcn)
+    # ejb-jar.xml maps a business interface to its bean even when the bean
+    # does not `implements` it (EJB 2.x).
+    for iface, beans in graph.descriptor_impls.items():
+        for bean in sorted(beans):
+            if iface in graph.types and bean in graph.types and bean not in graph.impls_of[iface]:
+                graph.impls_of[iface].append(bean)
 
 
 def _wire_calls(graph: CallGraph, calls: List[CallSite]) -> None:
@@ -1001,6 +1031,7 @@ def _wire_calls(graph: CallGraph, calls: List[CallSite]) -> None:
         # unresolved counts with calls that were handled correctly.
         if reason and not sink_kind:
             graph.unresolved.append(reason)
+            graph.unresolved_calls[(call.method_name, call.argc)] += 1
         for callee_key in keys:
             graph.edges.append(Edge(caller_key=caller.key, callee_key=callee_key, call_line=call.line))
 
@@ -1152,9 +1183,19 @@ def is_java_stack(state: Dict[str, Any]) -> bool:
     return "maven-java" in stacks
 
 
-def build_call_graph(repo_root: Path, rel_paths: Sequence[str]) -> CallGraph:
+def build_call_graph(
+    repo_root: Path, rel_paths: Sequence[str], *, descriptor_paths: Sequence[str] = (),
+) -> CallGraph:
+    """`descriptor_paths` are XML files (web.xml, ejb-jar.xml, Spring beans, ...)
+    whose registered classes become entry points (`entry_points`)."""
+    from pipeline import entry_points as ep
+
     graph = CallGraph(repo_root=repo_root)
     graph._file_imports = {}  # type: ignore[attr-defined]
+    descriptors = _read_descriptors(repo_root, descriptor_paths)
+    graph.descriptor_impls = {k: set(v) for k, v in descriptors.interfaces.items()}
+    graph.descriptor_classes = dict(descriptors.classes)
+    graph.files_failed += len(descriptors.failed)
     all_calls: List[CallSite] = []
     for rel in rel_paths:
         posix = rel.replace("\\", "/")
@@ -1162,6 +1203,7 @@ def build_call_graph(repo_root: Path, rel_paths: Sequence[str]) -> CallGraph:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
+            graph.files_failed += 1
             continue
         if llm_file_scan.is_non_analyzable_file(repo_root, posix, text):
             continue
@@ -1170,7 +1212,201 @@ def build_call_graph(repo_root: Path, rel_paths: Sequence[str]) -> CallGraph:
         graph.files_parsed += 1
     graph.call_sites = len(all_calls)
     _wire_calls(graph, all_calls)
+    _index_entry_points(graph, descriptors, ep)
     return graph
+
+
+_FOR_NAME_RE = re.compile(r'Class\s*\.\s*forName\s*\(\s*"([\w.$]+)"')
+_GET_METHOD_RE = re.compile(r'\.\s*get(?:Declared)?Method\s*\(\s*"(\w+)"')
+_METHOD_REF_RE = re.compile(r"::\s*(\w+)")
+_BUSINESS_INTERFACE_ANNOTATIONS = frozenset({"Remote", "Local"})
+_FLOW_ENTRY_SOURCES = frozenset({"annotation", "descriptor", "interface", "jms"})
+
+
+def _index_entry_points(graph: CallGraph, descriptors: Any, ep: Any) -> None:
+    """Every way the container (not the code) can call a method: framework
+    annotations, deployment descriptors, EJB business interfaces, JMS
+    `onMessage`, and classes or methods named by reflection strings. Each
+    entry records its source; the per-source counts are logged per scan."""
+    entries = graph.entry_points
+    for method in graph.methods.values():
+        if _is_framework_entry(method):
+            entries[method.key] = "annotation"
+        graph.reflection_classes.update(c.replace("$", ".") for c in _FOR_NAME_RE.findall(method.body))
+        graph.reflection_methods.update(_GET_METHOD_RE.findall(method.body))
+        graph.method_references.update(_METHOD_REF_RE.findall(method.body))
+    named = {(fqcn, name) for fqcn, name in descriptors.methods}
+    for fqcn, jtype in graph.types.items():
+        source = "descriptor" if fqcn in descriptors.classes else (
+            "reflection" if fqcn in graph.reflection_classes else None)
+        business = jtype.kind == "interface" and (
+            fqcn in descriptors.interfaces
+            or any(set(graph.methods[k].annotations) & _BUSINESS_INTERFACE_ANNOTATIONS for k in jtype.methods)
+        )
+        for key in jtype.methods:
+            method = graph.methods[key]
+            if source and method.is_api_visible:
+                entries.setdefault(key, source)
+            if (fqcn, method.name) in named:
+                entries.setdefault(key, "descriptor")
+            if method.name == "onMessage" and method.argc == 1 and any(
+                st.rsplit(".", 1)[-1] == "MessageListener" for st in jtype.super_types
+            ):
+                entries.setdefault(key, "jms")
+        if business:
+            for key in jtype.methods:
+                entries.setdefault(key, "interface")
+                iface = graph.methods[key]
+                for impl in graph.impls_of.get(fqcn) or []:
+                    for impl_key in _lookup_methods(graph, impl, iface.name, iface.argc):
+                        entries.setdefault(impl_key, "interface")
+
+
+def entry_point_counts(graph: CallGraph) -> Dict[str, int]:
+    return dict(Counter(graph.entry_points.values()))
+
+
+def _reachable(graph: CallGraph) -> Set[str]:
+    cached = getattr(graph, "_reachable", None)
+    if cached is not None:
+        return cached
+    out = _outgoing(graph)
+    seen: Set[str] = set(graph.entry_points)
+    queue = deque(seen)
+    while queue:
+        for edge in out.get(queue.popleft(), ()):
+            if edge.callee_key not in seen:
+                seen.add(edge.callee_key)
+                queue.append(edge.callee_key)
+    graph._reachable = seen  # type: ignore[attr-defined]
+    return seen
+
+
+def _file_text(graph: CallGraph, rel: str) -> Optional[str]:
+    cache = getattr(graph, "_texts", None)
+    if cache is None:
+        cache = graph._texts = {}  # type: ignore[attr-defined]
+    if rel not in cache:
+        try:
+            cache[rel] = (graph.repo_root / rel).read_text(encoding="utf-8", errors="replace") \
+                if graph.repo_root else None
+        except OSError:
+            cache[rel] = None
+    return cache[rel]
+
+
+def _named_elsewhere(graph: CallGraph, method: JavaMethod, private: bool) -> Optional[str]:
+    """Where `name(` appears other than the method's own declaration line —
+    a field initializer, a static block, an anonymous class, a lambda: places
+    that are not graph edges. A private method can only be called from its
+    own file; any other method from any file."""
+    pattern = re.compile(rf"(?<![\w$]){re.escape(method.name)}\s*\(")
+    files = [method.file] if private else sorted(graph._file_imports)  # type: ignore[attr-defined]
+    for rel in files:
+        text = _file_text(graph, rel)
+        if text is None:
+            return f"{rel} could not be read"
+        for number, line in enumerate(text.splitlines(), start=1):
+            if rel == method.file and number == method.start_line + _declaration_offset(method):
+                continue
+            stripped = line.strip()
+            if stripped.startswith(("//", "*", "/*")):
+                continue
+            if pattern.search(line):
+                return f"`{method.name}(` appears at {rel}:{number}"
+    return None
+
+
+def _declaration_offset(method: JavaMethod) -> int:
+    """Lines from the method node's start (annotations first) to its name."""
+    for offset, line in enumerate(method.body.splitlines()):
+        if re.search(rf"(?<![\w$]){re.escape(method.name)}\s*\(", line):
+            return offset
+    return 0
+
+
+def reachability_status(graph: CallGraph, method_key: str) -> Tuple[str, List[str]]:
+    """`reachable` (a path from an entry point exists), `unreferenced` (proven:
+    a private method nothing in the parsed code, the descriptors or reflection
+    can call) or `unknown`. The list says what was checked (unreferenced) or
+    why the status is not `unreferenced`.
+
+    Only private methods can be proven unreferenced (a deliberate narrowing of
+    SAST-02-070's "not a public method of a registered type"): a public method
+    nobody in the repo calls may still be called from a JSP, an EL expression,
+    a framework config or another module, and calling real injectable code
+    "inactive" on that guess is the mistake this model exists to avoid."""
+    method = graph.methods.get(method_key)
+    if method is None:
+        return "unknown", ["method not in the call graph"]
+    if method_key in _reachable(graph):
+        return "reachable", [f"reachable from an entry point ({graph.entry_points.get(method_key) or 'call path'})"]
+    if graph.partial:
+        return "unknown", ["the call graph covers only part of the repository"]
+    if graph.files_failed:
+        return "unknown", [f"{graph.files_failed} file(s) failed to parse, so parse coverage is incomplete"]
+    if method.is_constructor or method.enclosing_kind == "interface":
+        return "unknown", ["constructors and interface methods are not judged"]
+    jtype = graph.types.get(method.fqcn)
+    private = not method.is_api_visible and not method.is_public
+    if not private:
+        # Only a private method can be called from nowhere but its own file.
+        # A public (or package-private) one may be called from a JSP, an EL
+        # expression, a Struts or Spring config, another module or a client
+        # of the library — none of which this graph parses.
+        return "unknown", ["only a private method can be proven unreferenced; this one is visible outside "
+                           "its class, and callers outside the parsed Java files are not visible"]
+    reasons: List[str] = []
+    if any(e.callee_key == method_key for e in graph.edges):
+        reasons.append("it has callers, none of them reachable from an entry point")
+    if graph.unresolved_calls.get((method.name, method.argc)):
+        reasons.append(f"an unresolved call to {method.name}({method.argc} args) may be one")
+    if method.name in graph.method_references:
+        reasons.append(f"a method reference `::{method.name}` exists")
+    if method.name in graph.reflection_methods:
+        reasons.append(f"reflection names a method `{method.name}`")
+    if method.annotations:
+        reasons.append("it carries annotations a framework may act on")
+    if not reasons:
+        where = _named_elsewhere(graph, method, private)
+        if where:
+            reasons.append(where)
+    if reasons:
+        return "unknown", reasons
+    return "unreferenced", [
+        f"no call to {method.name}({method.argc} args) in {graph.files_parsed} parsed file(s), resolved or not",
+        "not an annotation, descriptor, EJB interface, JMS or reflection entry point",
+        "no method reference or reflection string names it",
+        "every Java file and descriptor parsed",
+    ]
+
+
+def _overrides(graph: CallGraph, jtype: JavaType, method: JavaMethod) -> bool:
+    """Does the method override or implement a supertype method? A supertype
+    outside the repo (a framework class) may declare it, so that counts too."""
+    package, imports, stars = graph._file_imports.get(jtype.file, ("", {}, set()))  # type: ignore[attr-defined]
+    for super_name in jtype.super_types:
+        resolved = _resolve_simple(super_name, package=package, imports=imports, stars=stars, graph=graph)
+        if not resolved or resolved not in graph.types:
+            return True
+        if _lookup_inherited(graph, resolved, method.name, method.argc):
+            return True
+    return False
+
+
+def _read_descriptors(repo_root: Path, paths: Sequence[str]) -> Any:
+    from pipeline import entry_points as ep
+
+    texts: Dict[str, Optional[str]] = {}
+    for rel in paths:
+        posix = rel.replace("\\", "/")
+        if _is_test_path(posix):
+            continue
+        try:
+            texts[posix] = (repo_root / posix).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            texts[posix] = None
+    return ep.parse_descriptors(texts)
 
 
 # ---------------------------------------------------------------------------
@@ -1204,10 +1440,15 @@ def _is_framework_entry(method: JavaMethod) -> bool:
     return False
 
 
+def _is_entry(graph: "CallGraph", method: JavaMethod) -> bool:
+    """A framework annotation, or a descriptor / EJB interface / JMS entry."""
+    return _is_framework_entry(method) or graph.entry_points.get(method.key) in _FLOW_ENTRY_SOURCES
+
+
 def attack_surface_counts(graph: "CallGraph") -> Tuple[Counter, Counter]:
     """(framework entry points per file, typed sinks per file) — how exposed
     a file is, used to rank which CRITICAL/HIGH files get the deep scan."""
-    entries = Counter(m.file for m in graph.methods.values() if _is_framework_entry(m))
+    entries = Counter(m.file for m in graph.methods.values() if _is_entry(graph, m))
     sinks = Counter(s.file for s in graph.sinks)
     return entries, sinks
 
@@ -1225,7 +1466,7 @@ def _takes_string_like(method: JavaMethod) -> bool:
 
 
 def _collect_entries(graph: CallGraph) -> Tuple[str, List[str]]:
-    framework = [m.key for m in graph.methods.values() if _is_framework_entry(m)]
+    framework = [m.key for m in graph.methods.values() if _is_entry(graph, m)]
     if framework:
         return "framework", framework
     source = [m.key for m in graph.methods.values() if _has_taint_source(m)]
