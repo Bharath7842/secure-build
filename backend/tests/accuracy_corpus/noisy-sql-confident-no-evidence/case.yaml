@@ -1,0 +1,35 @@
+id: noisy-sql-confident-no-evidence
+area: sql-binding
+polarity: uncertain
+seed_findings: [62]
+adjudication: dev_label_only
+# A generic SQL-concatenation true positive with high model confidence, but the
+# flagged statement builds no query and the named source is not in the method.
+# Confidence alone no longer publishes it as confirmed: it is kept as unresolved
+# with the missing evidence named.
+expected:
+  - rule_id: java-sql-string-concat
+    cwe: CWE-89
+    file: src/main/java/com/acme/dao/ReportDao.java
+    sink_line: 12
+    verdict: unverified
+    unresolved_reason: evidence_missing
+scripted:
+  - step: scan_deep_files
+    when_user_contains: ["ReportDao.java"]
+    response:
+      findings:
+        - line: 12
+          verdict: true_positive
+          confidence: 0.95
+          rule_id: java-sql-string-concat
+          severity: HIGH
+          cwe: CWE-89
+          title: SQL built by string concatenation
+          owasp_category: "A03:2021-Injection"
+          source: request.getParameter("report")
+          sink: stmt.executeQuery
+          data_flow: the report name reaches the query
+          snippet: return stmt.executeQuery(QueryBuilder.forReport(name));
+          verdict_reason: The report name is used to build the query.
+          ai_fix: Use a prepared statement.

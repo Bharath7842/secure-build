@@ -604,12 +604,18 @@ def test_finalize_findings_enriches_before_suppression(llm_file_scan):
         },
     ]
     out = llm_file_scan.finalize_findings(findings, source)
-    assert len(out) == 1
+    # The unevidenced noisy SQL "true positive" is no longer dropped, nor
+    # published as confirmed: it stays visible as unresolved (SAST-01-040).
+    assert len(out) == 2
     assert "3: line 3  <--" in out[0]["snippet"]
+    assert out[1]["verdict"] == "unverified"
+    assert out[1]["unresolved_reason"] == "evidence_missing"
 
 
-def test_finalize_findings_drops_logging_call_after_enrichment(llm_file_scan):
-    """Logging-call findings are dropped after enrichment, and nearby (non-anchored) logger calls don't false-suppress."""
+def test_finalize_findings_judges_the_logging_call_after_enrichment(llm_file_scan):
+    """The anchored line decides: a logger call one line above does not
+    false-suppress, and a secret written to a log line is published (CWE-532)
+    while a SQL injection blamed on a log line is dropped (SAST-01-030)."""
     source = "\n".join([
         "line1",
         'logger.info("unrelated line above");',
@@ -622,14 +628,18 @@ def test_finalize_findings_drops_logging_call_after_enrichment(llm_file_scan):
             "rule_id": "llm-extra", "cwe": "CWE-89", "line": 3, "snippet": "placeholder",
             "title": "SQLi", "verdict": "true_positive", "confidence": 0.9,
         },
-        {  # anchored on the logger.info line itself — must be dropped
+        {  # a secret written to the log: a log line is exactly where it is found
             "rule_id": "java-sensitive-data-in-logs", "cwe": "CWE-532", "line": 4, "snippet": "placeholder",
             "title": "Sensitive data in logs", "verdict": "true_positive", "confidence": 0.95,
         },
+        {  # SQL injection anchored on the logger.info line itself — the wrong line
+            "rule_id": "llm-extra", "cwe": "CWE-89", "line": 4, "snippet": "placeholder",
+            "title": "SQLi on a log line", "verdict": "true_positive", "confidence": 0.95,
+        },
     ]
     out = llm_file_scan.finalize_findings(findings, source)
-    assert len(out) == 1
-    assert out[0]["line"] == 3
+    assert [f["line"] for f in out] == [3, 4]
+    assert [f["cwe"] for f in out] == ["CWE-89", "CWE-532"]
     assert "3: stmt.executeQuery(sql);  <--" in out[0]["snippet"]
 
 

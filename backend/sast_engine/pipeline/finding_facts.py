@@ -63,7 +63,32 @@ def attach_facts(
         return None
     bump_counter(usage, "facts_coverage", f"{lang}.with_facts")
     finding["facts"] = dict(facts)
+    _note_source_evidence(finding, source_text)
     return finding["facts"]
+
+
+def _squash(text: str) -> str:
+    return " ".join(str(text or "").split())
+
+
+def _note_source_evidence(finding: Dict[str, Any], source_text: str) -> None:
+    """`facts["source_in_method"]`: does the model's named `source` expression
+    appear in the method the finding sits in? Publication uses it to tell a
+    finding with a traced source from one that only asserts a source exists."""
+    source = _squash(finding.get("source"))
+    facts = finding.get("facts")
+    enclosing = (facts or {}).get("enclosing")
+    if not source or not enclosing:
+        return
+    lines = source_text.splitlines()
+    start, end = int(enclosing.get("start_line") or 0), int(enclosing.get("end_line") or 0)
+    if start < 1 or end < start:
+        return
+    # The model's wording is often "orderId (method parameter)": the expression
+    # is whatever precedes the parenthetical note.
+    expression = _squash(source.split(" (", 1)[0])
+    body = _squash("\n".join(lines[start - 1:end]))
+    facts["source_in_method"] = bool(expression) and expression in body
 
 
 def prepare_findings(

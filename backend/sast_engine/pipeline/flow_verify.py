@@ -23,10 +23,12 @@ from pipeline import reachability
 from pipeline.finding_facts import prepare_findings
 from pipeline.call_graph import Flow, FLOW_VERIFY_CAP, flow_to_dict
 from pipeline.llm_file_scan import (
+    DROP,
     SINGLE_CALL_CHAR_BUDGET,
     _RESPONSE_SCHEMA,
+    apply_publish_decision,
     normalize_finding,
-    should_publish_finding,
+    publish_decision,
 )
 
 # Total slice size above which intermediate hops are condensed.
@@ -386,13 +388,15 @@ def _findings_for_flow(
                 [finding], sink_text, file_path=sink.file, usage=usage,
                 validators=occurrence_validators,
             )
-        if should_publish_finding(
+        decision = publish_decision(
             finding, sink.body,
             suppress_no_cwe=suppress_no_cwe,
             suppress_http_findings=suppress_http_findings,
             suppress_low_confidence_false_positives=suppress_low_confidence_false_positives,
-        ):
-            findings.append(finding)
+            usage=usage,
+        )
+        if decision != DROP:
+            findings.append(apply_publish_decision(finding, decision))
     return findings
 
 

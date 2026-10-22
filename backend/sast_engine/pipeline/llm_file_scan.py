@@ -46,6 +46,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 from llm_client import (
     PROVIDER_BEDROCK,
     LlmBudgetExhausted,
+    append_record,
+    bump_counter,
     call_llm,
     last_call_was_cache_hit,
     parse_llm_json_array,
@@ -55,6 +57,7 @@ from llm_client import (
 
 from . import reachability
 from .finding_facts import prepare_findings
+from .occurrence_facts import LOGGER_PACKAGES
 from .owasp_map import OWASP_TOP_10_2021, owasp_for_rule
 from .regex_scan import (
     PROCESS_POOL_MIN_FILES,
@@ -121,15 +124,10 @@ DEFAULT_CHUNK_WORKERS = 3
 TRIAGE_CONFIRM_GROUP_CAP = 50
 DEFAULT_GROUPS_PER_CALL = 5
 
-# Findings below this confidence are dropped when they are also unevidenced
-# generic-catalog echoes. Evidenced findings survive at any confidence.
-UNEVIDENCED_CONFIDENCE_FLOOR = 0.6
-
 # A false_positive-verdict deep-scan finding at or below this confidence (=
 # "how sure you are this is exploitable") is a confident self-dismissal by the
 # model — suppressed outright when suppress_low_confidence_false_positives is
-# on, regardless of rule_id (unlike UNEVIDENCED_CONFIDENCE_FLOOR, which only
-# applies to the noisy-rule allowlist).
+# on, regardless of rule_id.
 FALSE_POSITIVE_SUPPRESS_CONFIDENCE_CEILING = 0.2
 
 # Path-heuristic risk levels that get a full LLM-primary pass (no regex gate).
@@ -1337,21 +1335,102 @@ def _anchored_line_from_context(context_text: str) -> str:
     return ""
 
 
-def should_publish_finding(
+PUBLISH = "publish"
+DROP = "drop"
+DEMOTE = "demote"  # publish, but as `unverified` / evidence_missing
+
+# A log call cannot be the sink of these weakness classes: SQL injection, XSS,
+# command injection, path traversal, XXE, SSRF, deserialization, LDAP. A finding
+# of one of them anchored on a logger call is blaming the wrong line (SAST-01-030).
+# Every other class is a legitimate thing to find on a log line — forged or
+# injected log content (CWE-117), secrets and sensitive data written to a log
+# (CWE-532, 312/313/359, 200/209/497, 798) — so those are never dropped here, and
+# neither is a finding with no CWE (`suppress_no_cwe` decides those).
+LOG_LINE_IMPOSSIBLE_CWES = frozenset({89, 79, 78, 22, 611, 918, 502, 90})
+_TS_LOGGER_RECEIVERS = frozenset({"console", "NGXLogger"})
+MISSING_EVIDENCE_NOTE = (
+    "Published as unverified: the model called this a SQL injection but neither the "
+    "flagged statement builds the query nor does the named source appear in the method."
+)
+
+
+def _cwe_number(cwe: Any) -> Optional[int]:
+    digits = re.search(r"\d+", str(cwe or ""))
+    return int(digits.group()) if digits else None
+
+
+def _squash(text: Any) -> str:
+    return " ".join(str(text or "").split())
+
+
+def _is_log_call(finding: Dict[str, Any], snippet: str, anchored: str) -> bool:
+    """Is the flagged line a call on a logger? Decided from the resolved call's
+    receiver type whenever the finding has facts (any slf4j / log4j / jul /
+    commons-logging / jboss logger, however the variable is named, plus
+    `console` and NGXLogger in TypeScript); the old spelling regex is only the
+    fallback for a finding with none."""
+    facts = finding.get("facts")
+    if isinstance(facts, dict) and facts:
+        call = facts.get("call") or {}
+        receiver = call.get("receiver_fqn") or ""
+        return receiver.startswith(LOGGER_PACKAGES) or receiver in _TS_LOGGER_RECEIVERS
+    return bool(
+        _LOGGING_CALL_RE.search(snippet) or (anchored and _LOGGING_CALL_RE.search(anchored))
+    )
+
+
+def _builds_sql_in_own_statement(finding: Dict[str, Any], window_builds_sql: bool) -> bool:
+    """Does the finding's own statement (the resolved call, else the enclosing
+    statement) construct a query? A concatenation fifteen lines away, in another
+    statement, does not count when facts say where the statement is."""
+    facts = finding.get("facts")
+    if isinstance(facts, dict) and facts:
+        own = (facts.get("call") or {}).get("text") or facts.get("statement")
+        if own:
+            return bool(_SQL_BUILD_RE.search(own))
+    return window_builds_sql
+
+
+def _has_source_evidence(finding: Dict[str, Any]) -> bool:
+    """Is the model's named `source` actually in the code? It must appear in the
+    enclosing method, or on the flow path for a flow finding. Without facts a
+    named source counts, as it always did."""
+    source = (finding.get("source") or "").strip()
+    if not source:
+        return False
+    if finding.get("kind") == "flow" and finding.get("flow_path"):
+        expression = _squash(source.split(" (", 1)[0])
+        return any(
+            expression in _squash(step.get("snippet")) or expression in _squash(step.get("label"))
+            for step in finding.get("flow_path") or []
+        )
+    facts = finding.get("facts")
+    if isinstance(facts, dict) and "source_in_method" in facts:
+        return bool(facts["source_in_method"])
+    return True
+
+
+def _record_publish_drop(
+    usage: Optional[Dict[str, Any]], finding: Dict[str, Any], reason: str, cwe: Optional[int]
+) -> None:
+    bump_counter(usage, "publish_filter", f"{reason}_dropped.CWE-{cwe}" if cwe else f"{reason}_dropped")
+    append_record(usage, "publish_filter_drops", {
+        "rule_id": finding.get("rule_id"), "file": finding.get("file_path"),
+        "line": finding.get("line"), "cwe": f"CWE-{cwe}" if cwe else None, "reason": reason,
+    })
+
+
+def publish_decision(
     finding: Dict[str, Any],
     context_text: str = "",
     *,
     suppress_no_cwe: bool = True,
     suppress_http_findings: bool = False,
     suppress_low_confidence_false_positives: bool = False,
-) -> bool:
-    """Evidence-based suppression.
-
-    The previous revision dropped every finding whose rule_id was a generic SQL
-    concat catalog id, which deleted real SQL injections that happened to be
-    tagged with one. Here a noisy id only suppresses when there is *also* no
-    evidence: no query construction anywhere in the context window, no named
-    untrusted source, and low confidence.
+    usage: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Evidence-based suppression: `PUBLISH`, `DROP`, or `DEMOTE` (publish, but
+    as unverified because the evidence a SQL true positive needs is missing).
 
     `context_text` should be the enriched source window, not the model's
     truncated snippet — a sink-only snippet whose query is built 20 lines above
@@ -1367,24 +1446,32 @@ def should_publish_finding(
     via the low-confidence-fp-suppressed scan limitation) drops any
     false_positive-verdict finding at or below
     FALSE_POSITIVE_SUPPRESS_CONFIDENCE_CEILING — the model confidently
-    dismissed it, regardless of rule_id."""
+    dismissed it, regardless of rule_id.
+
+    A finding anchored on a logger call is dropped only when its CWE is one a
+    log call cannot be (`LOG_LINE_IMPOSSIBLE_CWES`). A noisy SQL-concatenation
+    true positive is published as a true positive only with evidence — its own
+    statement builds the query, or its named source is really in the method;
+    model confidence never substitutes for either."""
     if suppress_no_cwe and not (finding.get("cwe") or "").strip():
-        return False
+        return DROP
     if suppress_http_findings and _is_http_related_finding(finding):
-        return False
+        return DROP
     if (
         suppress_low_confidence_false_positives
         and finding.get("verdict") == "false_positive"
         and float(finding.get("confidence") or 0.0) <= FALSE_POSITIVE_SUPPRESS_CONFIDENCE_CEILING
     ):
-        return False
+        return DROP
     if _is_unanalyzable_meta_finding(finding):
-        return False
+        return DROP
 
     snippet = (finding.get("snippet") or "").strip()
     anchored = _anchored_line_from_context(context_text) if context_text else ""
-    if _LOGGING_CALL_RE.search(snippet) or (anchored and _LOGGING_CALL_RE.search(anchored)):
-        return False
+    cwe = _cwe_number(finding.get("cwe"))
+    if cwe in LOG_LINE_IMPOSSIBLE_CWES and _is_log_call(finding, snippet, anchored):
+        _record_publish_drop(usage, finding, "logging_line", cwe)
+        return DROP
 
     combined = " ".join([
         finding.get("title") or "",
@@ -1394,23 +1481,52 @@ def should_publish_finding(
         context_text,
     ]).lower()
 
-    builds_sql = bool(_SQL_BUILD_RE.search(combined))
+    window_builds_sql = bool(_SQL_BUILD_RE.search(combined))
 
     # A bare ResultSet read with no query construction anywhere nearby is the
     # single most common false positive in Java scans. Still safe to drop.
-    if _RESULTSET_READ_RE.search(snippet) and not builds_sql:
-        return False
+    if _RESULTSET_READ_RE.search(snippet) and not window_builds_sql:
+        return DROP
 
     if _is_noisy_rule(finding.get("rule_id", "")):
-        if finding.get("verdict") == "false_positive":
-            return False  # generic catalog echo marked FP — no tuning value
-        if finding.get("verdict") != "true_positive":
-            return True  # undecided: nobody has judged it, so nothing may be dropped on a guess
-        has_source = bool((finding.get("source") or "").strip())
-        confident = float(finding.get("confidence") or 0.0) >= UNEVIDENCED_CONFIDENCE_FLOOR
-        return builds_sql or has_source or confident
+        verdict = finding.get("verdict")
+        if verdict == "false_positive":
+            _record_publish_drop(usage, finding, "noisy_fp", cwe)
+            bump_counter(usage, "publish_filter", "noisy_fp_dropped")
+            return DROP  # generic catalog echo marked FP — no tuning value
+        if verdict != "true_positive":
+            return PUBLISH  # undecided: nobody has judged it, so nothing may be dropped on a guess
+        if _builds_sql_in_own_statement(finding, window_builds_sql) or _has_source_evidence(finding):
+            return PUBLISH
+        bump_counter(usage, "publish_filter", "noisy_tp_demoted_unverified")
+        return DEMOTE
 
-    return True
+    return PUBLISH
+
+
+def should_publish_finding(finding: Dict[str, Any], context_text: str = "", **kwargs: Any) -> bool:
+    """`publish_decision` as a yes/no: anything but a drop is published (a
+    demotion is published as unverified, see `apply_publish_decision`)."""
+    return publish_decision(finding, context_text, **kwargs) != DROP
+
+
+def apply_publish_decision(finding: Dict[str, Any], decision: str) -> Dict[str, Any]:
+    """Carry out a `DEMOTE` on the finding in place: it stays visible, but as
+    unresolved with the missing evidence named, never as a confirmed injection."""
+    if decision != DEMOTE:
+        return finding
+    prior = (finding.get("verdict_reason") or "").strip()
+    finding.update(
+        verdict=VERDICT_UNVERIFIED, unresolved_reason="evidence_missing",
+        confidence=None, ai_fix=None,
+        verdict_reason=f"{MISSING_EVIDENCE_NOTE} Model's reasoning: {prior}" if prior else MISSING_EVIDENCE_NOTE,
+    )
+    finding.setdefault("decisions", []).append({
+        "stage": "publish_filter", "actor": "noisy_rule_evidence",
+        "verdict": VERDICT_UNVERIFIED, "confidence": None,
+        "unresolved_reason": "evidence_missing", "verdict_reason": finding["verdict_reason"],
+    })
+    return finding
 
 
 def build_code_context(
@@ -1447,6 +1563,7 @@ def finalize_findings(
     suppress_no_cwe: bool = True,
     suppress_http_findings: bool = False,
     suppress_low_confidence_false_positives: bool = False,
+    usage: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Enrich snippets with real source context, *then* apply suppression
     against that context. Order matters: judging a sink-only snippet before
@@ -1456,15 +1573,17 @@ def finalize_findings(
         context = build_code_context(
             source_text, finding["line"], finding.get("snippet") or "",
         )
-        if not should_publish_finding(
+        decision = publish_decision(
             finding, context,
             suppress_no_cwe=suppress_no_cwe, suppress_http_findings=suppress_http_findings,
             suppress_low_confidence_false_positives=suppress_low_confidence_false_positives,
-        ):
+            usage=usage,
+        )
+        if decision == DROP:
             continue
         enriched = dict(finding)
         enriched["snippet"] = context
-        out.append(enriched)
+        out.append(apply_publish_decision(enriched, decision))
     return out
 
 
@@ -1490,6 +1609,7 @@ def dedupe_and_finalize(
         merge_dedupe(findings), source_text,
         suppress_no_cwe=suppress_no_cwe, suppress_http_findings=suppress_http_findings,
         suppress_low_confidence_false_positives=suppress_low_confidence_false_positives,
+        usage=usage,
     )
 
 

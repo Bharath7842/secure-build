@@ -217,6 +217,26 @@ def _anchor_point(src: bytes, text: str, line: int, match_span: Optional[Tuple[i
     return row, len(raw[:col_chars].encode("utf-8", errors="replace"))
 
 
+CALL_TEXT_MAX_CHARS = 300
+STATEMENT_MAX_CHARS = 400
+_STATEMENT_SUFFIXES = ("_statement", "_declaration")
+
+
+def _statement_text(node: Optional[Any], src: bytes) -> Optional[str]:
+    """Source of the innermost statement (or declaration) around `node`: what a
+    reader means by "this statement", for checks that must not look past it."""
+    cur = node
+    while cur is not None:
+        if cur.type.endswith(_STATEMENT_SUFFIXES) and cur.type not in (
+            "class_declaration", "interface_declaration", "enum_declaration",
+            "method_declaration", "constructor_declaration", "function_declaration",
+            "record_declaration",
+        ):
+            return _cut(_t(cur, src), STATEMENT_MAX_CHARS)
+        cur = cur.parent
+    return None
+
+
 def _anchor_is_broken(node: Optional[Any], scope_node: Optional[Any]) -> bool:
     """tree-sitter always returns a tree, repairing what it cannot parse. Facts
     read from a repaired region would be guesses, so the occurrence has none
@@ -726,6 +746,7 @@ def _java_facts(root: Any, src: bytes, memo: Dict[str, Any], text: str, line: in
 
     call: Optional[Dict[str, Any]] = None
     args: List[Dict[str, str]] = []
+    statement: Optional[str] = None
     if not is_declaration and not in_comment:
         candidates = _call_candidates(root, row)
         if not candidates and method is not None:
@@ -759,9 +780,16 @@ def _java_facts(root: Any, src: bytes, memo: Dict[str, Any], text: str, line: in
                 "end_line": chosen.end_point[0] + 1,
             }
             args = [{"kind": _java_kind(a, scope, jf), "text": _cut(_t(a, src))} for a in arg_nodes]
+            call["text"] = _cut(_t(chosen, src), CALL_TEXT_MAX_CHARS)
+            statement = _statement_text(chosen, src)
+        else:
+            statement = _statement_text(node, src)
+    else:
+        statement = _statement_text(node, src)
 
     return {
         "lang": "java",
+        "statement": statement,
         "enclosing": enclosing,
         "is_declaration": bool(is_declaration),
         "is_stub": bool(is_stub),
@@ -1021,6 +1049,7 @@ def _ts_facts(root: Any, src: bytes, memo: Dict[str, Any], text: str, line: int,
 
     call: Optional[Dict[str, Any]] = None
     args: List[Dict[str, str]] = []
+    statement: Optional[str] = None
     if not is_declaration and not in_comment:
         found: List[Any] = []
         stack = [root]
@@ -1067,8 +1096,15 @@ def _ts_facts(root: Any, src: bytes, memo: Dict[str, Any], text: str, line: int,
                 "end_line": chosen.end_point[0] + 1,
             }
             args = [{"kind": _ts_kind(a, locals_, members, src), "text": _cut(_t(a, src))} for a in arg_nodes]
+            call["text"] = _cut(_t(chosen, src), CALL_TEXT_MAX_CHARS)
+            statement = _statement_text(chosen, src)
+        else:
+            statement = _statement_text(node, src)
+    else:
+        statement = _statement_text(node, src)
     return {
         "lang": "typescript",
+        "statement": statement,
         "enclosing": enclosing,
         "is_declaration": bool(is_declaration),
         "is_stub": False,
@@ -1117,6 +1153,10 @@ def _bounded(facts: Dict[str, Any]) -> Dict[str, Any]:
 
     if size() <= FACTS_MAX_JSON_CHARS:
         return facts
+    if facts.get("statement"):
+        facts["statement"] = facts["statement"][:120]
+    if facts.get("call") and facts["call"].get("text"):
+        facts["call"]["text"] = facts["call"]["text"][:120]
     for arg in facts.get("args") or []:
         arg["text"] = arg["text"][:40]
     if size() > FACTS_MAX_JSON_CHARS and facts.get("call"):

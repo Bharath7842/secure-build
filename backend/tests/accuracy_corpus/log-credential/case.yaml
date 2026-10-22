@@ -3,10 +3,10 @@ area: log-boundary
 polarity: positive
 seed_findings: [257, 258, 270]
 adjudication: dev_label_only
-# The publish filter drops any finding whose flagged line looks like a logging
-# call (llm_file_scan._LOGGING_CALL_RE), whatever the finding is about. Spelling-
-# based, so the renamed-logger twin of this case passes while this one does not.
-xfail: EPIC-01
+# The publish filter used to drop any finding whose flagged line looked like a
+# logging call, whatever the finding was about; it now drops only the sink classes
+# a log call cannot be (SQL injection, XSS, ...) and decides "is a log call" from
+# the resolved receiver type, so a secret written to a log is published.
 expected:
   - rule_id: java-sensitive-data-in-logs
     cwe: CWE-532

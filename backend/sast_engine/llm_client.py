@@ -508,6 +508,18 @@ def bump_counter(usage: Optional[Dict[str, Any]], section: str, key: str, n: int
         bucket[key] = bucket.get(key, 0) + n
 
 
+def _nest_counters(flat: Dict[str, int]) -> Dict[str, Any]:
+    """{"a.b": 1, "a.c": 2, "d": 3} -> {"a": {"b": 1, "c": 2}, "d": 3}."""
+    out: Dict[str, Any] = {}
+    for key, value in flat.items():
+        head, _, tail = key.partition(".")
+        if tail:
+            out.setdefault(head, {})[tail] = value
+        else:
+            out[head] = value
+    return out
+
+
 def append_record(usage: Optional[Dict[str, Any]], section: str, record: Dict[str, Any]) -> None:
     """Append a small dict to a section's list (e.g. `publish_filter_drops`),
     bounded so a pathological scan cannot grow `usage` without limit."""
@@ -702,7 +714,7 @@ def usage_cost_summary(usage: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         # EPIC-01 accuracy counters (see COUNTER_SECTIONS); a section with
         # nothing recorded is absent, so older summaries keep their shape.
         **{
-            section: dict(usage["_counters"][section])
+            section: _nest_counters(usage["_counters"][section])
             for section in COUNTER_SECTIONS
             if (usage.get("_counters") or {}).get(section)
         },
