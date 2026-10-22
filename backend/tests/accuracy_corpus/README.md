@@ -73,6 +73,20 @@ ACCURACY_RECORD=live pytest -m accuracy -k <id>  # a real provider; spends money
   `accuracy/case.py`). **This spends money**; it must be chosen explicitly, run by hand,
   and the diff of the new recordings reviewed before commit.
 
+## Scripting grouped confirmation
+
+Grouped confirmation answers per member. A scripted `group_confirm_triage_findings` response lists one decision per occurrence id, with the pattern's `group_index` when several groups share a call (groups are ordered by size, then key; members by evidence, path and line):
+
+```yaml
+- step: group_confirm_triage_findings
+  response:
+    decisions:
+      - {group_index: 0, member: m1, verdict: false_positive, confidence: 0.2, verdict_reason: ...}
+      - {group_index: 0, member: m2, verdict: true_positive, confidence: 0.8, verdict_reason: ..., ai_fix: ...}
+```
+
+A decision with no `member` is accepted only when exactly one member was shown. A retry after a detected contradiction carries a `Deterministic facts:` block, so script it with `when_user_contains: ["Deterministic facts:"]` *before* the general entry for the same step.
+
 ## Adding a case
 
 1. Create `<id>/repo/` with the smallest repository that shows the construct (a `pom.xml`

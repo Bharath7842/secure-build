@@ -176,6 +176,15 @@ per occurrence. Joern `kind=flow` findings carry their own path from
 no-op. The UI shows the path on the finding card, and the PDF/Excel exports
 add it to the data-flow text.
 
+## Per-occurrence decisions
+
+Every finding is decided as one concrete occurrence before it is grouped; no verdict is copied between occurrences that differ.
+
+* **Facts** (`pipeline/occurrence_facts.py`): tree-sitter facts for a finding — enclosing method, the call at the anchor, receiver type, argument kinds, declaration/stub/comment flags. Java and TypeScript; `None` (and old behaviour) when unavailable. `finding_facts.prepare_findings` attaches them, then runs the validators.
+* **Validators** (`pipeline/validators/`): deterministic checks with a fixed precedence against the model verdict (negative proof → false positive; positive fact vs. a dismissal → unresolved `conflict`; evidence gap → unresolved). Switch: `--no-occurrence-validators` / scan limitation `occurrence-validators`.
+* **Publish filters, dedupe, group keys, per-member confirmation, explanation check**: described in the repository `CLAUDE.md` under *Per-occurrence decisions (EPIC-01)*. Entry points: `llm_file_scan.publish_decision`, `merge_dedupe`, `group_key_for_finding`, `confirm_finding_group` / `confirm_finding_group_batch`, `explanation_check.annotate`.
+* Counters land in `usage_summary` (`validators`, `publish_filter`, `dedupe_conflicts`, `explanation_contradictions`, `group_confirm_coverage`, `facts_coverage`).
+
 ## Joern (optional)
 
 When [Joern](https://joern.io) is installed (`joern` / `joern-parse` on
