@@ -162,8 +162,10 @@ def test_declaration_not_call_dismisses_the_declaration_and_leaves_the_call_site
     assert declaration["kind"] == "regex"
     assert "deleteJob" in declaration["verdict_reason"]
     call_site = by_line[9]
-    assert call_site["verdict"] == "unverified"
-    assert call_site["unresolved_reason"] == "not_reviewed_regex"
+    # Not dismissed as a declaration. (Since EPIC-02 the SQL check judges it from
+    # deleteJob's own body, which hands only constant SQL and a number on.)
+    assert call_site.get("reason_tag") != "match_is_declaration"
+    assert call_site["reason_tag"] == "sql_fixed_template_bound"
 
 
 def test_stub_method_dismisses_the_stub_but_not_the_real_implementation():
@@ -172,7 +174,7 @@ def test_stub_method_dismisses_the_stub_but_not_the_real_implementation():
     assert stub[0]["verdict"] == "false_positive" and stub[0]["reason_tag"] == "stub_no_sink"
     # JobDao's call site (a real method body) is untouched by the stub check.
     call_site = [f for f in impl if f["line"] == 9][0]
-    assert call_site.get("reason_tag") is None
+    assert call_site.get("reason_tag") != "stub_no_sink"
 
 
 def test_the_toggle_off_skips_facts_and_validators_entirely():

@@ -13,7 +13,7 @@ graph it was handed.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Protocol, Sequence
+from typing import List, Optional, Protocol, Sequence, Tuple
 
 
 @dataclass
@@ -22,6 +22,12 @@ class CallerInfo:
     display: str
     file: str
     is_constructor: bool
+    # Method identity, when the graph knows it (Java): rules derived from a
+    # wrapper are keyed by owner and signature, never by name alone.
+    key: str = ""
+    owner: str = ""
+    param_types: Tuple[str, ...] = ()
+    arity: Optional[int] = None
 
 
 class GraphAdapter(Protocol):

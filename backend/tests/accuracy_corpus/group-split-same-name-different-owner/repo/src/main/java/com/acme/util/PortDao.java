@@ -5,7 +5,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 public class PortDao {
     private JdbcTemplate jdbc;
 
-    public long getPortID(long number) {
-        return jdbc.query("SELECT id FROM ports WHERE number = ?", (rs, i) -> rs.getLong(1), number).size();
+    public long getPortID(String number) {
+        return jdbc.query(String.format("SELECT id FROM ports WHERE number = '%s'", number), (rs, i) -> rs.getLong(1)).size();
     }
 }

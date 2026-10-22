@@ -208,3 +208,14 @@ def test_a_numeric_only_model_true_positive_moves_out_of_the_security_class():
     finding = _prepare("NumericAndStored.java", "// N:numeric")
     assert finding["verdict"] == "false_positive" and finding["issue_class"] == "quality"
     assert finding["reason_tag"] == "sql_numeric_only"
+
+
+def test_a_regex_hit_without_a_file_path_is_still_validated():
+    # Triage regex hits get `file_path` only at grouping; the hook stamps the
+    # file it is running on, so sql_binding can read it (it used to see "").
+    finding, text = _finding("PlainStatement.java", "executeQuery", kind="regex", verdict="unverified",
+                             unresolved_reason="not_reviewed_regex")
+    path = finding.pop("file_path")
+    finding_facts.prepare_findings([finding], text, file_path=path)
+    assert finding["file_path"] == path
+    assert finding["facts"]["validators"][0]["reason_tag"] == "sql_dynamic_text"

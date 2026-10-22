@@ -1,0 +1,30 @@
+id: wrapper-tainted-param-call
+area: sql-binding
+polarity: positive
+adjudication: dev_label_only
+# A DAO wrapper formats its parameter into a DELETE: a derived rule keyed by its
+# owner and signature. The call passing a caller's value stays a finding; the call
+# passing a constant carries no taint (EPIC-02).
+limitations:
+  inter-file-call-graph: true
+  runtime-derived-regex: true
+expected:
+  - cwe: CWE-89
+    file: src/main/java/com/acme/util/PurgeJob.java
+    sink_line: 9
+    verdict: true_positive
+  - cwe: CWE-89
+    file: src/main/java/com/acme/util/PurgeJob.java
+    sink_line: 13
+    verdict: false_positive
+    reason_tag: wrapper_arg_constant
+scripted:
+  - step: group_confirm_triage_findings
+    response:
+      decisions:
+        - group_index: 0
+          member: m1
+          verdict: true_positive
+          confidence: 0.8
+          verdict_reason: The caller's owner is formatted into the wrapper's DELETE statement.
+          ai_fix: Bind the owner inside the wrapper instead of formatting it into the SQL.

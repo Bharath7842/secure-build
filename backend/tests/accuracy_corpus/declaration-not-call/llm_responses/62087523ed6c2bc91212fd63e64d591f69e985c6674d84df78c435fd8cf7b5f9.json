@@ -1,8 +1,0 @@
-{
-  "input_tokens": 700,
-  "key": "62087523ed6c2bc91212fd63e64d591f69e985c6674d84df78c435fd8cf7b5f9",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 57,
-  "step": "group_confirm_triage_findings",
-  "text": "{\"decisions\": [{\"group_index\": 0, \"verdict\": \"true_positive\", \"confidence\": 0.7, \"verdict_reason\": \"The id reaches the wrapper's DELETE statement from a scheduled job.\", \"ai_fix\": \"Validate the id before calling the wrapper.\"}]}"
-}

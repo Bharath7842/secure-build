@@ -2053,7 +2053,10 @@ def node_derive_runtime_rules(state: SastState) -> dict:
     graph = packed.get("_graph")
     graph_lang = packed.get("_graph_lang")
     if graph is not None and graph_lang == "java":
-        adapter = call_graph.JavaGraphAdapter(graph)
+        # The scan's SQL summaries when the validators have them, so a wrapper
+        # is summarised once for both rule derivation and validation.
+        validator_ctx = (state.get("usage") or {}).get(VALIDATOR_CONTEXT_USAGE_KEY)
+        adapter = call_graph.JavaGraphAdapter(graph, summaries=getattr(validator_ctx, "sql", None))
     elif graph is not None and graph_lang == "python":
         adapter = call_graph_python.PythonGraphAdapter(graph)
     else:
@@ -2075,6 +2078,7 @@ def node_derive_runtime_rules(state: SastState) -> dict:
                 narrative="Deriving regex...")
 
     dropped: List[str] = []
+    wrapper_stats: Dict[str, int] = {}
     derived = derive_rules.derive_runtime_rules(
         graph=adapter,
         static_rules=static_rules,
@@ -2087,13 +2091,22 @@ def node_derive_runtime_rules(state: SastState) -> dict:
         llm_model=state.get("llm_model"),
         max_rules=cap if cap is not None else derive_rules.DEFAULT_MAX_DERIVED,
         dropped=dropped,
+        stats=wrapper_stats,
     )
     dropped_by_reason = dict(Counter(dropped).most_common())
     derived_rules_summary = {
         "compiled": len(derived),
         "failed": len(dropped),
         "failed_by_reason": dropped_by_reason,
+        "wrapper_candidates": wrapper_stats.get("candidates", 0),
+        "wrappers_derived": wrapper_stats.get("derived", 0),
     }
+    if wrapper_stats.get("candidates"):
+        tracer.log(5, "derive_runtime_rules",
+                   f"Wrapper rules: {wrapper_stats.get('derived', 0)} of {wrapper_stats['candidates']} "
+                   "sink-wrapping method(s) pass a parameter to their sink",
+                   narrative="Only wrappers whose parameter reaches the sink become rules; fixed-bound, "
+                             "zero-argument and getter methods do not.")
     failed_note = f", {len(dropped)} failed ({dropped_by_reason})" if dropped else ""
     tracer.log(5, "derive_runtime_rules",
                 f"Derived {len(derived)} runtime regex rule(s) (cap={cap}){failed_note}",

@@ -413,6 +413,9 @@ class CallGraph:
     # truncates to `cap`. Lets callers report "found X, sending the top N"
     # instead of silently hiding how many were discovered but dropped.
     flows_discovered_total: int = 0
+    # Where `file` paths are relative to, so a consumer (SQL summaries) can
+    # read a method's file again.
+    repo_root: Optional[Path] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1150,7 +1153,7 @@ def is_java_stack(state: Dict[str, Any]) -> bool:
 
 
 def build_call_graph(repo_root: Path, rel_paths: Sequence[str]) -> CallGraph:
-    graph = CallGraph()
+    graph = CallGraph(repo_root=repo_root)
     graph._file_imports = {}  # type: ignore[attr-defined]
     all_calls: List[CallSite] = []
     for rel in rel_paths:
@@ -1427,8 +1430,9 @@ class JavaGraphAdapter:
 
     language = "java"
 
-    def __init__(self, graph: CallGraph) -> None:
+    def __init__(self, graph: CallGraph, summaries: Any = None) -> None:
         self._graph = graph
+        self._summaries = summaries
 
     def sink_hits(self) -> Sequence[SinkHit]:
         return self._graph.sinks
@@ -1442,7 +1446,28 @@ class JavaGraphAdapter:
             display=f"{method.fqcn}.{method.name}",
             file=method.file,
             is_constructor=method.is_constructor,
+            key=method.key,
+            owner=method.fqcn,
+            param_types=tuple(method.param_types),
+            arity=method.argc,
         )
+
+    def sql_summary(self, caller_key: str) -> Any:
+        """The method's SQL summary (`sql_semantics.SqlSummaries`), built over
+        this graph on first use when the scan did not hand one in."""
+        if self._summaries is None:
+            from pipeline import sql_semantics
+
+            root = self._graph.repo_root
+
+            def read(path: str) -> Optional[str]:
+                try:
+                    return (root / path).read_text(encoding="utf-8", errors="replace") if root else None
+                except OSError:
+                    return None
+
+            self._summaries = sql_semantics.SqlSummaries(self._graph, read)
+        return self._summaries.summarise(caller_key)
 
     def is_test_path(self, path: str) -> bool:
         return _is_test_path(path)

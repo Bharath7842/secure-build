@@ -103,23 +103,34 @@ def _raw(rule_id, pattern, *, derived=True):
     }
 
 
+WRAPPER = "runtime-sink-sql-runNativeQuery-"  # + 8 hex of owner and signature
+
+
+def _only(ids, prefix=WRAPPER):
+    (match,) = [i for i in ids if i.startswith(prefix)]
+    return match
+
+
 def test_pass_a_emits_wrapper_not_find(tmp_path, call_graph, derive_rules, regex_scan):
     paths = _write_java(tmp_path)
     graph = call_graph.build_call_graph(tmp_path, paths)
     raw = derive_rules.wrappers_from_graph(call_graph.JavaGraphAdapter(graph))
     ids = {r["id"] for r in raw}
-    assert "runtime-sink-sql-runNativeQuery" in ids
+    rule_id = _only(ids)
+    assert len(rule_id) == len(WRAPPER) + 8
     assert not any("find" in r["id"].lower() for r in raw)
 
     static = regex_scan.load_rules(_ENGINE_DIR / "rules")
     compiled = derive_rules.compile_derived_rules(raw, static, cap=20)
     by_id = {r.id: r for r in compiled}
-    rule = by_id["runtime-sink-sql-runNativeQuery"]
+    rule = by_id[rule_id]
     assert rule.derived is True
     assert rule.group_by_rule is True
+    assert rule.wrapper == {"owner": "com.example.FooDao", "signature": "runNativeQuery(String)",
+                            "name": "runNativeQuery", "arity": 1, "tainted_params": [0]}
     hits = regex_scan.scan_text(CALLER, [rule], file_lang="java")
     assert hits
-    assert hits[0]["rule"] == "runtime-sink-sql-runNativeQuery"
+    assert hits[0]["rule"] == rule_id
 
 
 def test_compile_drops_duplicate_id_and_pattern(derive_rules, regex_scan):
@@ -217,7 +228,7 @@ def test_pass_b_mocked_merges(tmp_path, call_graph, derive_rules, regex_scan):
         call_llm_fn=fake_llm, max_rules=20,
     )
     ids = {r.id for r in out}
-    assert "runtime-sink-sql-runNativeQuery" in ids
+    assert _only(ids)
     assert "runtime-llm-extra-sink" in ids
     assert all(r.derived for r in out)
 
@@ -237,7 +248,7 @@ def test_pass_b_failed_json_keeps_pass_a(tmp_path, call_graph, derive_rules, reg
         call_llm_fn=fake_llm, max_rules=20,
     )
     assert len(calls) == 2
-    assert {r.id for r in out} == {"runtime-sink-sql-runNativeQuery"}
+    assert {r.id for r in out} == {_only(r.id for r in out)}
 
 
 def test_use_llm_false_skips_pass_b(tmp_path, call_graph, derive_rules, regex_scan):
@@ -255,7 +266,7 @@ def test_use_llm_false_skips_pass_b(tmp_path, call_graph, derive_rules, regex_sc
         call_llm_fn=spy, max_rules=20,
     )
     assert calls == []
-    assert {r.id for r in out} == {"runtime-sink-sql-runNativeQuery"}
+    assert {r.id for r in out} == {_only(r.id for r in out)}
 
 
 def test_node_skips_when_disabled(agent, tmp_path):
@@ -306,3 +317,100 @@ def test_findings_from_hits_copies_derived(agent, derive_rules):
     assert out[0]["derived"] is True
     assert out[0]["kind"] == "regex"
     assert out[0]["group_by_rule"] is False
+
+
+# --- SAST-02-060: wrapper rules keyed by method identity ------------------------------
+
+IDENTITY_FILES = {
+    "OrderDao.java": """
+package com.example;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.Statement;
+
+public class OrderDao {
+    private Connection conn;
+
+    public ResultSet runFilter(String where) throws Exception {
+        Statement st = conn.createStatement();
+        return st.executeQuery("SELECT * FROM orders WHERE " + where);
+    }
+
+    public ResultSet loadOrder(long orderId) throws Exception {
+        PreparedStatement ps = conn.prepareStatement("SELECT * FROM orders WHERE id = ?");
+        ps.setLong(1, orderId);
+        return ps.executeQuery();
+    }
+
+    public ResultSet loadEverything() throws Exception {
+        Statement st = conn.createStatement();
+        return st.executeQuery("SELECT * FROM orders");
+    }
+}
+""",
+    "ArchiveDao.java": """
+package com.example;
+
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.Statement;
+
+public class ArchiveDao {
+    private Connection conn;
+
+    public ResultSet runFilter(String where) throws Exception {
+        Statement st = conn.createStatement();
+        return st.executeQuery("SELECT * FROM archive WHERE " + where);
+    }
+}
+""",
+}
+
+
+def _identity_graph(tmp_path, call_graph):
+    src = tmp_path / "src" / "main" / "java" / "com" / "example"
+    src.mkdir(parents=True)
+    paths = []
+    for name, text in IDENTITY_FILES.items():
+        (src / name).write_text(text, encoding="utf-8")
+        paths.append(f"src/main/java/com/example/{name}")
+    return call_graph.build_call_graph(tmp_path, paths)
+
+
+def test_only_wrappers_whose_parameter_reaches_sql_text_derive_a_rule(tmp_path, call_graph, derive_rules):
+    graph = _identity_graph(tmp_path, call_graph)
+    stats = {}
+    raw = derive_rules.wrappers_from_graph(call_graph.JavaGraphAdapter(graph), stats=stats)
+    names = sorted((r["wrapper_owner"], r["wrapper_name"]) for r in raw)
+    # loadOrder binds its value; loadEverything takes no argument.
+    assert names == [("com.example.ArchiveDao", "runFilter"), ("com.example.OrderDao", "runFilter")]
+    assert stats == {"candidates": 4, "derived": 2}
+    assert all(r["tainted_params"] == [0] for r in raw)
+
+
+def test_same_named_wrappers_of_different_owners_are_two_compiled_rules(tmp_path, call_graph, derive_rules, regex_scan):
+    graph = _identity_graph(tmp_path, call_graph)
+    raw = derive_rules.wrappers_from_graph(call_graph.JavaGraphAdapter(graph))
+    static = regex_scan.load_rules(_ENGINE_DIR / "rules")
+    compiled = derive_rules.compile_derived_rules(raw, static, cap=20)
+    assert len(compiled) == 2 and len({r.id for r in compiled}) == 2
+    assert {r.wrapper["owner"] for r in compiled} == {"com.example.OrderDao", "com.example.ArchiveDao"}
+
+
+def test_derivation_is_byte_stable_across_runs(tmp_path, call_graph, derive_rules, regex_scan, agent):
+    import sys
+
+    lfs = sys.modules["pipeline.llm_file_scan"]
+    static = regex_scan.load_rules(_ENGINE_DIR / "rules")
+
+    def derive_and_prompt():
+        graph = _identity_graph(tmp_path / str(len(list(tmp_path.iterdir()))), call_graph)
+        rules = derive_rules.derive_runtime_rules(graph=call_graph.JavaGraphAdapter(graph), static_rules=static)
+        catalog = [{"id": r.id, "title": r.title, "cwe": r.cwe, "severity": r.severity,
+                    "description": r.description} for r in rules]
+        return [r.id for r in rules], lfs.build_system_prompt(catalog, "maven-java")
+
+    first, second = derive_and_prompt(), derive_and_prompt()
+    assert first[0] == second[0] and first[1] == second[1]

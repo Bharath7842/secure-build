@@ -28,8 +28,8 @@
           "file_path": "src/main/java/com/acme/util/PortApi.java",
           "issue_class": "security",
           "line": 4,
-          "occurrence_id": "93460500796d611768a69360d09d69a9d458bcbd2ddc39dd0725023cdd5f88f1",
-          "rule_id": "runtime-sink-jdbc_template-isPortable",
+          "occurrence_id": "6b622c93ac159c99189a4b8b77baddbc6ef2d3acfbfef0bdb633707543949eb0",
+          "rule_id": "runtime-sink-jdbc_template-isPortable-ae189398",
           "unresolved_reason": null,
           "verdict": "false_positive"
         },
@@ -37,17 +37,26 @@
           "file_path": "src/main/java/com/acme/util/PortDao.java",
           "issue_class": "security",
           "line": 8,
-          "occurrence_id": "331681e3db1509937c2c172b58270acad38a84d787089c457102732eecec4d75",
-          "rule_id": "runtime-sink-jdbc_template-isPortable",
+          "occurrence_id": "b289b80be5ed92b4da66294b319d80a60dc7a8475d264efada63fc7b0e6d529c",
+          "rule_id": "runtime-sink-jdbc_template-isPortable-ae189398",
           "unresolved_reason": null,
           "verdict": "false_positive"
+        },
+        {
+          "file_path": "src/main/java/com/acme/util/PortDao.java",
+          "issue_class": "security",
+          "line": 9,
+          "occurrence_id": "385f291a0545f23aaa76c6f32c940cec214435f2b9a076cfad96924ed60965a6",
+          "rule_id": "java-sql-string-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
         },
         {
           "file_path": "src/main/java/com/acme/util/PortService.java",
           "issue_class": "security",
           "line": 7,
-          "occurrence_id": "c2a7aef3ba7f369be2388de7d1b10d61dd42d9f0ab54ef02394e5bfe61748319",
-          "rule_id": "runtime-sink-jdbc_template-isPortable",
+          "occurrence_id": "b5f8222e98bd7ee942881f5baddd3eadbe8cd6ad25313cf656e0546417c002aa",
+          "rule_id": "runtime-sink-jdbc_template-isPortable-ae189398",
           "unresolved_reason": null,
           "verdict": "true_positive"
         },
@@ -55,8 +64,8 @@
           "file_path": "src/main/java/com/acme/util/PortStub.java",
           "issue_class": "security",
           "line": 4,
-          "occurrence_id": "6c06507aba9bae8b240b11d4fd36d6bfb9e485acff1fe04099ecead125c18abb",
-          "rule_id": "runtime-sink-jdbc_template-isPortable",
+          "occurrence_id": "798890ddab27fbbbc775b3c69fa60e0c0f988736c920d977d0f893f6d3329d42",
+          "rule_id": "runtime-sink-jdbc_template-isPortable-ae189398",
           "unresolved_reason": null,
           "verdict": "false_positive"
         }
@@ -68,17 +77,26 @@
           "file_path": "src/main/java/com/acme/util/JobCleaner.java",
           "issue_class": "security",
           "line": 8,
-          "occurrence_id": "78dd3df56c0763c1a7dfe0931fbce981f732062227e65777417744ba8a894501",
-          "rule_id": "runtime-sink-jdbc_template-deleteJob",
+          "occurrence_id": "43b373b923a8488ef6cb2dd43ebd9a4f1e147e83e5dbaeb945e1944760370bb1",
+          "rule_id": "runtime-sink-jdbc_template-deleteJob-50c21113",
           "unresolved_reason": null,
           "verdict": "false_positive"
+        },
+        {
+          "file_path": "src/main/java/com/acme/util/JobCleaner.java",
+          "issue_class": "security",
+          "line": 9,
+          "occurrence_id": "270b3424e5aa9e9aa7509de2c14c6901c6feabd3363590655f37fe6f72e81d85",
+          "rule_id": "java-sql-string-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
         },
         {
           "file_path": "src/main/java/com/acme/util/Scheduler.java",
           "issue_class": "security",
           "line": 7,
-          "occurrence_id": "2995d2eb5011b1a27f36dc498109e9cb87e8c11f4e19950e14ab8e7e8b129ec7",
-          "rule_id": "runtime-sink-jdbc_template-deleteJob",
+          "occurrence_id": "a8fe763b50dde110bdc44fe9bfe8e462bde07ade4a9c03addb4c5ab6d2999ccc",
+          "rule_id": "runtime-sink-jdbc_template-deleteJob-50c21113",
           "unresolved_reason": null,
           "verdict": "true_positive"
         }
@@ -127,7 +145,7 @@
       "findings": [
         {
           "file_path": "src/main/java/com/acme/report/ReportA.java",
-          "issue_class": "security",
+          "issue_class": "quality",
           "line": 13,
           "occurrence_id": "2bd909f1113c4dae4d17c18b4bfdf5bc8725bf584ded25e41001741b49423e32",
           "rule_id": "java-jdbc-statement-exec-variable",
@@ -136,7 +154,7 @@
         },
         {
           "file_path": "src/main/java/com/acme/report/ReportB.java",
-          "issue_class": "security",
+          "issue_class": "quality",
           "line": 13,
           "occurrence_id": "675fabb2bc8efe642f2abfee671219c79a1e5cfe5e0e8cee5671e5cf140a20f0",
           "rule_id": "java-jdbc-statement-exec-variable",
@@ -167,7 +185,7 @@
       "findings": [
         {
           "file_path": "src/main/java/com/acme/util/ById.java",
-          "issue_class": "security",
+          "issue_class": "quality",
           "line": 7,
           "occurrence_id": "c7da252c2738f3a9f896e8561ead982079513d0323b1ba36416c7ea8a8604ae4",
           "rule_id": "java-sql-string-concat",
@@ -213,8 +231,8 @@
           "file_path": "src/main/java/com/acme/util/FromDao.java",
           "issue_class": "security",
           "line": 7,
-          "occurrence_id": "27f01724018874a78ec5352bfcf42b1b7fb1d849ee1301dc9cd7a063980b2253",
-          "rule_id": "runtime-sink-jdbc_template-getPortID",
+          "occurrence_id": "2a1b2aa964b08c0ed7388d1c6007946fc30391726e4869cb873cc6a41fa7db91",
+          "rule_id": "runtime-sink-jdbc_template-getPortID-61ebcbaf",
           "unresolved_reason": null,
           "verdict": "false_positive"
         },
@@ -222,8 +240,17 @@
           "file_path": "src/main/java/com/acme/util/FromMessage.java",
           "issue_class": "security",
           "line": 7,
-          "occurrence_id": "1c225f052c1c6a1ebfec9ad60c12f705c81e81801867a0d1a3a8c3de93c5c9a8",
-          "rule_id": "runtime-sink-jdbc_template-getPortID",
+          "occurrence_id": "dbe1167c659595ab23e6ca8a1536b703f1a1b00662f2c547bd2eac62f3127527",
+          "rule_id": "runtime-sink-jdbc_template-getPortID-61ebcbaf",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        },
+        {
+          "file_path": "src/main/java/com/acme/util/FromRequest.java",
+          "issue_class": "security",
+          "line": 7,
+          "occurrence_id": "6757b3448108f841db2b41f7ccd47d8c1b7b5f094274a222d375433c6b710913",
+          "rule_id": "runtime-sink-jdbc_template-getPortID-61ebcbaf",
           "unresolved_reason": null,
           "verdict": "true_positive"
         },
@@ -231,17 +258,26 @@
           "file_path": "src/main/java/com/acme/util/PortDao.java",
           "issue_class": "security",
           "line": 8,
-          "occurrence_id": "7db7a8e691eb532c1fda6c31980bc963c50067d7eadcab442486f30d5dca33a4",
-          "rule_id": "runtime-sink-jdbc_template-getPortID",
+          "occurrence_id": "4b53e58b29e6c7ae5b090e1f3cfdac3162c61d54546d57464c68dab6da96d933",
+          "rule_id": "runtime-sink-jdbc_template-getPortID-61ebcbaf",
           "unresolved_reason": null,
           "verdict": "false_positive"
+        },
+        {
+          "file_path": "src/main/java/com/acme/util/PortDao.java",
+          "issue_class": "security",
+          "line": 9,
+          "occurrence_id": "1721ff0d38390428a5cccb86a0270bc099e9efce85f93ea2ff2815071b8d5c26",
+          "rule_id": "java-sql-string-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
         },
         {
           "file_path": "src/main/java/com/acme/util/XmlPortMsg.java",
           "issue_class": "security",
           "line": 6,
-          "occurrence_id": "d9f862d6a743bbd7016fd8d20d96acab77301adfe42fc15eaa565804da25c0b8",
-          "rule_id": "runtime-sink-jdbc_template-getPortID",
+          "occurrence_id": "5259965ed1449188c62ff08f593b60edb7d823614e8ce32fcb5ebc85405de97c",
+          "rule_id": "runtime-sink-jdbc_template-getPortID-61ebcbaf",
           "unresolved_reason": null,
           "verdict": "false_positive"
         }
@@ -596,6 +632,66 @@
           "verdict": "unverified"
         }
       ]
+    },
+    "wrapper-getter-not-sink": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/util/AccountView.java",
+          "issue_class": "security",
+          "line": 6,
+          "occurrence_id": "dc548876c0b2f6f53bdfefb9f1689ef93ed46d8ec3d5f6e92937d0bedaf21cb2",
+          "rule_id": "runtime-sink-jdbc_template-getAccountName-5e8ac68e",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        },
+        {
+          "file_path": "src/main/java/com/acme/util/Banner.java",
+          "issue_class": "security",
+          "line": 7,
+          "occurrence_id": "6742b45fff4d74564be7bc682570d4001f5c494ba5d8cc0e319078a55b8a36dd",
+          "rule_id": "runtime-sink-jdbc_template-getAccountName-5e8ac68e",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "wrapper-same-name-other-owner": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/dao/SoapPortDao.java",
+          "issue_class": "security",
+          "line": 12,
+          "occurrence_id": "cb28cfdf060e811da4da88f3ef2de2b336571d4cd0e1179805aa49e81e2bb07a",
+          "rule_id": "java-jdbc-prepare-concat",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "wrapper-tainted-param-call": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/util/PurgeJob.java",
+          "issue_class": "security",
+          "line": 9,
+          "occurrence_id": "2d0e8d761122a960a59df8e0eb8554daec0436558c52dc1752654502babffc2b",
+          "rule_id": "runtime-sink-jdbc_template-purgeReports-c3d3c741",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        },
+        {
+          "file_path": "src/main/java/com/acme/util/PurgeJob.java",
+          "issue_class": "security",
+          "line": 13,
+          "occurrence_id": "20c1ed36c69f9b0b6dc2abbd61e41af72ec8211f93b9bf4e5d3178258185c06a",
+          "rule_id": "runtime-sink-jdbc_template-purgeReports-c3d3c741",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "wrapper-zero-arg": {
+      "findings": []
     },
     "xxe-jms-hardened": {
       "findings": [

@@ -7,6 +7,9 @@ adjudication: dev_label_only
 # formats an attacker-controlled string. Each occurrence is shown to the model with
 # its own code and decided on its own: the numeric ones are dismissed, the string
 # one is not, instead of one sampled verdict being copied to the whole group.
+# Since EPIC-02 the numeric ones are settled before grouping, by their statement
+# (only numbers reach the SQL: a hygiene issue, not injection), so only the string
+# occurrences are left for the model.
 state_overrides: {}
 expected:
   - rule_id: java-jdbc-statement-exec-variable
@@ -14,11 +17,15 @@ expected:
     file: src/main/java/com/acme/report/ReportA.java
     sink_line: 13
     verdict: false_positive
+    issue_class: quality
+    reason_tag: sql_numeric_only
   - rule_id: java-jdbc-statement-exec-variable
     cwe: CWE-89
     file: src/main/java/com/acme/report/ReportB.java
     sink_line: 13
     verdict: false_positive
+    issue_class: quality
+    reason_tag: sql_numeric_only
   - rule_id: java-jdbc-statement-exec-variable
     cwe: CWE-89
     file: src/main/java/com/acme/report/ReportC.java
@@ -35,16 +42,6 @@ scripted:
       decisions:
         - group_index: 0
           member: m1
-          verdict: false_positive
-          confidence: 0.2
-          verdict_reason: The formatted value is a numeric id, so it cannot change the query.
-        - group_index: 0
-          member: m2
-          verdict: false_positive
-          confidence: 0.2
-          verdict_reason: The formatted value is a numeric id, so it cannot change the query.
-        - group_index: 0
-          member: m3
           verdict: true_positive
           confidence: 0.85
           verdict_reason: The name is formatted into the query text as a quoted string.

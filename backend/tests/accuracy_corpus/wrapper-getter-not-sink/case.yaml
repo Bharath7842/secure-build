@@ -1,0 +1,24 @@
+id: wrapper-getter-not-sink
+area: sql-binding
+polarity: negative
+seed_findings: [61]
+adjudication: dev_label_only
+# A DAO method that formats its parameter into SQL becomes a derived rule. A view
+# getter with the same name is a different method of a different type: its
+# declaration is not a call, and calling it reaches no SQL (EPIC-02 identity).
+limitations:
+  inter-file-call-graph: true
+  runtime-derived-regex: true
+allow_absent: true
+expected:
+  - cwe: CWE-89
+    file: src/main/java/com/acme/util/AccountView.java
+    sink_line: 6
+    verdict: false_positive
+    reason_tag: match_is_declaration
+  - cwe: CWE-89
+    file: src/main/java/com/acme/util/Banner.java
+    sink_line: 7
+    verdict: false_positive
+    reason_tag: wrapper_identity_mismatch
+scripted: []

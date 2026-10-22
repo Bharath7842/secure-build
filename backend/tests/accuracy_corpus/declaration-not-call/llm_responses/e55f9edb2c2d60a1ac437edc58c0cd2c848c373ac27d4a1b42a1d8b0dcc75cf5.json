@@ -1,0 +1,8 @@
+{
+  "input_tokens": 1158,
+  "key": "e55f9edb2c2d60a1ac437edc58c0cd2c848c373ac27d4a1b42a1d8b0dcc75cf5",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 125,
+  "step": "group_confirm_triage_findings",
+  "text": "{\"decisions\": [{\"group_index\": 0, \"verdict\": \"true_positive\", \"confidence\": 0.7, \"verdict_reason\": \"The id is formatted into the DELETE text, so the caller's value changes the statement.\", \"ai_fix\": \"Bind the id as a parameter instead of formatting it into the SQL.\"}, {\"group_index\": 1, \"verdict\": \"true_positive\", \"confidence\": 0.7, \"verdict_reason\": \"The id reaches the wrapper's DELETE statement from a scheduled job.\", \"ai_fix\": \"Validate the id before calling the wrapper, and bind it inside.\"}]}"
+}

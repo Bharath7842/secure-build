@@ -1,0 +1,17 @@
+id: wrapper-zero-arg
+area: sql-binding
+polarity: negative
+seed_findings: [49]
+adjudication: dev_label_only
+# A wrapper that takes no argument passes nothing to its sink, so no runtime-sink
+# rule is derived from it and its call sites are not findings (EPIC-02).
+limitations:
+  inter-file-call-graph: true
+  runtime-derived-regex: true
+allow_absent: true
+expected:
+  - cwe: CWE-89
+    file: src/main/java/com/acme/util/RateCache.java
+    sink_line: 9
+    verdict: false_positive
+scripted: []

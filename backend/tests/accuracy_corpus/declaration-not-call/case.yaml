@@ -7,17 +7,25 @@ adjudication: dev_label_only
 # also appears where the wrapper is declared, and a declaration is not a call.
 # The validator dismisses that one occurrence with a structural proof; the real
 # call site of the same method is left to the model and stays a finding.
+# Since EPIC-02 a wrapper becomes a rule only when its parameter reaches SQL text,
+# so the wrapper here formats `id` into its DELETE (the catalog's concatenation
+# rule finds that too).
 limitations:
   inter-file-call-graph: true
   runtime-derived-regex: true
 expected:
-  - rule_id: runtime-sink-jdbc_template-deleteJob
+  - rule_id: runtime-sink-jdbc_template-deleteJob-50c21113
     cwe: CWE-89
     file: src/main/java/com/acme/util/JobCleaner.java
     sink_line: 8
     verdict: false_positive
     reason_tag: match_is_declaration
-  - rule_id: runtime-sink-jdbc_template-deleteJob
+  - rule_id: java-sql-string-concat
+    cwe: CWE-89
+    file: src/main/java/com/acme/util/JobCleaner.java
+    sink_line: 9
+    verdict: true_positive
+  - rule_id: runtime-sink-jdbc_template-deleteJob-50c21113
     cwe: CWE-89
     file: src/main/java/com/acme/util/Scheduler.java
     sink_line: 7
@@ -29,5 +37,10 @@ scripted:
         - group_index: 0
           verdict: true_positive
           confidence: 0.7
+          verdict_reason: The id is formatted into the DELETE text, so the caller's value changes the statement.
+          ai_fix: Bind the id as a parameter instead of formatting it into the SQL.
+        - group_index: 1
+          verdict: true_positive
+          confidence: 0.7
           verdict_reason: The id reaches the wrapper's DELETE statement from a scheduled job.
-          ai_fix: Validate the id before calling the wrapper.
+          ai_fix: Validate the id before calling the wrapper, and bind it inside.

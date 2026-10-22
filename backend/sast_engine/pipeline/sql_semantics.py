@@ -1711,8 +1711,16 @@ class SqlSummaries:
                 out.internal = out.internal or reach[1] or callee.internal
                 out.detail = out.detail or f"calls `{callee.method}`, whose SQL text {callee.detail or 'is dynamic'}"
             elif callee.executes == "unknown" and callee.reason not in ("cycle",):
-                if callee.reason == "unresolved" and not self._passes_text(node, folder):
-                    continue  # an unresolved call that is handed no text cannot build our SQL
+                if callee.reason == "unresolved":
+                    handed = self._handed(node, folder)
+                    if handed == "none":
+                        continue  # handed no SQL and no text: it cannot build our SQL
+                    if handed == "constant_sql":
+                        # An executor we cannot see, given only constant SQL and
+                        # non-text values: no outside text reaches its grammar.
+                        executes.append("fixed_bound")
+                        out.detail = out.detail or f"passes only constant SQL to `{callee.method}`"
+                        continue
                 executes.append("unknown")
                 out.reason, out.missing = out.reason or callee.reason, out.missing or callee.missing
             elif callee.executes == "fixed_bound":
@@ -1750,14 +1758,17 @@ class SqlSummaries:
             return positions, True
         return (positions, internal) if any_text else None
 
-    def _passes_text(self, node: Any, folder: QueryFolder) -> bool:
+    def _handed(self, node: Any, folder: QueryFolder) -> str:
+        """What a call hands its callee: `text` (some argument carries
+        dynamic or unresolved text), `constant_sql` (constant SQL text, other
+        arguments non-text) or `none`."""
+        sql = False
         for arg in _args(node):
             qc = classify_variants(folder.fold(arg))
-            if any(is_text_kind(p.kind) for p in qc.dynamic_parts):
-                return True
-            if any(_SQL_WORD_RE.search(v) for v in qc.variants):
-                return True
-        return False
+            if qc.unknown or any(is_text_kind(p.kind) for p in qc.dynamic_parts):
+                return "text"
+            sql = sql or any(_SQL_WORD_RE.search(v) for v in qc.variants)
+        return "constant_sql" if sql else "none"
 
     def _returns(self, out: SqlSummary, ctx: MethodContext, folder: QueryFolder) -> None:
         rtype = of._simple_type(of._f(ctx.node, "type"), ctx.src)

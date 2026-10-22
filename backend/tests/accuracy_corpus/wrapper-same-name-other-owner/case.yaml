@@ -1,0 +1,43 @@
+id: wrapper-same-name-other-owner
+area: sql-binding
+polarity: positive
+seed_findings: [62, 1, 2]
+adjudication: dev_label_only
+# #62: the DAO's getPortID(long) binds its value, so no runtime-sink rule comes of it
+# and its call site is not a finding. The SOAP message's getPortID() is a getter of
+# another type; its value concatenated into a statement is the real injection (#1/#2),
+# which stays a true positive.
+limitations:
+  inter-file-call-graph: true
+  runtime-derived-regex: true
+allow_absent: true
+expected:
+  - cwe: CWE-89
+    file: src/main/java/com/acme/util/PortLookup.java
+    sink_line: 9
+    verdict: false_positive
+  - rule_id: java-jdbc-prepare-concat
+    cwe: CWE-89
+    file: src/main/java/com/acme/dao/SoapPortDao.java
+    sink_line: 12
+    verdict: true_positive
+    issue_class: security
+scripted:
+  - step: scan_deep_files
+    when_user_contains: ["SoapPortDao.java"]
+    response:
+      findings:
+        - line: 12
+          verdict: true_positive
+          confidence: 0.9
+          rule_id: java-jdbc-prepare-concat
+          severity: HIGH
+          cwe: CWE-89
+          title: SQL injection through a concatenated JDBC statement
+          owasp_category: "A03:2021-Injection"
+          source: xmlPortMsg.getPortID() (SOAP request)
+          sink: connection.prepareStatement(...)
+          data_flow: the message's port id is concatenated into the query text
+          snippet: PreparedStatement ps = connection.prepareStatement(
+          verdict_reason: The SOAP message's port id is concatenated into the SQL text.
+          ai_fix: Bind the port id with a PreparedStatement placeholder.

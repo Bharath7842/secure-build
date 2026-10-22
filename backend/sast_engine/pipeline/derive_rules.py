@@ -1,7 +1,13 @@
 """derive_rules.py — runtime RegexRules from this scan's analysis.
 
 Pass A (no LLM): project methods that contain a typed Java sink become
-Kind-A wrapper patterns (``\\bname\\s*\\(``). Pass B (one LLM call): extra
+Kind-A wrapper patterns (``\\bname\\s*\\(``). A SQL wrapper becomes a rule only
+when its method summary (`sql_semantics`, SAST-02-060) shows a *parameter*
+reaching SQL text: fixed-bound, zero-argument, getter and stub wrappers derive
+nothing. A rule is keyed by the wrapper's owner and signature, so two
+same-named methods are two rules, and carries that identity
+(`wrapper_owner`, `wrapper_signature`, `tainted_params`); the
+`wrapper_call_identity` validator then checks each call resolves to it. Pass B (one LLM call): extra
 source/sink API patterns for the detected stack. Both are merged onto the
 static ``rules/`` catalog — never written back to disk, never a replacement.
 
@@ -10,6 +16,7 @@ Catalog rules always win on id or normalized-pattern collision.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -128,16 +135,34 @@ def _sanitize_id_fragment(name: str) -> str:
     return cleaned or "unnamed"
 
 
-def wrappers_from_graph(graph: Optional[GraphAdapter]) -> List[Dict[str, Any]]:
-    """Pass A: one Kind-A rule dict per distinct (wrapper name, sink kind),
-    most severe sink kind first, then by name (a stable order keeps the
-    derived set — and the prompts that embed it — identical across reruns)."""
+_SQL_SINK_KINDS = frozenset({"sql", "jpa", "jdbc_template"})
+
+
+def _wrapper_id(kind: str, name: str, owner: str, signature: str) -> str:
+    """Stable and unique per wrapper: `runtime-sink-<kind>-<name>-<8 hex>` of
+    owner and signature. A graph that knows no owner keeps the plain id."""
+    base = f"runtime-sink-{kind}-{_sanitize_id_fragment(name)}"
+    if not owner:
+        return base
+    return f"{base}-{hashlib.sha1(f'{owner}#{signature}'.encode('utf-8')).hexdigest()[:8]}"
+
+
+def wrappers_from_graph(
+    graph: Optional[GraphAdapter], *, stats: Optional[Dict[str, int]] = None
+) -> List[Dict[str, Any]]:
+    """Pass A: one Kind-A rule dict per distinct (wrapper identity, sink
+    kind), most severe sink kind first, then by name and id (a stable order
+    keeps the derived set — and the prompts that embed it — identical across
+    reruns). `stats` gets `candidates` (wrappers before the identity filter)
+    and `derived`."""
     if graph is None:
         return []
     language = getattr(graph, "language", "java") or "java"
     generic_names = _GENERIC_NAMES_BY_LANG.get(language, _GENERIC_NAMES_BY_LANG["java"])
     sink_method_names = _SINK_METHOD_NAMES_BY_LANG.get(language, _SINK_METHOD_NAMES_BY_LANG["java"])
-    seen: Set[Tuple[str, str]] = set()
+    summary_of = getattr(graph, "sql_summary", None)
+    seen: Set[Tuple[Any, ...]] = set()
+    candidates: Set[Tuple[Any, ...]] = set()
     raw: List[Dict[str, Any]] = []
     for hit in graph.sink_hits():
         caller = graph.caller_info(hit.caller_key)
@@ -151,14 +176,28 @@ def wrappers_from_graph(graph: Optional[GraphAdapter]) -> List[Dict[str, Any]]:
         if len(name) < 5 or name in generic_names or name in sink_method_names:
             continue
         kind = hit.kind or "sql"
-        key = (name.lower(), kind)
-        if key in seen:
+        owner = getattr(caller, "owner", "") or ""
+        param_types = tuple(getattr(caller, "param_types", ()) or ())
+        arity = getattr(caller, "arity", None)
+        signature = f"{name}({','.join(param_types)})"
+        key = (owner or name.lower(), signature if owner else "", kind)
+        if key in seen or key in candidates:
             continue
+        candidates.add(key)
+        # A wrapper called with no arguments passes nothing to its sink.
+        if arity == 0:
+            continue
+        tainted: Optional[List[int]] = None
+        if kind in _SQL_SINK_KINDS and summary_of is not None and getattr(caller, "key", ""):
+            summary = summary_of(caller.key)
+            if summary is None or summary.executes != "dynamic" or not summary.positions:
+                continue  # fixed-bound, getter, stub: no parameter reaches SQL text
+            tainted = list(summary.positions)
         seen.add(key)
         cwe = _SINK_KIND_CWE.get(kind, "CWE-89")
         severity = _SINK_KIND_SEVERITY.get(kind, "MEDIUM")
-        raw.append({
-            "id": f"runtime-sink-{kind}-{_sanitize_id_fragment(name)}",
+        entry: Dict[str, Any] = {
+            "id": _wrapper_id(kind, name, owner, signature),
             "title": f"Project wrapper {name} reaches a {kind} sink",
             "description": (
                 f"{caller.display} contains a typed {kind} sink; call sites "
@@ -175,8 +214,18 @@ def wrappers_from_graph(graph: Optional[GraphAdapter]) -> List[Dict[str, Any]]:
             "derived": True,
             "wrapper_name": name,
             "sink_kind": kind,
-        })
-    raw.sort(key=lambda r: (_SINK_KIND_RANK.get(r["sink_kind"], len(_SINK_KIND_RANK)), r["wrapper_name"].lower()))
+        }
+        if owner:
+            entry.update(wrapper_owner=owner, wrapper_signature=signature, wrapper_arity=arity)
+            if tainted is not None:
+                entry["tainted_params"] = tainted
+        raw.append(entry)
+    if stats is not None:
+        stats["candidates"] = stats.get("candidates", 0) + len(candidates)
+        stats["derived"] = stats.get("derived", 0) + len(raw)
+    raw.sort(key=lambda r: (
+        _SINK_KIND_RANK.get(r["sink_kind"], len(_SINK_KIND_RANK)), r["wrapper_name"].lower(), r["id"],
+    ))
     return raw
 
 
@@ -212,7 +261,11 @@ def compile_derived_rule(
             dropped.append(f"unsafe_pattern:{unsafe}")
         return None
     norm = _norm_pattern(pattern)
-    if not norm or norm in catalog_patterns or norm in seen_patterns:
+    # Two wrappers of the same name and different owners share a pattern; the
+    # identity validator tells their call sites apart, so both are kept.
+    pattern_key = f"{norm}|{entry['wrapper_owner']}#{entry.get('wrapper_signature')}" if entry.get(
+        "wrapper_owner") else norm
+    if not norm or norm in catalog_patterns or pattern_key in seen_patterns:
         if dropped is not None:
             dropped.append("duplicate_pattern")
         return None
@@ -224,7 +277,7 @@ def compile_derived_rule(
             dropped.append("compile_error")
         return None
     seen_ids.add(rule.id)
-    seen_patterns.add(_norm_pattern(rule.pattern))
+    seen_patterns.add(pattern_key)
     return rule
 
 
@@ -362,6 +415,7 @@ def derive_runtime_rules(
     max_rules: int = DEFAULT_MAX_DERIVED,
     call_llm_fn: Callable[..., str] = call_llm,
     dropped: Optional[List[str]] = None,
+    stats: Optional[Dict[str, int]] = None,
 ) -> List[RegexRule]:
     """Pass A then Pass B, catalog-preserving merge, capped at `max_rules`.
 
@@ -372,7 +426,7 @@ def derive_runtime_rules(
     actually produced the returned rules, not double-counted across passes.
     """
     cap = max(0, int(max_rules))
-    pass_a_raw = wrappers_from_graph(graph)
+    pass_a_raw = wrappers_from_graph(graph, stats=stats)
     pass_a_dropped: List[str] = []
     compiled = compile_derived_rules(pass_a_raw, static_rules, cap=cap, dropped=pass_a_dropped)
     if not use_llm or len(compiled) >= cap:

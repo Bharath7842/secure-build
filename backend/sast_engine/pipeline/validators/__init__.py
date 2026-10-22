@@ -275,6 +275,10 @@ def apply_validators(
     changed = 0
     for finding in findings:
         fpath = finding.get("file_path") or path
+        if fpath and not finding.get("file_path"):
+            # Regex hits get their path stamped only at grouping; a validator
+            # reading the file needs it now.
+            finding["file_path"] = fpath
         if fpath and fpath not in ctx.file_text:
             ctx.file_text[fpath] = source_text
         facts = finding.get("facts") if isinstance(finding.get("facts"), dict) else None
@@ -313,7 +317,8 @@ def render_deterministic_facts(
 # The shipped validators. Imported last: they register themselves on import.
 # Order matters — the first negative proof wins, so `stub_method` (a stub has no
 # sink at all) is consulted before `declaration_not_call`, and both before the
-# SQL checks, which assume the anchor is real code.
+# wrapper identity check and the SQL checks, which assume the anchor is a call.
 from . import stub_method as _stub_method  # noqa: E402,F401
 from . import declaration_not_call as _declaration_not_call  # noqa: E402,F401
+from . import wrapper_call_identity as _wrapper_call_identity  # noqa: E402,F401
 from . import sql_binding as _sql_binding  # noqa: E402,F401

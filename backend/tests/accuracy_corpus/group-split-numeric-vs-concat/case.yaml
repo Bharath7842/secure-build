@@ -7,12 +7,16 @@ adjudication: dev_label_only
 # different kinds of values: an int id and a String name. They are not one
 # construct (the facts say the arguments differ), so they are two groups and each
 # is decided on its own: the numeric one cannot inject, the string one can.
+# Since EPIC-02 the numeric one is settled before grouping by its statement (a
+# hygiene issue, not injection); the string one is left for the model.
 expected:
   - rule_id: java-sql-string-concat
     cwe: CWE-89
     file: src/main/java/com/acme/util/ById.java
     sink_line: 7
     verdict: false_positive
+    issue_class: quality
+    reason_tag: sql_numeric_only
   - rule_id: java-sql-string-concat
     cwe: CWE-89
     file: src/main/java/com/acme/util/ByName.java
@@ -23,11 +27,6 @@ scripted:
     response:
       decisions:
         - group_index: 0
-          member: m1
-          verdict: false_positive
-          confidence: 0.2
-          verdict_reason: Only an int is concatenated, so no SQL text can be injected.
-        - group_index: 1
           member: m1
           verdict: true_positive
           confidence: 0.9
