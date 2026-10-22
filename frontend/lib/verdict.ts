@@ -37,6 +37,9 @@ const UNRESOLVED_REASON_LABEL: Record<string, string> = {
   llm_budget_exhausted: "the LLM budget was reached",
   cap_reached: "the review cap was reached",
   evidence_missing: "evidence is missing",
+  conflict: "two checks disagree and neither outranks the other",
+  not_in_sample: "it did not fit in the confirmation sample",
+  explanation_contradiction: "the explanation contradicted the code",
 };
 
 export function unresolvedReasonLabel(reason: string | null | undefined): string | null {

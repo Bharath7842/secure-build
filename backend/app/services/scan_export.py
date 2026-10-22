@@ -32,6 +32,7 @@ the only export formats for SBOM — the CycloneDX/SPDX JSON documents in
 
 from __future__ import annotations
 
+import hashlib
 import io
 import logging
 import re
@@ -863,6 +864,61 @@ def issue_groups(findings: list[Finding]) -> list[list[Finding]]:
     return _consolidate_groups(list(groups.values()))
 
 
+def construct_key(finding: Finding) -> str:
+    """Identity of the *construct* a row is about — its group key without the
+    leading verdict — as a short stable string. Rows that differ only in verdict
+    share it: that is what "one construct, mixed outcomes" means."""
+    return hashlib.sha1(repr(_finding_group_key(finding)[1:]).encode("utf-8")).hexdigest()[:12]
+
+
+_MIX_BUCKETS = (("tp", "confirmed"), ("fp", "false positive"), ("unresolved", "unresolved"))
+
+
+def _mix_bucket(finding: Finding) -> str:
+    verdict = (finding.verdict or "").strip().lower()
+    if verdict == "true_positive":
+        return "tp"
+    if verdict == "false_positive":
+        return "fp"
+    return "unresolved"
+
+
+def construct_mix_text(mix: dict[str, int] | None) -> str:
+    """"Mixed: 3 confirmed · 150 false positive · 3 unresolved" for a construct
+    whose members did not all get the same verdict; empty for a uniform one."""
+    if not mix or sum(1 for key, _ in _MIX_BUCKETS if mix.get(key)) < 2:
+        return ""
+    return "Mixed: " + " · ".join(f"{mix.get(key, 0)} {label}" for key, label in _MIX_BUCKETS if mix.get(key))
+
+
+def review_coverage_text(finding: Finding) -> str:
+    """"3 / 156" — occurrences the confirmation reviewed over the group's size."""
+    coverage = getattr(finding, "review_coverage", None)
+    if not coverage:
+        return ""
+    return f"{coverage.get('reviewed', 0)} / {coverage.get('total', 0)}"
+
+
+def annotate_construct_mix(grouped: list[Finding]) -> list[Finding]:
+    """Set `construct_key` and `construct_mix` ({tp, fp, unresolved} in MEMBERS,
+    counted across every row of the construct) on each grouped row. Computed from
+    the grouped list itself, so the API, both exports and the consistency check
+    all read one answer. Like `occurrence_count` this is set on the ORM instance
+    and never flushed."""
+    mixes: dict[str, dict[str, int]] = {}
+    keys: dict[int, str] = {}
+    for finding in grouped:
+        key = construct_key(finding)
+        keys[id(finding)] = key
+        mix = mixes.setdefault(key, {"tp": 0, "fp": 0, "unresolved": 0})
+        mix[_mix_bucket(finding)] += _occurrences(finding)
+    for finding in grouped:
+        key = keys[id(finding)]
+        finding.construct_key = key
+        finding.construct_mix = dict(mixes[key])
+    return grouped
+
+
 def _occurrence_ids(finding: Finding) -> list[str]:
     """Occurrence ids a (possibly grouped) finding stands for, in member order."""
     members = getattr(finding, "member_occurrence_ids", None)
@@ -928,7 +984,7 @@ def group_findings_by_issue(findings: list[Finding]) -> list[Finding]:
                 member_ids.append(m.occurrence_id)
         representative.member_occurrence_ids = member_ids or None
         result.append(representative)
-    return _sorted_findings(result)
+    return _sorted_findings(annotate_construct_mix(result))
 
 
 # =============================================================================
@@ -1093,8 +1149,10 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
         "Recommendation",
         "Example Fix",
         "Occurrence ID",
+        "Construct Mix",
+        "Reviewed / Total",
     ]
-    widths = [5, 12, 24, 22, 12, 24, 16, 14, 32, 12, 8, 12, 8, 42, 44, 36, 44, 44, 46, 68]
+    widths = [5, 12, 24, 22, 12, 24, 16, 14, 32, 12, 8, 12, 8, 42, 44, 36, 44, 44, 46, 68, 40, 16]
     _xl_header_row(sheet, 1, headers, widths=widths)
 
     sorted_findings = _sorted_findings(findings)
@@ -1126,6 +1184,8 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
             _excel_cell(recommendation),
             _excel_cell(_example_fix_text(finding)),
             "\n".join(_occurrence_ids(finding)),
+            construct_mix_text(getattr(finding, "construct_mix", None)),
+            review_coverage_text(finding),
         ]
         sheet.append([_excel_scalar(v) for v in row_values])
 
@@ -1684,7 +1744,9 @@ def _finding_story_block(
         "Verdict",
         f"Scanner: {_display_verdict(scanner_verdict, finding.unresolved_reason)}"
         f" · Review: {_review_state_label(finding)}"
-        f" · {COUNTED_AS_PREFIX}{_counted_as(finding)}",
+        f" · {COUNTED_AS_PREFIX}{_counted_as(finding)}"
+        + (f" · Construct: {mix}" if (mix := construct_mix_text(getattr(finding, "construct_mix", None))) else "")
+        + (f" · Reviewed / Total: {cov}" if (cov := review_coverage_text(finding)) else ""),
         styles=styles, width=inner_width, label_color="#334155"))
 
     if description:
@@ -2571,6 +2633,27 @@ def _recount_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, i
     return out
 
 
+def _check_construct_mix(rows: list[dict[str, Any]]) -> list[str]:
+    """Each row's `construct_mix` must equal a recount, from the rows themselves,
+    of the members behind every row that shares its `construct_key`."""
+    totals: dict[str, dict[str, int]] = {}
+    for row in rows:
+        verdict = (row.get("verdict") or "").strip().lower()
+        bucket = "tp" if verdict == "true_positive" else "fp" if verdict == "false_positive" else "unresolved"
+        totals.setdefault(row.get("construct_key") or "", {"tp": 0, "fp": 0, "unresolved": 0})[bucket] += (
+            row.get("occurrence_count") or 1
+        )
+    problems = []
+    for row in rows:
+        expected = totals.get(row.get("construct_key") or "")
+        if row.get("construct_mix") != expected:
+            problems.append(
+                f"API construct mix: {row.get('title')!r} says {row.get('construct_mix')}, "
+                f"the rows sharing its construct give {expected}"
+            )
+    return problems
+
+
 def _check_api(counts: dict[str, Any], grouped: list[Finding]) -> list[str]:
     from app.schemas import FindingOut  # lazy: keeps this module import-light
 
@@ -2590,6 +2673,7 @@ def _check_api(counts: dict[str, Any], grouped: list[Finding]) -> list[str]:
                 problems.append(
                     f"API counts: {_BUCKET_LABELS[bucket]} / {sev} says {stated}, its rows give {actual}"
                 )
+    problems += _check_construct_mix(rows)
     for sev in SEVERITY_ORDER:
         expected_groups = sum(
             recomputed.get(b, {}).get(sev, {"groups": 0})["groups"]
@@ -2603,7 +2687,7 @@ def _check_api(counts: dict[str, Any], grouped: list[Finding]) -> list[str]:
     return problems
 
 
-def _check_xlsx(data: bytes, counts: dict[str, Any]) -> list[str]:
+def _check_xlsx(data: bytes, counts: dict[str, Any], grouped: list[Finding] | None = None) -> list[str]:
     from openpyxl import load_workbook
 
     workbook = load_workbook(io.BytesIO(data))
@@ -2620,6 +2704,21 @@ def _check_xlsx(data: bytes, counts: dict[str, Any]) -> list[str]:
         rows_by_bucket[row[column]] = rows_by_bucket.get(row[column], 0) + 1
 
     problems: list[str] = []
+    if grouped is not None:
+        mix_col, cov_col = headers.index("Construct Mix"), headers.index("Reviewed / Total")
+        sheet_rows = list(findings_sheet.iter_rows(min_row=2, values_only=True))
+        expected_rows = _sorted_findings(grouped)
+        if len(sheet_rows) != len(expected_rows):
+            problems.append(f"Excel findings sheet: {len(sheet_rows)} rows, the API has {len(expected_rows)}")
+        for number, (row, finding) in enumerate(zip(sheet_rows, expected_rows), start=1):
+            want_mix = construct_mix_text(getattr(finding, "construct_mix", None))
+            if (row[mix_col] or "") != want_mix:
+                problems.append(f"Excel row {number}: Construct Mix says {row[mix_col]!r}, the API says {want_mix!r}")
+            if (row[cov_col] or "") != review_coverage_text(finding):
+                problems.append(
+                    f"Excel row {number}: Reviewed / Total says {row[cov_col]!r}, "
+                    f"the API says {review_coverage_text(finding)!r}"
+                )
     for label, cell in verdict_bucket_totals(counts).items():
         summary_groups, summary_occurrences = stated.get(label.lower(), (None, None))
         if (summary_groups, summary_occurrences) != (cell["groups"], cell["occurrences"]):
@@ -2686,6 +2785,6 @@ def check_report_consistency(db: Any, scan: Scan) -> list[str]:
     counts = count_findings(grouped)
     project = scan.project
     problems = _check_api(counts, grouped)
-    problems += _check_xlsx(build_excel_report(project, scan, grouped), counts)
+    problems += _check_xlsx(build_excel_report(project, scan, grouped), counts, grouped)
     problems += _check_pdf(build_pdf_report(project, scan, grouped), counts)
     return problems

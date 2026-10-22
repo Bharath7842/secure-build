@@ -42,6 +42,7 @@ def submit_review(
         review = svc.submit_review(
             db, scan, finding, decision=body.decision, reviewer=principal.label,
             comment=body.comment, resolution_notes=body.resolution_notes,
+            apply_to=body.apply_to, member_ids=body.member_ids,
         )
     except svc.ReviewError as exc:
         raise _http(exc) from exc

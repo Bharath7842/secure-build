@@ -508,6 +508,11 @@ class FindingOut(BaseModel):
     reason_tag: str | None = None
     # {"reviewed": k, "total": n}: members of its group the confirmation looked at.
     review_coverage: dict | None = None
+    # The construct (group key without its verdict) this row is about, and how many
+    # MEMBERS of it got each outcome across all its rows: {tp, fp, unresolved}. A
+    # construct whose outcomes differ is "mixed" and shown as one (SAST-01-080).
+    construct_key: str | None = None
+    construct_mix: dict | None = None
     affected_files: list[str] | None = None
     # Every file:line a merged group stands for ({file_path, line}); None for a single row.
     affected_lines: list[dict] | None = None
@@ -778,6 +783,11 @@ class ReviewIn(BaseModel):
     reviewer: str | None = Field(default=None, max_length=120)
     comment: str | None = Field(default=None, max_length=5000)
     resolution_notes: str | None = Field(default=None, max_length=5000)
+    # A row whose construct is mixed (its members were not all given the same
+    # outcome) is not reviewed as one unit by accident: the request names the
+    # member findings it applies to, or says `apply_to: "all"` for the whole row.
+    apply_to: Literal["all"] | None = None
+    member_ids: list[str] | None = Field(default=None, max_length=1000)
 
 
 class ReviewEventOut(BaseModel):

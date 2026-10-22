@@ -173,12 +173,20 @@ def _event(review: FindingReview, actor: str, action: str, **fields: Any) -> Fin
 # --- submitting a decision --------------------------------------------------------------
 
 
-def _snapshot(scan: Scan, finding: Finding, members: list[Finding]) -> FindingReview:
+def _snapshot(
+    scan: Scan, finding: Finding, members: list[Finding], *, subset: bool = False
+) -> FindingReview:
+    fingerprint = _fingerprint(scan.project_id, finding)
+    if subset:
+        # A review of some members of a group is its own review: it must not
+        # collide with a whole-group review of the same construct.
+        digest = hashlib.sha1("|".join(sorted(m.id for m in members)).encode("utf-8")).hexdigest()[:12]
+        fingerprint = hashlib.sha1(f"{fingerprint}|members|{digest}".encode("utf-8")).hexdigest()
     return FindingReview(
         scan_id=scan.id,
         project_id=scan.project_id,
         finding_id=finding.id,
-        fingerprint=_fingerprint(scan.project_id, finding),
+        fingerprint=fingerprint,
         member_finding_ids=[m.id for m in members],
         occurrence_count=len(members),
         rule_id=finding.rule_id,
@@ -200,6 +208,26 @@ def _snapshot(scan: Scan, finding: Finding, members: list[Finding]) -> FindingRe
     )
 
 
+MAX_MEMBER_EVENTS = 500
+
+
+def _construct_is_mixed(db: Session, scan: Scan, finding: Finding) -> bool:
+    """Do the rows of this finding's construct (same group key apart from the
+    verdict) disagree on the outcome? Judged on effective verdicts, so a member
+    a reviewer has already decided counts as decided."""
+    own = None
+    outcomes: dict[str, set[str]] = {}
+    groups = issue_groups(effective_scan_findings(db, scan))
+    for members in groups:
+        key = _finding_group_key(members[0])[1:]
+        verdict = (members[0].verdict or "").strip().lower()
+        bucket = verdict if verdict in ("true_positive", "false_positive") else "unresolved"
+        outcomes.setdefault(repr(key), set()).add(bucket)
+        if any(m.id == finding.id for m in members):
+            own = repr(key)
+    return own is not None and len(outcomes.get(own, ())) > 1
+
+
 def submit_review(
     db: Session,
     scan: Scan,
@@ -209,8 +237,16 @@ def submit_review(
     reviewer: str,
     comment: str | None = None,
     resolution_notes: str | None = None,
+    apply_to: str | None = None,
+    member_ids: list[str] | None = None,
 ) -> FindingReview:
-    """Apply one reviewer decision to the issue group `finding` belongs to. Commits."""
+    """Apply one reviewer decision to the issue group `finding` belongs to. Commits.
+
+    When the group's construct is *mixed* — other rows of the same construct got a
+    different outcome — a decision for "the group" is ambiguous, so the request
+    must say which members it covers (`member_ids`, a subset of the group) or
+    that it means the whole row (`apply_to="all"`); otherwise it is refused with
+    409."""
     reviewer = _clean(reviewer)
     comment = _clean(comment)
     resolution_notes = _clean(resolution_notes)
@@ -221,8 +257,26 @@ def submit_review(
 
     review = find_review(db, scan.id, finding.id)
     is_new = review is None
+    chosen_members: list[Finding] | None = None
     if is_new:
-        review = _snapshot(scan, finding, _members_of(db, scan.id, finding))
+        group = _members_of(db, scan.id, finding)
+        if member_ids:
+            by_id = {m.id: m for m in group}
+            unknown = [i for i in member_ids if i not in by_id]
+            if unknown:
+                raise ReviewError(f"These findings are not members of this issue group: {', '.join(unknown[:5])}.")
+            chosen_members = [by_id[i] for i in dict.fromkeys(member_ids)]
+        elif apply_to != "all" and _construct_is_mixed(db, scan, finding):
+            raise ReviewError(
+                "This construct has members with different outcomes, so a decision for the "
+                "whole row is ambiguous. Name the members it applies to (member_ids) or pass "
+                'apply_to="all" to decide the whole row.',
+                status=409,
+            )
+        review = _snapshot(
+            scan, finding, chosen_members or group,
+            subset=bool(chosen_members) and len(chosen_members) < len(group),
+        )
         db.add(review)
     now = _utcnow()
     previous_verdict, previous_resolution = review.reviewer_verdict, review.resolution_status
@@ -255,6 +309,11 @@ def submit_review(
             action = "verdict_reaffirmed"
         _event(review, reviewer, action, from_verdict=previous_verdict, to_verdict=decision,
                comment=comment or None, detail={"override": bool(override)})
+        if is_new and (member_ids or apply_to):
+            # The audit trail names each finding the decision was applied to.
+            for member_id in (review.member_finding_ids or [])[:MAX_MEMBER_EVENTS]:
+                _event(review, reviewer, "member_decided", to_verdict=decision,
+                       detail={"member_id": member_id, "apply_to": apply_to or "members"})
         _update_learning(review, previous_verdict, reviewer)
     else:
         if review.reviewer_verdict != DECISION_CONFIRMED:

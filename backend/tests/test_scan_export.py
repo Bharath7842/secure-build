@@ -342,6 +342,8 @@ def test_excel_findings_use_expected_columns():
         "Recommendation",
         "Example Fix",
         "Occurrence ID",
+        "Construct Mix",
+        "Reviewed / Total",
     ]
     by_header = dict(zip(headers_row(sheet), [cell.value for cell in sheet[2]]))
     assert by_header["Severity"] == "HIGH"

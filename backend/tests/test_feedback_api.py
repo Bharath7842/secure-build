@@ -404,3 +404,74 @@ def test_a_review_of_an_old_group_is_still_found_after_the_group_key_changes(cli
         db.close()
     group = [f for f in _findings(client, scan_id)["findings"] if f["rule_id"] == "secret"]
     assert len(group) == 1 and group[0]["review"]["reviewer_verdict"] == "false_positive"
+
+
+# --- mixed constructs (SAST-01-080) -------------------------------------------------------
+
+@pytest.fixture()
+def mixed_scan(client, project_id, monkeypatch):
+    """One regex construct (same rule and matched text) whose five members were given
+    different outcomes: two confirmed, three dismissed — plus an unrelated finding."""
+    from app.db import SessionLocal
+    from app.models import Finding
+    from app.services import scan_runner
+
+    monkeypatch.setattr(scan_runner, "execute_scan", lambda scan_id: None)
+    scan_id = client.post("/scans", headers=HDR, json={"project_id": project_id, "commit_sha": "mix"}).json()["scan_id"]
+    db = SessionLocal()
+    try:
+        rows = {}
+        for i, verdict in enumerate(["true_positive"] * 2 + ["false_positive"] * 3):
+            rows[f"m{i}"] = Finding(
+                scan_id=scan_id, severity="HIGH", title="SQL built from a variable", cwe="CWE-89",
+                rule_id="jdbc-exec-variable", matched_text="stmt.executeQuery(sql)", file_path=f"src/R{i}.java",
+                line=3, verdict=verdict, kind="regex", confidence=0.8,
+            )
+        rows["solo"] = Finding(scan_id=scan_id, severity="LOW", title="Weak hash", cwe="CWE-328", rule_id="weak",
+                               file_path="src/W.java", line=1, verdict="true_positive", kind="llm")
+        db.add_all(rows.values())
+        db.commit()
+        ids = {k: v.id for k, v in rows.items()}
+    finally:
+        db.close()
+    return scan_id, ids
+
+
+def test_a_whole_row_decision_on_a_mixed_construct_is_refused_with_a_clear_message(client, mixed_scan):
+    scan_id, ids = mixed_scan
+    resp = _review(client, scan_id, ids["m2"], decision="false_positive", comment="all fine")
+    assert resp.status_code == 409
+    assert "different outcomes" in resp.json()["detail"] and "apply_to" in resp.json()["detail"]
+
+
+def test_apply_to_all_is_accepted_and_every_member_is_named_in_the_trail(client, mixed_scan):
+    scan_id, ids = mixed_scan
+    resp = _review(client, scan_id, ids["m2"], decision="false_positive", comment="all fine", apply_to="all")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["occurrence_count"] == 3
+    events = [e for e in body["events"] if e["action"] == "member_decided"]
+    assert sorted(e["detail"]["member_id"] for e in events) == sorted([ids["m2"], ids["m3"], ids["m4"]])
+
+
+def test_a_decision_naming_members_applies_to_just_those(client, mixed_scan):
+    scan_id, ids = mixed_scan
+    resp = _review(client, scan_id, ids["m2"], decision="confirmed_issue", comment="this one is real",
+                   member_ids=[ids["m2"]])
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["occurrence_count"] == 1
+    findings = [f for f in _findings(client, scan_id)["findings"] if f["rule_id"] == "jdbc-exec-variable"]
+    assert sorted((f["verdict"], f["occurrence_count"]) for f in findings) == [
+        ("false_positive", 2), ("true_positive", 3),
+    ]
+
+
+def test_member_ids_outside_the_group_are_refused(client, mixed_scan):
+    scan_id, ids = mixed_scan
+    resp = _review(client, scan_id, ids["m2"], decision="false_positive", comment="x", member_ids=[ids["solo"]])
+    assert resp.status_code == 422
+
+
+def test_a_uniform_group_still_needs_no_extra_choice(client, scan):
+    scan_id, ids = scan
+    assert _review(client, scan_id, ids["rx0"], decision="false_positive", comment="fixtures").status_code == 200

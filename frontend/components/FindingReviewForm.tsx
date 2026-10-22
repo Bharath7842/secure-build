@@ -25,6 +25,10 @@ interface Props {
   llmVerdict: string | null | undefined;
   /** Whether a review already exists (so its history is worth fetching). */
   hasReview: boolean;
+  /** The row's construct has members with different outcomes: say which members a decision covers. */
+  constructMixed?: boolean;
+  /** How many occurrences this row stands for. */
+  occurrenceCount?: number;
   /** Called with the saved review so the parent can refresh its view. */
   onSaved?: (row: FeedbackRow) => void;
 }
@@ -37,8 +41,18 @@ const ALL_DECISIONS: ReviewDecision[] = [
   "accept_risk",
 ];
 
-export default function FindingReviewForm({ scanId, findingId, llmVerdict, hasReview, onSaved }: Props) {
+export default function FindingReviewForm({
+  scanId,
+  findingId,
+  llmVerdict,
+  hasReview,
+  constructMixed = false,
+  occurrenceCount = 1,
+  onSaved,
+}: Props) {
   const [review, setReview] = useState<FeedbackRow | null>(null);
+  // For a mixed construct the server will not guess: "this occurrence only" or "all N in this row".
+  const [scope, setScope] = useState<"one" | "all">("one");
   const [decision, setDecision] = useState<ReviewDecision>("confirmed_issue");
   const [comment, setComment] = useState("");
   const me = useAuth();
@@ -83,9 +97,17 @@ export default function FindingReviewForm({ scanId, findingId, llmVerdict, hasRe
     setBusy(true);
     setError(null);
     try {
+      // Only a first review of a mixed construct needs a scope; later decisions update that review.
+      const scoped =
+        constructMixed && !review
+          ? scope === "all" && occurrenceCount > 1
+            ? { apply_to: "all" as const }
+            : { member_ids: [findingId] }
+          : {};
       const saved = await api.feedback.submit(scanId, findingId, {
         decision,
         ...(isClosingDecision ? { resolution_notes: comment.trim() } : { comment: comment.trim() }),
+        ...scoped,
       });
       setReview(saved);
       setComment("");
@@ -166,6 +188,23 @@ export default function FindingReviewForm({ scanId, findingId, llmVerdict, hasRe
             </p>
           </div>
         </div>
+        {constructMixed && !review ? (
+          <fieldset className="mt-2 rounded border border-amber-200 bg-amber-50/60 px-2.5 py-2" data-testid="review-scope">
+            <legend className="px-1 text-amber-900">
+              This construct has members with different outcomes. Which does your decision cover?
+            </legend>
+            <label className="mr-4 inline-flex items-center gap-1.5">
+              <input type="radio" name={`scope-${findingId}`} checked={scope === "one"} onChange={() => setScope("one")} />
+              This occurrence only
+            </label>
+            {occurrenceCount > 1 ? (
+              <label className="inline-flex items-center gap-1.5">
+                <input type="radio" name={`scope-${findingId}`} checked={scope === "all"} onChange={() => setScope("all")} />
+                All {occurrenceCount} in this row
+              </label>
+            ) : null}
+          </fieldset>
+        ) : null}
         <label className="mt-2 block">
           <span className="text-[var(--muted)]">
             {reasonLabel}

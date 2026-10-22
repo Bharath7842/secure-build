@@ -341,6 +341,14 @@ export interface Finding {
   issue_class?: "security" | "quality" | "inactive" | null;
   /** Why an `unverified` verdict is undecided (e.g. "not_reviewed_regex"). */
   unresolved_reason?: string | null;
+  /** Short tag of the deterministic proof behind the verdict (e.g. "match_is_declaration"). */
+  reason_tag?: string | null;
+  /** Occurrences of its group the grouped confirmation actually looked at. */
+  review_coverage?: { reviewed: number; total: number } | null;
+  /** The construct this row is about (its group key without the verdict), shared by every row of it. */
+  construct_key?: string | null;
+  /** Members of the construct per outcome, across all its rows; "mixed" when more than one is non-zero. */
+  construct_mix?: ConstructMix | null;
   affected_files: string[] | null;
   /** Every file:line a merged group stands for; null for a single row. */
   affected_lines?: { file_path: string; line: number }[] | null;
@@ -1579,10 +1587,21 @@ export interface ReviewEvent {
   detail: Record<string, unknown> | null;
 }
 
+/** Members of one construct by outcome: confirmed, false positive, unresolved. */
+export interface ConstructMix {
+  tp: number;
+  fp: number;
+  unresolved: number;
+}
+
 export interface ReviewInput {
   decision: ReviewDecision;
   comment?: string;
   resolution_notes?: string;
+  /** Required by the server for a row whose construct is mixed: "all" decides the whole row. */
+  apply_to?: "all";
+  /** Or name the findings (members of the row) the decision covers. */
+  member_ids?: string[];
 }
 
 /** One issue group with the LLM's result and, once reviewed, the reviewer's decision. */

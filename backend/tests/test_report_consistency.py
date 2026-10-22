@@ -299,3 +299,102 @@ def test_a_crashing_check_never_breaks_the_scan(seeded, monkeypatch, caplog):
     monkeypatch.setattr(scan_export, "check_report_consistency", boom)
     scan_runner._log_report_consistency(seeded)  # must not raise
     assert "could not run" in caplog.text
+
+
+# --- mixed constructs (SAST-01-080) -----------------------------------------------------
+
+def _construct_scan(client, monkeypatch, verdicts):
+    """A scan where one regex construct (same rule and matched text) was given the
+    outcomes in `verdicts`, one finding each."""
+    monkeypatch.setattr(scan_runner, "execute_scan", lambda scan_id: None)
+    project_id = client.post(
+        "/projects", headers=HDR,
+        json={"name": "mixed", "default_git_url": "https://github.com/org/repo.git"},
+    ).json()["id"]
+    scan_id = client.post(
+        "/scans", headers=HDR, json={"project_id": project_id, "commit_sha": "mx"}
+    ).json()["scan_id"]
+    rows = [
+        Finding(
+            scan_id=scan_id, severity="HIGH", title="SQL built from a variable", verdict=verdict, kind="regex",
+            cwe="CWE-89", rule_id="jdbc-exec-variable", matched_text="stmt.executeQuery(sql)",
+            file_path=f"src/R{i}.java", line=3, issue_class="security",
+            owasp_category="A03:2021-Injection",
+            unresolved_reason="not_in_sample" if verdict == "unverified" else None,
+            review_coverage={"reviewed": len(verdicts) - 1, "total": len(verdicts)},
+        )
+        for i, verdict in enumerate(verdicts)
+    ]
+    uniform = Finding(
+        scan_id=scan_id, severity="LOW", title="Hardcoded secret", verdict="true_positive", kind="regex",
+        cwe="CWE-798", rule_id="secret", matched_text='password = "x"', file_path="src/S.java", line=1,
+        issue_class="security", owasp_category="A07:2021-Identification-and-Authentication-Failures",
+    )
+    db = db_module.SessionLocal()
+    try:
+        db.add_all([*rows, uniform])
+        db.commit()
+        scan = db.get(Scan, scan_id)
+        grouped = group_findings_by_issue(effective_scan_findings(db, scan))
+        issues = check_report_consistency(db, scan)
+        return grouped, issues, db.get(Project, project_id), scan
+    finally:
+        db.close()
+
+
+def test_a_construct_split_two_to_three_shows_the_same_mix_on_both_rows(client, monkeypatch):
+    grouped, issues, project, scan = _construct_scan(
+        client, monkeypatch, ["true_positive"] * 2 + ["false_positive"] * 3
+    )
+    mixed = [f for f in grouped if f.rule_id == "jdbc-exec-variable"]
+    assert len(mixed) == 2
+    assert {f.construct_key for f in mixed} == {mixed[0].construct_key}
+    for f in mixed:
+        assert f.construct_mix == {"tp": 2, "fp": 3, "unresolved": 0}
+    uniform = next(f for f in grouped if f.rule_id == "secret")
+    assert uniform.construct_mix == {"tp": 1, "fp": 0, "unresolved": 0}
+    assert uniform.construct_key != mixed[0].construct_key
+    assert issues == []  # the API rows, the Excel columns and the PDF all agree
+
+
+def test_the_excel_export_carries_the_mix_and_the_coverage(client, monkeypatch):
+    grouped, _issues, project, scan = _construct_scan(
+        client, monkeypatch, ["true_positive"] * 2 + ["false_positive"] * 3
+    )
+    sheet = load_workbook(BytesIO(scan_export.build_excel_report(project, scan, grouped)))["Findings"]
+    headers = [c.value for c in sheet[1]]
+    rows = [dict(zip(headers, row)) for row in sheet.iter_rows(min_row=2, values_only=True)]
+    mixed_rows = [r for r in rows if r["Issue"] == "SQL built from a variable"]
+    assert {r["Construct Mix"] for r in mixed_rows} == {"Mixed: 2 confirmed · 3 false positive"}
+    assert {r["Reviewed / Total"] for r in rows if r["Issue"] == "SQL built from a variable"} == {"4 / 5"}
+    assert [r["Construct Mix"] or "" for r in rows if r["Issue"] == "Hardcoded secret"] == [""]
+
+
+def test_the_findings_api_returns_construct_key_mix_and_coverage(client, monkeypatch):
+    _grouped, _issues, project, scan = _construct_scan(
+        client, monkeypatch, ["true_positive"] * 2 + ["false_positive"] * 3
+    )
+    # The scan must be readable by the API: finish it.
+    db = db_module.SessionLocal()
+    try:
+        db.get(Scan, scan.id).status = "success"
+        db.commit()
+    finally:
+        db.close()
+    body = client.get(f"/scans/{scan.id}/findings", headers=HDR).json()
+    rows = [f for f in body["findings"] if f["rule_id"] == "jdbc-exec-variable"]
+    assert len(rows) == 2
+    assert {r["construct_key"] for r in rows} == {rows[0]["construct_key"]}
+    assert all(r["construct_mix"] == {"tp": 2, "fp": 3, "unresolved": 0} for r in rows)
+    assert all(r["review_coverage"] == {"reviewed": 4, "total": 5} for r in rows)
+
+
+def test_unresolved_members_count_in_the_mix_by_member(client, monkeypatch):
+    grouped, issues, *_ = _construct_scan(
+        client, monkeypatch, ["true_positive", "unverified", "unverified", "false_positive"]
+    )
+    mixed = [f for f in grouped if f.rule_id == "jdbc-exec-variable"]
+    assert {tuple(sorted(f.construct_mix.items())) for f in mixed} == {
+        (("fp", 1), ("tp", 1), ("unresolved", 2))
+    }
+    assert issues == []

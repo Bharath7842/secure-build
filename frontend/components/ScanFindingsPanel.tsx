@@ -23,6 +23,8 @@ import {
 import {
   ISSUE_STATUS_CHIP,
   ISSUE_STATUS_LABEL,
+  constructMixLabel,
+  isMixedConstruct,
   llmVerdictLabel,
 } from "@/lib/review";
 import FindingDecisionHistory from "@/components/FindingDecisionHistory";
@@ -130,6 +132,8 @@ export default function ScanFindingsPanel({
     "true_positive" | "false_positive" | "unverified" | null
   >(null);
   const [severityFilter, setSeverityFilter] = useState<string | null>(null);
+  // Set by the "Mixed" chip: show only the rows of one construct, whatever their outcome.
+  const [constructFilter, setConstructFilter] = useState<string | null>(null);
   // `null` means "not loaded yet". Polling must never flip back to a loading
   // state: that unmounted the whole list every 2s and reset the scroll position.
   const [findings, setFindings] = useState<Finding[] | null>(null);
@@ -188,9 +192,12 @@ export default function ScanFindingsPanel({
 
   const visibleFindings = useMemo(() => {
     if (!findings) return [];
-    if (!severityFilter) return findings;
-    return findings.filter((f) => normalizeSeverity(f.severity, true) === severityFilter);
-  }, [findings, severityFilter]);
+    return findings.filter(
+      (f) =>
+        (!severityFilter || normalizeSeverity(f.severity, true) === severityFilter) &&
+        (!constructFilter || f.construct_key === constructFilter),
+    );
+  }, [findings, severityFilter, constructFilter]);
 
   const toggleOpen = useCallback((id: string) => {
     setOpenIds((current) => {
@@ -241,6 +248,16 @@ export default function ScanFindingsPanel({
               </button>
             );
           })}
+          {constructFilter ? (
+            <button
+              type="button"
+              onClick={() => setConstructFilter(null)}
+              className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
+              title="Show every finding again"
+            >
+              One construct only · clear
+            </button>
+          ) : null}
           {visibleFindings.length > 0 ? (
             <button
               type="button"
@@ -326,6 +343,37 @@ export default function ScanFindingsPanel({
                             {finding.occurrence_count}×
                           </span>
                         )}
+                        {finding.review_coverage &&
+                        finding.review_coverage.reviewed < finding.review_coverage.total ? (
+                          <span
+                            className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium tabular-nums text-slate-700"
+                            title="Occurrences of this group the confirmation actually looked at"
+                          >
+                            Reviewed {finding.review_coverage.reviewed} of {finding.review_coverage.total}
+                          </span>
+                        ) : null}
+                        {finding.construct_mix && isMixedConstruct(finding.construct_mix) ? (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            data-testid="construct-mix-chip"
+                            title="This construct has members with different outcomes. Click to show only its rows."
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setConstructFilter(finding.construct_key ?? null);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setConstructFilter(finding.construct_key ?? null);
+                              }
+                            }}
+                            className="cursor-pointer rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 hover:bg-amber-200"
+                          >
+                            {constructMixLabel(finding.construct_mix)}
+                          </span>
+                        ) : null}
                         {finding.cwe && (
                           <span className="text-xs text-[var(--muted)]">{finding.cwe}</span>
                         )}
@@ -447,6 +495,8 @@ export default function ScanFindingsPanel({
                     findingId={finding.id}
                     llmVerdict={finding.llm_verdict ?? finding.verdict}
                     hasReview={Boolean(finding.review)}
+                    constructMixed={isMixedConstruct(finding.construct_mix)}
+                    occurrenceCount={finding.occurrence_count ?? 1}
                     onSaved={() => setReloadKey((n) => n + 1)}
                   />
                   </div>

@@ -1,6 +1,7 @@
 /** Wording, styling and small helpers shared by every reviewer-feedback view. */
 
 import type {
+  ConstructMix,
   IssueStatus,
   LearningStatus,
   ReviewDecision,
@@ -42,6 +43,21 @@ export const LEARNING_LABEL: Record<LearningStatus, string> = {
   approved_for_learning: "Approved for Learning",
   processed: "Processed",
 };
+
+/** A construct is mixed when its members did not all get the same outcome. */
+export function isMixedConstruct(mix: ConstructMix | null | undefined): boolean {
+  if (!mix) return false;
+  return [mix.tp, mix.fp, mix.unresolved].filter((n) => n > 0).length > 1;
+}
+
+/** "Mixed: 3 confirmed · 150 false positive · 3 unresolved". */
+export function constructMixLabel(mix: ConstructMix): string {
+  const parts: string[] = [];
+  if (mix.tp) parts.push(`${mix.tp} confirmed`);
+  if (mix.fp) parts.push(`${mix.fp} false positive`);
+  if (mix.unresolved) parts.push(`${mix.unresolved} unresolved`);
+  return `Mixed: ${parts.join(" · ")}`;
+}
 
 /** What the engine itself concluded, in the reviewer's vocabulary. */
 export function llmVerdictLabel(verdict: string | null | undefined): string {
@@ -132,6 +148,8 @@ export function describeEvent(event: ReviewEvent): string {
       return `${event.actor} marked it processed`;
     case "learning_reset":
       return "Learning state reset to pending";
+    case "member_decided":
+      return `${event.actor} applied the decision to one occurrence`;
     default:
       return `${event.actor} — ${event.action}`;
   }
