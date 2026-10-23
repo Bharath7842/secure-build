@@ -302,6 +302,8 @@ class JavaMethod:
     body: str
     enclosing_kind: str  # class | interface
     locals: Dict[str, str] = field(default_factory=dict)  # name -> simple type
+    return_type: str = ""  # simple type name; "" for a constructor or when unknown
+    throws: List[str] = field(default_factory=list)  # declared `throws` types, simple names
 
 
 @dataclass
@@ -666,6 +668,24 @@ def _walk_calls(
     return calls
 
 
+def _return_type(method_node: Any, src: bytes) -> str:
+    if method_node.type != "method_declaration":
+        return ""
+    tnode = _field(method_node, "type")
+    return _simple_type_name(tnode, src) if tnode is not None else ""
+
+
+def _declared_throws(method_node: Any, src: bytes) -> List[str]:
+    out: List[str] = []
+    for child in method_node.children:
+        if child.type == "throws":
+            for t in _named(child):
+                name = _simple_type_name(t, src)
+                if name:
+                    out.append(name)
+    return out
+
+
 def _index_type(
     type_node: Any,
     src: bytes,
@@ -733,6 +753,8 @@ def _index_type(
                     body=_text(child, src),
                     enclosing_kind=kind,
                     locals=_collect_locals(child, src),
+                    return_type=_return_type(child, src),
+                    throws=_declared_throws(child, src),
                 )
                 graph.methods[key] = method
                 graph.methods_by_sig[(fqcn, mname, argc)].append(key)

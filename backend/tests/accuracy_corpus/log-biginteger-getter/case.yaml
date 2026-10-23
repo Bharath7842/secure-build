@@ -1,0 +1,33 @@
+id: log-biginteger-getter
+area: log-value
+polarity: negative
+seed_findings: [146, 195]
+adjudication: dev_label_only
+# A getter declared to return BigInteger is logged: a number.
+expected:
+- rule_id: java-log-injection-unsanitized-input
+  cwe: CWE-117
+  file: src/main/java/com/acme/service/CodeLog.java
+  sink_line: 9
+  verdict: false_positive
+  reason_tag: log_arg_constrained
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - CodeLog.java
+  response:
+    findings:
+    - line: 9
+      verdict: true_positive
+      confidence: 0.8
+      rule_id: java-log-injection-unsanitized-input
+      severity: MEDIUM
+      cwe: CWE-117
+      title: Unsanitized data reaches a log call
+      owasp_category: A09:2021-Security-Logging-and-Monitoring-Failures
+      verdict_reason: A value is logged.
+      source: the logged value
+      sink: log.info
+      data_flow: the value reaches the log call unchanged
+      snippet: log.info("code {}", outcome.getResultCode());
+      ai_fix: Encode CR/LF before logging.
