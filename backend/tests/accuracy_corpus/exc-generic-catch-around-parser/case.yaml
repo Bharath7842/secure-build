@@ -1,0 +1,32 @@
+id: exc-generic-catch-around-parser
+area: exception-provenance
+polarity: positive
+seed_findings: [130]
+adjudication: dev_label_only
+# A generic catch around a parser can receive any exception, including ones that echo their input.
+expected:
+- rule_id: java-log-injection-unsanitized-input
+  cwe: CWE-117
+  file: src/main/java/com/acme/service/Parsing.java
+  sink_line: 12
+  verdict: true_positive
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - Parsing.java
+  response:
+    findings:
+    - line: 12
+      verdict: true_positive
+      confidence: 0.8
+      rule_id: java-log-injection-unsanitized-input
+      severity: MEDIUM
+      cwe: CWE-117
+      title: Unsanitized data reaches a log call
+      owasp_category: A09:2021-Security-Logging-and-Monitoring-Failures
+      verdict_reason: The exception message is logged.
+      source: the logged value
+      sink: log.warn
+      data_flow: the value reaches the log call unchanged
+      snippet: log.warn("failed {}", e.getMessage());
+      ai_fix: Encode CR/LF before logging.

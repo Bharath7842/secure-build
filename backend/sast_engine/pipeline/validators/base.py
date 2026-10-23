@@ -119,8 +119,20 @@ class ValidatorContext:
     call_graph: Any = None
     # The scan's SQL method summaries (`sql_semantics.SqlSummaries`), when built.
     sql: Any = None
+    # The scan's usage dict (for counters), when the context was built for a scan.
+    usage: Any = field(default=None, repr=False, compare=False)
     # The repository's logging configuration, parsed on first use (SAST-03-050).
     _logging: Any = field(default=None, repr=False, compare=False)
+    _exceptions: Any = field(default=None, repr=False, compare=False)
+
+    def exception_summaries(self) -> Any:
+        """What text a caught exception can carry (SAST-03-040), built on first use."""
+        if self._exceptions is None:
+            from .. import exception_provenance
+
+            self._exceptions = exception_provenance.ExceptionSummaries(
+                self.call_graph, self.read_text, usage=self.usage)
+        return self._exceptions
 
     def logging_config(self) -> Any:
         if self._logging is None:

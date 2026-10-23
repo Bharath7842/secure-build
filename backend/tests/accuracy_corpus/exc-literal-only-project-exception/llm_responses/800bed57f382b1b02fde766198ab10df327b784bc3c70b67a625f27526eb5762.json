@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5283,
+  "key": "800bed57f382b1b02fde766198ab10df327b784bc3c70b67a625f27526eb5762",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 135,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 13, \"verdict\": \"true_positive\", \"confidence\": 0.8, \"rule_id\": \"java-log-injection-unsanitized-input\", \"severity\": \"MEDIUM\", \"cwe\": \"CWE-117\", \"title\": \"Unsanitized data reaches a log call\", \"owasp_category\": \"A09:2021-Security-Logging-and-Monitoring-Failures\", \"verdict_reason\": \"The exception message is logged.\", \"source\": \"the logged value\", \"sink\": \"log.warn\", \"data_flow\": \"the value reaches the log call unchanged\", \"snippet\": \"log.warn(\\\"failed {}\\\", e.getMessage());\", \"ai_fix\": \"Encode CR/LF before logging.\"}]}"
+}

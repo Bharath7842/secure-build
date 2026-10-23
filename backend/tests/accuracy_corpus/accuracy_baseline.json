@@ -102,6 +102,84 @@
         }
       ]
     },
+    "exc-generic-catch-around-parser": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/service/Parsing.java",
+          "issue_class": "security",
+          "line": 13,
+          "occurrence_id": "b4b82489fd1b6a62b7798270f7cc00281dc5f5c3db6399fc7b3e30e0498664e7",
+          "rule_id": "java-log-injection-unsanitized-input",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "exc-literal-only-project-exception": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/service/JobRunner.java",
+          "issue_class": "security",
+          "line": 13,
+          "occurrence_id": "7d61bff76b16d5355011364afb81bee438538d5561b03bac551b0acbe6012c04",
+          "rule_id": "java-log-injection-unsanitized-input",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "exc-npe-explicit-message": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/service/NullCheck.java",
+          "issue_class": "security",
+          "line": 13,
+          "occurrence_id": "97f2f9b208a65b80d2571e8b988b2d0e6a949ede244a12d85bea0702288f788c",
+          "rule_id": "java-log-injection-unsanitized-input",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "exc-project-exception-from-request": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/service/AskRunner.java",
+          "issue_class": "security",
+          "line": 13,
+          "occurrence_id": "1657aa9b96816b2b55d6b93349da22fc62c115e590f81ec7c6388558661c2e71",
+          "rule_id": "java-log-injection-unsanitized-input",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "exc-sax-parse-message": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/service/XmlReader.java",
+          "issue_class": "security",
+          "line": 13,
+          "occurrence_id": "b96bb74a164d4339019fe5d27cfc98f505a0d65a4c1e19d43544d0026fcf7a9b",
+          "rule_id": "java-log-injection-unsanitized-input",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "exc-thread-sleep-interrupted": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/service/Pauser.java",
+          "issue_class": "security",
+          "line": 13,
+          "occurrence_id": "0b63d9f4de11b4ae6a9a2ea5035f603a68ea35a2bf91af5cb439c4472f378ede",
+          "rule_id": "java-log-injection-unsanitized-input",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
     "explanation-fix-already-present": {
       "findings": [
         {
@@ -322,28 +400,6 @@
         }
       ]
     },
-    "log-count-then-getmessage-log": {
-      "findings": [
-        {
-          "file_path": "src/main/java/com/acme/report/Counter.java",
-          "issue_class": "security",
-          "line": 10,
-          "occurrence_id": "908fbc6d7a56e0e50aedf95e2cbb0f1d34c8d94340f75bb71d86589184b79f70",
-          "rule_id": "java-log-injection-unsanitized-input",
-          "unresolved_reason": null,
-          "verdict": "false_positive"
-        },
-        {
-          "file_path": "src/main/java/com/acme/report/Counter.java",
-          "issue_class": "security",
-          "line": 11,
-          "occurrence_id": "a58d209f55388a456ec48a42d6d43264b574c8af98b892a6a7b7f286e7957a6f",
-          "rule_id": "java-log-injection-unsanitized-input",
-          "unresolved_reason": null,
-          "verdict": "true_positive"
-        }
-      ]
-    },
     "log-credential": {
       "findings": [
         {
@@ -403,19 +459,6 @@
           "issue_class": "security",
           "line": 13,
           "occurrence_id": "46463cccf875acf6c1f487d91ab3fa67f409fade1375906b2063867ce0213a1b",
-          "rule_id": "java-log-injection-unsanitized-input",
-          "unresolved_reason": null,
-          "verdict": "true_positive"
-        }
-      ]
-    },
-    "log-getmessage-in-same-call": {
-      "findings": [
-        {
-          "file_path": "src/main/java/com/acme/report/Importer.java",
-          "issue_class": "security",
-          "line": 13,
-          "occurrence_id": "50e5f55be03dda327227e40fb902a0bfa0129a9147b45485405a012670e672f7",
           "rule_id": "java-log-injection-unsanitized-input",
           "unresolved_reason": null,
           "verdict": "true_positive"

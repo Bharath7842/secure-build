@@ -1773,7 +1773,7 @@ def _attach_validator_context(state: SastState, graph: Any) -> None:
     usage = state.get("usage")
     if usage is None or not state.get("occurrence_validators", True):
         return
-    ctx = ValidatorContext(repo_root=_resolve_scan_root(state), call_graph=graph)
+    ctx = ValidatorContext(repo_root=_resolve_scan_root(state), call_graph=graph, usage=usage)
     if isinstance(graph, call_graph.CallGraph):
         ctx.sql = sql_semantics.SqlSummaries(graph, ctx.read_text, usage=usage)
     usage[VALIDATOR_CONTEXT_USAGE_KEY] = ctx
