@@ -1,0 +1,22 @@
+id: log-getmessage-in-same-call
+area: log-boundary
+polarity: positive
+seed_findings: [138]
+adjudication: dev_label_only
+# The exception message is an argument of the log call itself.
+expected:
+- rule_id: java-log-injection-unsanitized-input
+  cwe: CWE-117
+  file: src/main/java/com/acme/report/Importer.java
+  sink_line: 11
+  verdict: true_positive
+scripted:
+- step: group_confirm_triage_findings
+  response:
+    decisions:
+    - group_index: 0
+      member: m1
+      verdict: true_positive
+      confidence: 0.8
+      verdict_reason: The message is logged unchanged and can carry a newline.
+      ai_fix: Encode CR/LF before logging.

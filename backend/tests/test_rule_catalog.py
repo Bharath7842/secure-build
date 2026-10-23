@@ -96,7 +96,7 @@ _LEGACY_RULES_WITHOUT_EXAMPLES = frozenset({
     'java-class-forname', 'java-config-default-credential', 'java-deskeyspec',
     'java-empty-catch-block', 'java-empty-trust-check', 'java-hardcoded-local-endpoint',
     'java-header-from-request', 'java-insecure-random-security', 'java-jackson-default-typing',
-    'java-ldap-injection', 'java-log-injection-unsanitized-input', 'java-objectinputstream',
+    'java-ldap-injection', 'java-objectinputstream',
     'java-open-redirect', 'java-path-file-constructor', 'java-printstacktrace',
     'java-processbuilder-concat', 'java-runtime-exec', 'java-scriptengine-eval',
     'java-secretkeyspec-string-literal', 'java-session-never-expires',

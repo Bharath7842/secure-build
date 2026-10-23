@@ -1,0 +1,22 @@
+id: log-multiline-parameterized
+area: log-boundary
+polarity: positive
+seed_findings: []
+adjudication: dev_label_only
+# request.getRequestURI() is the third line of a parameterised call: still an argument of it.
+expected:
+- rule_id: java-log-injection-unsanitized-input
+  cwe: CWE-117
+  file: src/main/java/com/acme/report/Access.java
+  sink_line: 9
+  verdict: true_positive
+scripted:
+- step: group_confirm_triage_findings
+  response:
+    decisions:
+    - group_index: 0
+      member: m1
+      verdict: true_positive
+      confidence: 0.8
+      verdict_reason: The requested URI is client-controlled and is logged unchanged.
+      ai_fix: Encode CR/LF before logging.

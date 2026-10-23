@@ -283,6 +283,41 @@
         }
       ]
     },
+    "log-banner-then-soap-tostring": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/report/SoapBanner.java",
+          "issue_class": "security",
+          "line": 10,
+          "occurrence_id": "2c09e4ee4e945e216ab37c012d2269cf0b21f67d48272c6997e47709225fec67",
+          "rule_id": "java-log-injection-unsanitized-input",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "log-count-then-getmessage-log": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/report/Counter.java",
+          "issue_class": "security",
+          "line": 10,
+          "occurrence_id": "908fbc6d7a56e0e50aedf95e2cbb0f1d34c8d94340f75bb71d86589184b79f70",
+          "rule_id": "java-log-injection-unsanitized-input",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        },
+        {
+          "file_path": "src/main/java/com/acme/report/Counter.java",
+          "issue_class": "security",
+          "line": 11,
+          "occurrence_id": "a58d209f55388a456ec48a42d6d43264b574c8af98b892a6a7b7f286e7957a6f",
+          "rule_id": "java-log-injection-unsanitized-input",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
     "log-credential": {
       "findings": [
         {
@@ -304,6 +339,45 @@
           "line": 10,
           "occurrence_id": "19276fb231b2da599578905cd7bb8770b6e0b420c5e092e475b1816c143ee4ca",
           "rule_id": "java-sensitive-data-in-logs",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "log-getmessage-in-same-call": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/report/Importer.java",
+          "issue_class": "security",
+          "line": 13,
+          "occurrence_id": "50e5f55be03dda327227e40fb902a0bfa0129a9147b45485405a012670e672f7",
+          "rule_id": "java-log-injection-unsanitized-input",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "log-literal-then-throw-getmessage": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/report/Cleanup.java",
+          "issue_class": "security",
+          "line": 10,
+          "occurrence_id": "cd0963d54ca298da55d780626ff011bbdc1a1187cbe6d58e08511c57900f9290",
+          "rule_id": "java-log-injection-unsanitized-input",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "log-multiline-parameterized": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/report/Access.java",
+          "issue_class": "security",
+          "line": 10,
+          "occurrence_id": "d29d2b35bc19a380f368e9670823076e443a1d0cfeb7a2218629f62ef7888f8a",
+          "rule_id": "java-log-injection-unsanitized-input",
           "unresolved_reason": null,
           "verdict": "true_positive"
         }

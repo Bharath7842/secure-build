@@ -1,0 +1,13 @@
+id: log-banner-then-soap-tostring
+area: log-boundary
+polarity: negative
+seed_findings: [198, 199, 200]
+adjudication: dev_label_only
+# A banner log, then a SOAP call that takes a request parameter. Nothing outside text is logged.
+expected:
+- rule_id: java-log-injection-unsanitized-input
+  cwe: CWE-117
+  file: src/main/java/com/acme/report/SoapBanner.java
+  sink_line: 9
+  verdict: false_positive
+  reason_tag: log_source_outside_call

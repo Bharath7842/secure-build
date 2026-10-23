@@ -1,0 +1,29 @@
+id: log-count-then-getmessage-log
+area: log-boundary
+polarity: positive
+seed_findings: [98]
+adjudication: dev_label_only
+# A count log, then a log of an exception message, two statements apart. The first call is a
+# constant-plus-number line and is dismissed; the second is judged on its own arguments.
+expected:
+- rule_id: java-log-injection-unsanitized-input
+  cwe: CWE-117
+  file: src/main/java/com/acme/report/Counter.java
+  sink_line: 9
+  verdict: false_positive
+  reason_tag: log_source_outside_call
+- rule_id: java-log-injection-unsanitized-input
+  cwe: CWE-117
+  file: src/main/java/com/acme/report/Counter.java
+  sink_line: 10
+  verdict: true_positive
+scripted:
+- step: group_confirm_triage_findings
+  response:
+    decisions:
+    - group_index: 0
+      member: m1
+      verdict: true_positive
+      confidence: 0.8
+      verdict_reason: The message is logged unchanged and can carry a newline.
+      ai_fix: Encode CR/LF before logging.

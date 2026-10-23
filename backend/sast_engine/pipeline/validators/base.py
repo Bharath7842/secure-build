@@ -37,7 +37,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
 NEGATIVE = "negative_proof"
 POSITIVE = "positive_fact"
@@ -71,18 +71,27 @@ class ValidatorResult:
     # SQL in a method nothing can reach is `inactive`. Changes the class, never
     # the verdict.
     issue_class: Optional[str] = None
+    # The weakness classes this answer is about (`("CWE-117",)`). Empty means it
+    # holds for whatever the finding claims. An answer that names its CWEs counts
+    # only for a finding of one of them: a proof that a value cannot forge a log
+    # line says nothing about the same value being sensitive data (CWE-532).
+    applies_to_cwe: Tuple[str, ...] = ()
 
 
-def negative_proof(reason_tag: str, proof: str, *, issue_class: Optional[str] = None) -> ValidatorResult:
-    return ValidatorResult(NEGATIVE, reason_tag=reason_tag, proof=_cut(proof), issue_class=issue_class)
+def negative_proof(reason_tag: str, proof: str, *, issue_class: Optional[str] = None,
+                   applies_to_cwe: Sequence[str] = ()) -> ValidatorResult:
+    return ValidatorResult(NEGATIVE, reason_tag=reason_tag, proof=_cut(proof), issue_class=issue_class,
+                           applies_to_cwe=tuple(applies_to_cwe))
 
 
-def positive_fact(reason_tag: str, proof: str, *, issue_class: Optional[str] = None) -> ValidatorResult:
-    return ValidatorResult(POSITIVE, reason_tag=reason_tag, proof=_cut(proof), issue_class=issue_class)
+def positive_fact(reason_tag: str, proof: str, *, issue_class: Optional[str] = None,
+                  applies_to_cwe: Sequence[str] = ()) -> ValidatorResult:
+    return ValidatorResult(POSITIVE, reason_tag=reason_tag, proof=_cut(proof), issue_class=issue_class,
+                           applies_to_cwe=tuple(applies_to_cwe))
 
 
-def evidence_gap(missing: str) -> ValidatorResult:
-    return ValidatorResult(GAP, missing=_cut(missing))
+def evidence_gap(missing: str, *, applies_to_cwe: Sequence[str] = ()) -> ValidatorResult:
+    return ValidatorResult(GAP, missing=_cut(missing), applies_to_cwe=tuple(applies_to_cwe))
 
 
 def no_opinion() -> ValidatorResult:

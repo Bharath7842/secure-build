@@ -55,7 +55,7 @@ from .base import (
 VERDICT_TP = "true_positive"
 VERDICT_FP = "false_positive"
 VERDICT_UNVERIFIED = "unverified"
-MAX_OUTCOMES_PER_FINDING = 4
+MAX_OUTCOMES_PER_FINDING = 6
 
 __all__ = [
     "GAP", "NEGATIVE", "NO_OPINION", "POSITIVE", "VALIDATOR_CONTEXT_USAGE_KEY", "ValidatorContext",
@@ -156,7 +156,20 @@ def _outcome_dict(validator: Validator, result: ValidatorResult) -> Dict[str, An
         out["missing"] = result.missing
     if result.issue_class:
         out["issue_class"] = result.issue_class
+    if result.applies_to_cwe:
+        out["applies_to_cwe"] = list(result.applies_to_cwe)
     return out
+
+
+def _cwe_digits(value: Any) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def _applies(outcome: Dict[str, Any], cwe: str) -> bool:
+    """An outcome that names the CWEs it is about counts only for a finding of one
+    of them (see ``ValidatorResult.applies_to_cwe``)."""
+    scope = outcome.get("applies_to_cwe")
+    return not scope or (bool(cwe) and cwe in {_cwe_digits(c) for c in scope})
 
 
 def _settle(finding: Dict[str, Any], outcomes: Sequence[Dict[str, Any]], *, record: bool) -> bool:
@@ -164,6 +177,8 @@ def _settle(finding: Dict[str, Any], outcomes: Sequence[Dict[str, Any]], *, reco
     or reason changed. ``record`` appends the step to ``finding["decisions"]``
     (the findings writer turns those into history rows)."""
     verdict = finding.get("verdict")
+    cwe = _cwe_digits(finding.get("cwe"))
+    outcomes = [o for o in outcomes if _applies(o, cwe)]
     negatives = [o for o in outcomes if o["outcome"] == NEGATIVE]
     positives = [o for o in outcomes if o["outcome"] == POSITIVE]
     gaps = [o for o in outcomes if o["outcome"] == GAP]
@@ -215,7 +230,8 @@ def _settle(finding: Dict[str, Any], outcomes: Sequence[Dict[str, Any]], *, reco
             "confidence": finding.get("confidence"),
             "unresolved_reason": finding.get("unresolved_reason"),
             "verdict_reason": finding.get("verdict_reason"),
-            "detail": {k: decisive[k] for k in ("outcome", "reason_tag", "proof", "missing", "issue_class")
+            "detail": {k: decisive[k] for k in ("outcome", "reason_tag", "proof", "missing", "issue_class",
+                                                "applies_to_cwe")
                        if k in decisive},
         })
     return changed
@@ -322,3 +338,4 @@ from . import stub_method as _stub_method  # noqa: E402,F401
 from . import declaration_not_call as _declaration_not_call  # noqa: E402,F401
 from . import wrapper_call_identity as _wrapper_call_identity  # noqa: E402,F401
 from . import sql_binding as _sql_binding  # noqa: E402,F401
+from . import log_call_boundary as _log_call_boundary  # noqa: E402,F401

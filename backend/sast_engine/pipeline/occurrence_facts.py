@@ -911,6 +911,7 @@ def _java_facts(root: Any, src: bytes, memo: Dict[str, Any], text: str, line: in
                 "start_line": chosen.start_point[0] + 1,
                 "start_col": chosen.start_point[1],
                 "end_line": chosen.end_point[0] + 1,
+                "end_col": chosen.end_point[1],
             }
             args = []
             for a in arg_nodes:

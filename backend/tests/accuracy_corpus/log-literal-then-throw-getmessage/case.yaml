@@ -1,0 +1,14 @@
+id: log-literal-then-throw-getmessage
+area: log-boundary
+polarity: negative
+seed_findings: [93, 115, 143, 144]
+adjudication: dev_label_only
+# The log line is a constant. The regex window runs on into the next statement and finds
+# request.getParameter() in a throw. The source is not an argument of the log call.
+expected:
+- rule_id: java-log-injection-unsanitized-input
+  cwe: CWE-117
+  file: src/main/java/com/acme/report/Cleanup.java
+  sink_line: 9
+  verdict: false_positive
+  reason_tag: log_source_outside_call

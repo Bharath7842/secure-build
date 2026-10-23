@@ -458,7 +458,19 @@
       "java"
     ],
     "frameworks": [],
-    "pattern": "(?i)log(ger)?\\.(info|warn|error|debug)\\s*\\([\\s\\S]{0,200}?(\\.getMessage\\(\\)|request\\.get(Parameter|Header|RequestURI|RequestURL|QueryString)\\s*\\()"
+    "pattern": "(?i)log(ger)?\\.(info|warn|error|debug)\\s*\\((?=[\\s\\S]{0,200}?(\\.getMessage\\(\\)|request\\.get(Parameter|Header|RequestURI|RequestURL|QueryString)\\s*\\())",
+    "examples": {
+      "match": [
+        "log.error(\"failed: \" + e.getMessage());",
+        "log.warn(\"{} {}\", request.getRequestURI(), name);",
+        "log.warn(\"{} {} {}\",\n    name,\n    count,\n    request.getRequestURI());"
+      ],
+      "no_match": [
+        "log.info(\"done\");",
+        "log.error(\"failed\", e);",
+        "System.out.println(e.getMessage());"
+      ]
+    }
   },
   {
     "id": "logger-exception-tostring",
