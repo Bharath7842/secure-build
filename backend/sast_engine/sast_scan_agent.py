@@ -1839,6 +1839,10 @@ def node_build_call_graph(state: SastState) -> dict:
                        f"Built the Java call graph for the SQL checks only: {len(graph.methods)} method(s)",
                        narrative="The SQL-injection checks still resolve helpers and facades through "
                                  "the call graph; no flows are traced from it.")
+        else:
+            # No graph, but the validators still read sibling files (an Angular
+            # component's template, the logging configuration) through the repository.
+            _attach_validator_context(state, None)
         return {"call_graph": {"files_parsed": 0, "methods": 0, "edges": 0, "sinks": 0,
                                "unresolved": [], "entry_tier": "", "_graph_lang": None}}
 

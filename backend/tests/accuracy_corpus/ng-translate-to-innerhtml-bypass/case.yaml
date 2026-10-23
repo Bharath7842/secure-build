@@ -1,0 +1,46 @@
+id: ng-translate-to-innerhtml-bypass
+area: angular-render
+polarity: positive
+seed_findings: []
+adjudication: dev_label_only
+# The translation is passed through bypassSecurityTrustHtml and bound to [innerHTML]: stays found.
+expected:
+- rule_id: llm-extra
+  cwe: CWE-79
+  file: src/app/rich.component.ts
+  sink_line: 11
+  verdict: true_positive
+- rule_id: angular-innerhtml-binding
+  cwe: CWE-79
+  file: src/app/rich.component.html
+  sink_line: 1
+  verdict: true_positive
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - rich.component.ts
+  response:
+    findings:
+    - line: 11
+      verdict: true_positive
+      confidence: 0.7
+      rule_id: llm-extra
+      severity: MEDIUM
+      cwe: CWE-79
+      title: XSS through a translated message
+      owasp_category: A03:2021-Injection
+      verdict_reason: The translated text may contain markup.
+      source: translation dictionary
+      sink: this.html = this.translate.instant
+      data_flow: the translated text reaches the page
+      snippet: this.html = this.translate.instant
+      ai_fix: Encode before rendering.
+- step: group_confirm_triage_findings
+  response:
+    decisions:
+    - group_index: 0
+      member: m1
+      verdict: true_positive
+      confidence: 0.8
+      verdict_reason: The bound value is a trusted-value bypass.
+      ai_fix: Do not bypass sanitisation for dictionary text.

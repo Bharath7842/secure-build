@@ -320,6 +320,57 @@ def _pair_string_value(pair_node: Any, src: bytes) -> Optional[str]:
     return None
 
 
+def _pair_text_value(pair_node: Any, src: bytes) -> Optional[str]:
+    """A pair's value when it is a plain string or a template literal without
+    substitutions (an inline Angular `template`)."""
+    value = _pair_string_value(pair_node, src)
+    if value is not None:
+        return value
+    for c in pair_node.children:
+        if c.type == "template_string":
+            if any(cc.type == "template_substitution" for cc in c.children):
+                return None
+            return _text(c, src).strip("`")
+    return None
+
+
+def component_metadata(source_text: str) -> List[Dict[str, Any]]:
+    """One entry per `@Component({...})` class in a TypeScript file: the class
+    name and line range, and the `selector`, `templateUrl` and inline `template`
+    when they are plain strings (SAST-03-080)."""
+    src = source_text.encode("utf-8", errors="replace")
+    tree = _ts_parser().parse(src)
+    found: List[Dict[str, Any]] = []
+    stack = [tree.root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == "decorator" and _decorator_name(node, src) == "Component":
+            target = _decorator_target(node)
+            if target is not None and target.type == "class_declaration":
+                name = target.child_by_field_name("name")
+                entry: Dict[str, Any] = {
+                    "class": _text(name, src) if name is not None else "",
+                    "start_line": target.start_point[0] + 1, "end_line": target.end_point[0] + 1,
+                    "selector": None, "templateUrl": None, "template": None,
+                }
+                for call in node.children:
+                    if call.type != "call_expression":
+                        continue
+                    for args in call.children:
+                        if args.type != "arguments":
+                            continue
+                        for obj in args.children:
+                            if obj.type == "object":
+                                pairs = _object_pairs(obj, src)
+                                for key in ("selector", "templateUrl", "template"):
+                                    if key in pairs:
+                                        entry[key] = _pair_text_value(pairs[key], src)
+                found.append(entry)
+        stack.extend(node.children)
+    found.sort(key=lambda e: e["start_line"])
+    return found
+
+
 def analyze_ts_source(rel_path: str, source_text: str) -> Tuple[Counter, int, List[Dict[str, Any]]]:
     """Returns (decorator counts, guard-class hits, route entries) for one file."""
     src = source_text.encode("utf-8", errors="replace")

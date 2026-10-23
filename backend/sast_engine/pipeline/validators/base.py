@@ -124,6 +124,15 @@ class ValidatorContext:
     # The repository's logging configuration, parsed on first use (SAST-03-050).
     _logging: Any = field(default=None, repr=False, compare=False)
     _exceptions: Any = field(default=None, repr=False, compare=False)
+    _translation: Any = field(default=None, repr=False, compare=False)
+
+    def custom_translation_pipeline(self) -> Any:
+        """Files declaring a custom translation compiler / handler / parser (SAST-03-080)."""
+        if self._translation is None:
+            from .. import angular_render
+
+            self._translation = angular_render.custom_translation_pipeline(self.repo_root)
+        return self._translation
 
     def exception_summaries(self) -> Any:
         """What text a caught exception can carry (SAST-03-040), built on first use."""

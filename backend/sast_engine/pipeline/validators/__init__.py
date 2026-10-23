@@ -343,3 +343,4 @@ from . import servlet_output_sink as _servlet_output_sink  # noqa: E402,F401
 from . import log_value_domain as _log_value_domain  # noqa: E402,F401
 from . import log_layout as _log_layout  # noqa: E402,F401
 from . import log_exception_provenance as _log_exception_provenance  # noqa: E402,F401
+from . import angular_render_context as _angular_render_context  # noqa: E402,F401

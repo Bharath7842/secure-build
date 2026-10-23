@@ -1,0 +1,33 @@
+id: ng-dynamic-key-else-branch
+area: angular-render
+polarity: positive
+seed_findings: [273]
+adjudication: dev_label_only
+# The dynamic-key branch is judged on its own consumers, not by the constant-key branch next to it: this one
+# reaches a trusted-value bypass and stays found.
+expected:
+- rule_id: llm-extra
+  cwe: CWE-79
+  file: src/app/dyn.component.ts
+  sink_line: 14
+  verdict: true_positive
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - dyn.component.ts
+  response:
+    findings:
+    - line: 14
+      verdict: true_positive
+      confidence: 0.7
+      rule_id: llm-extra
+      severity: MEDIUM
+      cwe: CWE-79
+      title: XSS through a translated message
+      owasp_category: A03:2021-Injection
+      verdict_reason: The translated text may contain markup.
+      source: translation dictionary
+      sink: this.msg = this.translate.instant(key)
+      data_flow: the translated text reaches the page
+      snippet: this.msg = this.translate.instant(key)
+      ai_fix: Encode before rendering.

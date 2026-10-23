@@ -665,6 +665,93 @@
         }
       ]
     },
+    "ng-custom-translate-compiler": {
+      "findings": [
+        {
+          "file_path": "src/app/custom.component.ts",
+          "issue_class": "security",
+          "line": 10,
+          "occurrence_id": "cb35f38542383b4c59cef012d259e01c45fa2b0dd443884d34df996ab68d588a",
+          "rule_id": "llm-extra",
+          "unresolved_reason": "evidence_missing",
+          "verdict": "unverified"
+        }
+      ]
+    },
+    "ng-dynamic-key-else-branch": {
+      "findings": [
+        {
+          "file_path": "src/app/dyn.component.ts",
+          "issue_class": "security",
+          "line": 14,
+          "occurrence_id": "24f8ec321de73fb6502d984b0622b6186836506dda9afdb009d4692960e53dec",
+          "rule_id": "llm-extra",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "ng-nativeelement-innerhtml": {
+      "findings": [
+        {
+          "file_path": "src/app/native.component.ts",
+          "issue_class": "security",
+          "line": 11,
+          "occurrence_id": "9a951db4b1615569f53124c857e3a4ac36ca14503c66389ce41a8728625bcef3",
+          "rule_id": "llm-extra",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "ng-push-to-ngfor-text": {
+      "findings": [
+        {
+          "file_path": "src/app/err.component.ts",
+          "issue_class": "security",
+          "line": 11,
+          "occurrence_id": "adeec00f3bf12639afa80e8881968e6ef41a3b9e3fb89c1eec09736f7da1914d",
+          "rule_id": "llm-extra",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "ng-translate-to-innerhtml-bypass": {
+      "findings": [
+        {
+          "file_path": "src/app/rich.component.html",
+          "issue_class": "security",
+          "line": 1,
+          "occurrence_id": "c8c14cc994e4b215e78a6a45932b44c7d1362f4820ad619ead01f60e2f7d5768",
+          "rule_id": "angular-innerhtml-binding",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        },
+        {
+          "file_path": "src/app/rich.component.ts",
+          "issue_class": "security",
+          "line": 11,
+          "occurrence_id": "baaed38852d4404ea404670a62b3484fcf620c23b1ec09d685b22f01fcc22c98",
+          "rule_id": "llm-extra",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "ng-translate-to-interpolation": {
+      "findings": [
+        {
+          "file_path": "src/app/hello.component.ts",
+          "issue_class": "security",
+          "line": 10,
+          "occurrence_id": "67ec94b53b73db59c0173a95d91eef7105e727f3d14ef8f0a98b6b0ab5d539da",
+          "rule_id": "llm-extra",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
     "noisy-sql-confident-no-evidence": {
       "findings": [
         {
