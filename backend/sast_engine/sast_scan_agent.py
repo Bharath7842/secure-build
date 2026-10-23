@@ -1779,6 +1779,19 @@ def _attach_validator_context(state: SastState, graph: Any) -> None:
     usage[VALIDATOR_CONTEXT_USAGE_KEY] = ctx
 
 
+def _log_logging_config(tracer: "AgentTrace", state: SastState) -> None:
+    """Say which logging configuration the log-forging checks will read (the
+    layout decides whether a forged line break survives, SAST-03-050)."""
+    ctx = (state.get("usage") or {}).get(VALIDATOR_CONTEXT_USAGE_KEY)
+    if ctx is None:
+        return
+    config = ctx.logging_config()
+    tracer.log(5, "build_call_graph", f"Logging configuration: {config.summary()}",
+               narrative="A log-forging finding is only confirmed when the appender writes line breaks "
+                         "through; a configuration that is not in the repository is a request for the "
+                         "deployed one, not a scanner failure.")
+
+
 def _validators_need_graph(state: SastState) -> bool:
     """The SQL validators resolve helpers, facades and field statements
     through the Java call graph, so it is built for them even when inter-file
@@ -1821,6 +1834,7 @@ def node_build_call_graph(state: SastState) -> dict:
                 descriptor_paths=_descriptor_paths(state))
             _log_entry_points(tracer, graph)
             _attach_validator_context(state, graph)
+            _log_logging_config(tracer, state)
             tracer.log(5, "build_call_graph",
                        f"Built the Java call graph for the SQL checks only: {len(graph.methods)} method(s)",
                        narrative="The SQL-injection checks still resolve helpers and facades through "
@@ -1849,6 +1863,7 @@ def node_build_call_graph(state: SastState) -> dict:
         graph = lang_module.build_call_graph(root, paths, descriptor_paths=_descriptor_paths(state))
         _log_entry_points(tracer, graph)
     _attach_validator_context(state, graph)
+    _log_logging_config(tracer, state)
     # Per-reason breakdown, not just a total: which failure dominates says
     # whether receiver types aren't resolving (unresolved_type) or interfaces
     # have no single in-repo implementor (unresolved_interface, e.g. Spring

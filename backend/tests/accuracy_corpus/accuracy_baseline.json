@@ -370,6 +370,45 @@
         }
       ]
     },
+    "log-forging-json-layout": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/service/JsonLoader.java",
+          "issue_class": "security",
+          "line": 13,
+          "occurrence_id": "b6854ee315e8064a90b8c4b4cbb4f321b664aa57eec44c990640f4684f259d1e",
+          "rule_id": "java-log-injection-unsanitized-input",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "log-forging-no-config": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/service/UnknownLoader.java",
+          "issue_class": "security",
+          "line": 13,
+          "occurrence_id": "b07da004bb1a640c1bcc8667daed0c4531b58a985b78f63d8ca60aba1247abb3",
+          "rule_id": "java-log-injection-unsanitized-input",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "log-forging-raw-layout": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/service/RawLoader.java",
+          "issue_class": "security",
+          "line": 13,
+          "occurrence_id": "46463cccf875acf6c1f487d91ab3fa67f409fade1375906b2063867ce0213a1b",
+          "rule_id": "java-log-injection-unsanitized-input",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
     "log-getmessage-in-same-call": {
       "findings": [
         {

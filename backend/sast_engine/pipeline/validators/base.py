@@ -9,6 +9,8 @@ A validator looks at one finding and its resolved facts and answers one of:
   into the statement);
 * ``evidence_gap(missing)`` — the answer depends on something the scan has not
   resolved ("callee ``RequestsMgr.getCommMethod(String)`` body not resolved");
+* ``note(reason_tag, text)`` — something worth recording that no verdict should
+  depend on (the deployed log layout is not in the repository);
 * ``no_opinion``.
 
 VALIDATOR TEMPLATE
@@ -43,6 +45,10 @@ NEGATIVE = "negative_proof"
 POSITIVE = "positive_fact"
 GAP = "evidence_gap"
 NO_OPINION = "no_opinion"
+# Recorded on the finding and counted, never settled and never shown to the model:
+# "the deployed log layout is not in the repository" is something a reviewer should
+# know, but it must not change a verdict that other evidence already supports.
+NOTE = "note"
 
 PROOF_MAX_CHARS = 200
 
@@ -94,6 +100,10 @@ def evidence_gap(missing: str, *, applies_to_cwe: Sequence[str] = ()) -> Validat
     return ValidatorResult(GAP, missing=_cut(missing), applies_to_cwe=tuple(applies_to_cwe))
 
 
+def note(reason_tag: str, text: str, *, applies_to_cwe: Sequence[str] = ()) -> ValidatorResult:
+    return ValidatorResult(NOTE, reason_tag=reason_tag, proof=_cut(text), applies_to_cwe=tuple(applies_to_cwe))
+
+
 def no_opinion() -> ValidatorResult:
     return ValidatorResult(NO_OPINION)
 
@@ -109,6 +119,15 @@ class ValidatorContext:
     call_graph: Any = None
     # The scan's SQL method summaries (`sql_semantics.SqlSummaries`), when built.
     sql: Any = None
+    # The repository's logging configuration, parsed on first use (SAST-03-050).
+    _logging: Any = field(default=None, repr=False, compare=False)
+
+    def logging_config(self) -> Any:
+        if self._logging is None:
+            from .. import logging_config
+
+            self._logging = logging_config.load(self.repo_root)
+        return self._logging
 
     def read_text(self, path: str) -> Optional[str]:
         if path in self.file_text:
