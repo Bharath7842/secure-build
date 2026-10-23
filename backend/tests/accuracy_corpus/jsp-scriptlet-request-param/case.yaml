@@ -1,0 +1,22 @@
+id: jsp-scriptlet-request-param
+area: output-sink
+polarity: positive
+seed_findings: []
+adjudication: dev_label_only
+# A JSP scriptlet writes a request parameter to the page through the implicit out.
+expected:
+- rule_id: java-xss-jsp-servlet
+  cwe: CWE-79
+  file: src/main/webapp/search.jsp
+  sink_line: 3
+  verdict: true_positive
+scripted:
+- step: group_confirm_triage_findings
+  response:
+    decisions:
+    - group_index: 0
+      member: m1
+      verdict: true_positive
+      confidence: 0.8
+      verdict_reason: The q parameter is written to the page unencoded.
+      ai_fix: Encode the value.

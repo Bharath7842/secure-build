@@ -1,0 +1,34 @@
+id: stdout-count-not-xss
+area: output-sink
+polarity: negative
+seed_findings: [213, 214]
+adjudication: dev_label_only
+# A servlet prints a request count to System.out. A model calls it XSS; the receiver is a process
+# stream, not the HTTP response.
+expected:
+- rule_id: java-xss-jsp-servlet
+  cwe: CWE-79
+  file: src/main/java/com/acme/controller/StatsServlet.java
+  sink_line: 12
+  verdict: false_positive
+  reason_tag: xss_sink_not_http_response
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - StatsServlet.java
+  response:
+    findings:
+    - line: 12
+      verdict: true_positive
+      confidence: 0.8
+      rule_id: java-xss-jsp-servlet
+      severity: HIGH
+      cwe: CWE-79
+      title: XSS via servlet output
+      owasp_category: A03:2021-Injection
+      verdict_reason: Request-related data is written to output.
+      source: request
+      sink: System.out.println
+      data_flow: request count is printed
+      snippet: 'System.out.println("requests: " + count);'
+      ai_fix: Encode the output.

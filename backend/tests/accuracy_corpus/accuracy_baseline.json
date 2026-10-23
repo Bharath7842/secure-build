@@ -283,6 +283,19 @@
         }
       ]
     },
+    "jsp-scriptlet-request-param": {
+      "findings": [
+        {
+          "file_path": "src/main/webapp/search.jsp",
+          "issue_class": "security",
+          "line": 3,
+          "occurrence_id": "7d3acb4e8ff6950435da0ba864631a85bdb328c3d1f8f4c9b4dbf4d96648a145",
+          "rule_id": "java-xss-jsp-servlet",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
     "log-banner-then-soap-tostring": {
       "findings": [
         {
@@ -393,6 +406,19 @@
           "rule_id": "java-sql-string-concat",
           "unresolved_reason": "evidence_missing",
           "verdict": "unverified"
+        }
+      ]
+    },
+    "response-writer-request-param": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/controller/Echo.java",
+          "issue_class": "security",
+          "line": 11,
+          "occurrence_id": "19bcbb66a7b30dfbb325fb0720eed9a5573d3f76f4298968666847c1c8f120b3",
+          "rule_id": "java-xss-jsp-servlet",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
         }
       ]
     },
@@ -732,6 +758,45 @@
     },
     "sqli-blamed-on-log-line": {
       "findings": []
+    },
+    "stdout-count-not-xss": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/controller/StatsServlet.java",
+          "issue_class": "security",
+          "line": 12,
+          "occurrence_id": "3af962e956aae359c5fe227d69ddbf3500723745645038459579a80af092cd4c",
+          "rule_id": "java-xss-jsp-servlet",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "stdout-literal-with-word-request": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/controller/Audit.java",
+          "issue_class": "security",
+          "line": 11,
+          "occurrence_id": "5297a1843ef34da08bf78d797bb385c6620077bc82afb28555433c64b29ea3fc",
+          "rule_id": "java-xss-jsp-servlet",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
+    "stdout-password": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/controller/Login.java",
+          "issue_class": "security",
+          "line": 12,
+          "occurrence_id": "2f7d939595ff54f7c2fa55ec00d9692dff5bd9ed554040c303ba7966bd2729f2",
+          "rule_id": "java-sensitive-data-in-logs",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
     },
     "verdict-not-sure": {
       "findings": [

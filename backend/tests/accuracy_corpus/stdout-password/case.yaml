@@ -1,0 +1,32 @@
+id: stdout-password
+area: output-sink
+polarity: positive
+seed_findings: [270]
+adjudication: dev_label_only
+# A credential printed to System.out is still sensitive data written out (CWE-532), whatever the sink.
+expected:
+- rule_id: java-sensitive-data-in-logs
+  cwe: CWE-532
+  file: src/main/java/com/acme/controller/Login.java
+  sink_line: 11
+  verdict: true_positive
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - Login.java
+  response:
+    findings:
+    - line: 11
+      verdict: true_positive
+      confidence: 0.8
+      rule_id: java-sensitive-data-in-logs
+      severity: MEDIUM
+      cwe: CWE-532
+      title: Sensitive data written to output
+      owasp_category: A03:2021-Injection
+      verdict_reason: The password is printed in clear text.
+      source: request.getParameter("password")
+      sink: System.out.println
+      data_flow: password to stdout
+      snippet: System.out.println("login attempt password=" + password);
+      ai_fix: Do not print credentials.

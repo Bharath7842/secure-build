@@ -339,3 +339,4 @@ from . import declaration_not_call as _declaration_not_call  # noqa: E402,F401
 from . import wrapper_call_identity as _wrapper_call_identity  # noqa: E402,F401
 from . import sql_binding as _sql_binding  # noqa: E402,F401
 from . import log_call_boundary as _log_call_boundary  # noqa: E402,F401
+from . import servlet_output_sink as _servlet_output_sink  # noqa: E402,F401

@@ -379,7 +379,20 @@
     "frameworks": [
       "Java Servlet/JSP"
     ],
-    "pattern": "(response\\.getWriter\\(\\)\\.write|out\\.println)\\s*\\([^)]*request"
+    "pattern": "(response\\.getWriter\\(\\)\\.write|(?<![\\w.])out\\.println)\\s*\\([^)]*\\brequest\\b(?=\\s*[.)])",
+    "examples": {
+      "match": [
+        "response.getWriter().write(request.getParameter(\"q\"));",
+        "out.println(request.getParameter(\"q\"));",
+        "out.println(\"<b>\" + request.getHeader(\"X\") + \"</b>\");"
+      ],
+      "no_match": [
+        "System.out.println(\"requests: \" + count);",
+        "System.out.println(\"handling request \" + id);",
+        "out.println(\"hello\");",
+        "System.err.println(request.getParameter(\"q\"));"
+      ]
+    }
   },
   {
     "id": "jsp-raw-request-expression",

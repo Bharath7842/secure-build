@@ -103,7 +103,7 @@ _LEGACY_RULES_WITHOUT_EXAMPLES = frozenset({
     'java-sql-error-detail-exposed', 'java-sslcontext-ssl', 'java-ssrf-url-request',
     'java-static-iv-from-key', 'java-stdout-debug-print', 'java-trust-all-hostname',
     'java-upload-extension-only-check', 'java-weak-cipher-des', 'java-weak-cipher-ecb',
-    'java-weak-messagedigest', 'java-weak-pbe-md5-des', 'java-xmldecoder', 'java-xss-jsp-servlet',
+    'java-weak-messagedigest', 'java-weak-pbe-md5-des', 'java-xmldecoder',
     'jaxrs-container-response-cors', 'jaxrs-exception-in-response-entity', 'jaxrs-path-sensitive',
     'jaxrs-permit-all', 'js-document-write', 'js-outerhtml-assign',
     'jsch-stricthostkeychecking-disabled', 'jsp-raw-request-expression', 'jwt-none-alg',

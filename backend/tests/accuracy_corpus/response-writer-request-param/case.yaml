@@ -1,0 +1,32 @@
+id: response-writer-request-param
+area: output-sink
+polarity: positive
+seed_findings: []
+adjudication: dev_label_only
+# A request parameter written to the response writer is reflected XSS and stays found.
+expected:
+- rule_id: java-xss-jsp-servlet
+  cwe: CWE-79
+  file: src/main/java/com/acme/controller/Echo.java
+  sink_line: 10
+  verdict: true_positive
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - Echo.java
+  response:
+    findings:
+    - line: 10
+      verdict: true_positive
+      confidence: 0.8
+      rule_id: java-xss-jsp-servlet
+      severity: HIGH
+      cwe: CWE-79
+      title: Reflected XSS
+      owasp_category: A03:2021-Injection
+      verdict_reason: The q parameter is written to the response without encoding.
+      source: request.getParameter("q")
+      sink: response.getWriter().write
+      data_flow: q goes from the request to the response body
+      snippet: response.getWriter().write(request.getParameter("q"));
+      ai_fix: HTML-encode the value.
