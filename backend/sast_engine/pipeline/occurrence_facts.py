@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import ast_struct
+from pipeline import jsp_scriptlets
 
 ARG_KINDS = (
     "string_literal", "constant", "numeric", "boolean", "enum",
@@ -86,6 +87,10 @@ _EXTRA_TYPES: Dict[str, str] = {
     "BigInteger": "java.math.BigInteger",
     "HttpServletRequest": "javax.servlet.http.HttpServletRequest",
     "HttpServletResponse": "javax.servlet.http.HttpServletResponse",
+    "ServletRequest": "javax.servlet.ServletRequest",
+    "HttpSession": "javax.servlet.http.HttpSession",
+    "JspWriter": "javax.servlet.jsp.JspWriter",
+    "ServletOutputStream": "javax.servlet.ServletOutputStream",
 }
 LOGGER_PACKAGES = (
     "org.slf4j.", "org.apache.logging.log4j.", "org.apache.log4j.",
@@ -127,7 +132,7 @@ _THROWABLE_RE = re.compile(r"(Throwable|Exception|Error)$")
 
 def _lang_for(path: str) -> Optional[str]:
     suffix = Path(path).suffix.lower()
-    if suffix == ".java":
+    if suffix in (".java", ".jsp"):  # a JSP is read through its scriptlets
         return "java"
     if suffix in (".ts", ".tsx"):
         return "typescript"
@@ -723,6 +728,30 @@ def _java_receiver(
     return text, None, None
 
 
+def _receiver_origin(call_node: Any, scope: _Scope, src: bytes) -> Optional[str]:
+    """What a variable receiver was initialised with (`PrintWriter w =
+    response.getWriter()` gives `response.getWriter()`), so a sink can be told
+    from the receiver's origin, not just its declared type. None for a receiver
+    that is not a variable, or a variable with no initializer."""
+    if call_node.type != "method_invocation":
+        return None
+    obj = _f(call_node, "object")
+    if obj is None:
+        return None
+    name = None
+    if obj.type == "identifier":
+        name = _t(obj, src)
+    elif obj.type == "field_access":
+        o, field = _f(obj, "object"), _f(obj, "field")
+        if o is not None and field is not None and _t(o, src) == "this":
+            name = _t(field, src)
+    if name is None:
+        return None
+    entry = scope.locals.get(name) or scope.fields.get(name)
+    init = entry[1] if entry else None
+    return _cut(_t(init, src)) if init is not None else None
+
+
 def _call_candidates(root: Any, row: int) -> List[Any]:
     """Invocations that start on `row`, outermost first."""
     found: List[Any] = []
@@ -872,6 +901,7 @@ def _java_facts(root: Any, src: bytes, memo: Dict[str, Any], text: str, line: in
             owner_fqn = receiver_fqn
             call = {
                 "callee": callee,
+                "receiver_origin": _receiver_origin(chosen, scope, src),
                 "is_constructor": chosen.type == "object_creation_expression",
                 "receiver": receiver,
                 "receiver_fqn": receiver_fqn,
@@ -1292,6 +1322,14 @@ def facts_for(
     lang = _lang_for(file_path or "")
     if lang is None or not source_text or line is None or int(line) < 1:
         return None
+    if (file_path or "").lower().endswith(".jsp"):
+        rewritten = jsp_scriptlets.rewrite(source_text)
+        if rewritten is None:
+            return None
+        if int(line) == 1 and match_span is not None:
+            shift = len(jsp_scriptlets.HEADER)
+            match_span = (match_span[0] + shift, match_span[1] + shift)
+        source_text = rewritten
     parsed = _parse(lang, source_text)
     if parsed is None:
         return None

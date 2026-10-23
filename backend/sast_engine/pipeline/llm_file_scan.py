@@ -59,7 +59,8 @@ from llm_client import (
 from . import reachability
 from .finding_facts import prepare_findings, source_in_text
 from . import explanation_check
-from .occurrence_facts import LOGGER_PACKAGES, semantic_signature
+from . import output_sinks
+from .occurrence_facts import semantic_signature
 from .validators import reapply_precedence, render_deterministic_facts
 from .owasp_map import OWASP_TOP_10_2021, owasp_for_rule
 from .regex_scan import (
@@ -1450,7 +1451,6 @@ DEMOTE = "demote"  # publish, but as `unverified` / evidence_missing
 # (CWE-532, 312/313/359, 200/209/497, 798) — so those are never dropped here, and
 # neither is a finding with no CWE (`suppress_no_cwe` decides those).
 LOG_LINE_IMPOSSIBLE_CWES = frozenset({89, 79, 78, 22, 611, 918, 502, 90})
-_TS_LOGGER_RECEIVERS = frozenset({"console", "NGXLogger"})
 MISSING_EVIDENCE_NOTE = (
     "Published as unverified: the model called this a SQL injection but neither the "
     "flagged statement builds the query nor does the named source appear in the method."
@@ -1474,9 +1474,7 @@ def _is_log_call(finding: Dict[str, Any], snippet: str, anchored: str) -> bool:
     fallback for a finding with none."""
     facts = finding.get("facts")
     if isinstance(facts, dict) and facts:
-        call = facts.get("call") or {}
-        receiver = call.get("receiver_fqn") or ""
-        return receiver.startswith(LOGGER_PACKAGES) or receiver in _TS_LOGGER_RECEIVERS
+        return output_sinks.sink_class(facts, file_path=str(finding.get("file_path") or "")).kind == output_sinks.LOGGER
     return bool(
         _LOGGING_CALL_RE.search(snippet) or (anchored and _LOGGING_CALL_RE.search(anchored))
     )
