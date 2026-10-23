@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5294,
-  "key": "675817488228ff00d4d47257ccc5033c6d8467b5089c18c0f6a40ecb51259622",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 171,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 10, \"verdict\": \"true_positive\", \"confidence\": 0.92, \"rule_id\": \"java-sensitive-data-in-logs\", \"severity\": \"HIGH\", \"cwe\": \"CWE-532\", \"title\": \"Password written to the application log\", \"owasp_category\": \"A09:2021-Security-Logging-and-Monitoring-Failures\", \"source\": \"password (method parameter)\", \"sink\": \"auditTrail call in AuthService.login\", \"data_flow\": \"password is concatenated into the log message and written out\", \"snippet\": \"login attempt user=\\\" + user + \\\" password=\\\" + password\", \"verdict_reason\": \"The raw password is part of the logged string, so credentials end up in the log files.\", \"ai_fix\": \"Never log the password; log only the user name.\"}]}"
-}

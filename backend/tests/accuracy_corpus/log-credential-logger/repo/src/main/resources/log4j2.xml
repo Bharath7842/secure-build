@@ -1,0 +1,6 @@
+<Configuration>
+  <Appenders>
+    <Console name="Out"><JsonTemplateLayout eventTemplateUri="classpath:EcsLayout.json"/></Console>
+  </Appenders>
+  <Loggers><Root level="info"><AppenderRef ref="Out"/></Root></Loggers>
+</Configuration>

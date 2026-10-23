@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5569,
+  "key": "1a7401ca8c4955e993204daab1b5cc2560b776be7d05a6efe23e674c2d29079a",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 162,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 12, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-jdbc-prepare-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"invoiceNo (method parameter)\", \"sink\": \"connection.prepareStatement(...)\", \"data_flow\": \"invoiceNo is concatenated into the live query; the bound version is commented out\", \"snippet\": \"PreparedStatement stmt = connection.prepareStatement(\", \"verdict_reason\": \"invoiceNo is concatenated into the SQL text of the live statement.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
+}

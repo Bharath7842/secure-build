@@ -64,9 +64,14 @@ def test_every_shipped_rule_declares_a_known_issue_class(regex_scan):
         assert rule.issue_class in models.ISSUE_CLASSES, rule.id
 
 
-def test_only_the_two_documented_rules_are_quality(regex_scan):
+def test_only_the_documented_rules_are_quality(regex_scan):
     quality = {r.id for r in regex_scan.load_rules(_RULES_DIR) if r.issue_class == "quality"}
-    assert quality == {"serializable-missing-svuid", "logger-exception-tostring"}
+    # EPIC-03 (SAST-03-060): a bare printStackTrace() or a stdout debug print says
+    # nothing about a vulnerability; a credential on stdout is `java-sensitive-data-in-logs`.
+    assert quality == {
+        "serializable-missing-svuid", "logger-exception-tostring",
+        "java-printstacktrace", "java-stdout-debug-print",
+    }
 
 
 def test_a_rule_with_an_unknown_issue_class_is_flagged_by_the_loader_contract(regex_scan):

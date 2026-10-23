@@ -1,0 +1,36 @@
+id: stdout-password-both-rules
+area: log-disclosure
+polarity: positive
+seed_findings: [270]
+adjudication: dev_label_only
+# One System.out line trips both the debug-print rule (quality) and the sensitive-data rule (security).
+# The quality finding must not absorb the security one.
+expected:
+- rule_id: java-sensitive-data-in-logs
+  cwe: CWE-532
+  file: src/main/java/com/acme/report/Dump.java
+  sink_line: 5
+  verdict: true_positive
+  issue_class: security
+- rule_id: java-stdout-debug-print
+  cwe: CWE-532
+  file: src/main/java/com/acme/report/Dump.java
+  sink_line: 5
+  verdict: true_positive
+  issue_class: quality
+scripted:
+- step: group_confirm_triage_findings
+  response:
+    decisions:
+    - group_index: 0
+      member: m1
+      verdict: true_positive
+      confidence: 0.8
+      verdict_reason: A credential is printed.
+      ai_fix: Do not print credentials.
+    - group_index: 1
+      member: m1
+      verdict: true_positive
+      confidence: 0.8
+      verdict_reason: A credential is printed.
+      ai_fix: Do not print credentials.

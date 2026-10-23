@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5534,
+  "key": "9240e5b9694200c3b7adf23f5bc3cd46f317157e276fe07ecbfe2781a7d23384",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 163,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 12, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-sql-string-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"portId (method parameter)\", \"sink\": \"stmt.executeQuery(...)\", \"data_flow\": \"portId and month are concatenated into the query\", \"snippet\": \"return stmt.executeQuery(\\\"SELECT COUNT(*) FROM calls WHERE port_id = \\\" + portId + \\\" AND month = \\\" + month);\", \"verdict_reason\": \"The query is built by string concatenation instead of binding.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
+}

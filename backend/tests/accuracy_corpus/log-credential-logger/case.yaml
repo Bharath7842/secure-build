@@ -1,0 +1,54 @@
+id: log-credential-logger
+area: log-disclosure
+polarity: positive
+seed_findings: [257, 258]
+adjudication: dev_label_only
+# A password in a debug log call, with a JSON layout. The layout answers CWE-117 (it encodes line breaks) and
+# says nothing about CWE-532: both rows are present, forging dismissed and disclosure confirmed.
+expected:
+- rule_id: java-log-injection-unsanitized-input
+  cwe: CWE-117
+  file: src/main/java/com/acme/service/Auth.java
+  sink_line: 9
+  verdict: false_positive
+  reason_tag: log_layout_neutralises
+- rule_id: java-sensitive-data-in-logs
+  cwe: CWE-532
+  file: src/main/java/com/acme/service/Auth.java
+  sink_line: 9
+  verdict: true_positive
+  issue_class: security
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - Auth.java
+  response:
+    findings:
+    - line: 9
+      verdict: true_positive
+      confidence: 0.8
+      rule_id: java-log-injection-unsanitized-input
+      severity: MEDIUM
+      cwe: CWE-117
+      title: Unsanitized data reaches a log call
+      owasp_category: A09:2021-Security-Logging-and-Monitoring-Failures
+      verdict_reason: A request value is logged.
+      source: the logged value
+      sink: log.debug
+      data_flow: the value reaches the log call unchanged
+      snippet: log.debug("login attempt user={} password={}", user, password);
+      ai_fix: Encode CR/LF before logging.
+    - line: 9
+      verdict: true_positive
+      confidence: 0.8
+      rule_id: java-sensitive-data-in-logs
+      severity: MEDIUM
+      cwe: CWE-532
+      title: Sensitive data written to a log
+      owasp_category: A09:2021-Security-Logging-and-Monitoring-Failures
+      verdict_reason: The password is written out in clear text.
+      source: password (parameter)
+      sink: log.debug
+      data_flow: the password reaches the output unchanged
+      snippet: log.debug("login attempt user={} password={}", user, password);
+      ai_fix: Do not write credentials to logs.

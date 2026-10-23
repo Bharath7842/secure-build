@@ -1,0 +1,23 @@
+id: log-tostring-quality
+area: log-disclosure
+polarity: positive
+seed_findings: []
+adjudication: dev_label_only
+# Logging ex.toString() drops the stack trace: a logging-quality issue, not a security finding.
+expected:
+- rule_id: logger-exception-tostring
+  cwe: CWE-209
+  file: src/main/java/com/acme/report/Reporter.java
+  sink_line: 13
+  verdict: true_positive
+  issue_class: quality
+scripted:
+- step: group_confirm_triage_findings
+  response:
+    decisions:
+    - group_index: 0
+      member: m1
+      verdict: true_positive
+      confidence: 0.7
+      verdict_reason: The stack trace is discarded.
+      ai_fix: Pass the exception as an argument.

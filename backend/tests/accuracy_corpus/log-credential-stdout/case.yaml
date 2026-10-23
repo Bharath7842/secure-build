@@ -1,0 +1,33 @@
+id: log-credential-stdout
+area: log-disclosure
+polarity: positive
+seed_findings: [270]
+adjudication: dev_label_only
+# A password printed to System.out is still sensitive data written out (CWE-532).
+expected:
+- rule_id: java-sensitive-data-in-logs
+  cwe: CWE-532
+  file: src/main/java/com/acme/service/Console.java
+  sink_line: 9
+  verdict: true_positive
+  issue_class: security
+scripted:
+- step: scan_deep_files
+  when_user_contains:
+  - Console.java
+  response:
+    findings:
+    - line: 9
+      verdict: true_positive
+      confidence: 0.8
+      rule_id: java-sensitive-data-in-logs
+      severity: MEDIUM
+      cwe: CWE-532
+      title: Sensitive data written to a log
+      owasp_category: A09:2021-Security-Logging-and-Monitoring-Failures
+      verdict_reason: The password is written out in clear text.
+      source: password (parameter)
+      sink: System.out.println
+      data_flow: the password reaches the output unchanged
+      snippet: System.out.println("password=" + password);
+      ai_fix: Do not write credentials to logs.

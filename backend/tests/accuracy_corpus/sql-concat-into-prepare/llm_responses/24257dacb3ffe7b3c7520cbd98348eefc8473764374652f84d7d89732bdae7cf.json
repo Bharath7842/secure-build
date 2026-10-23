@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5270,
-  "key": "24257dacb3ffe7b3c7520cbd98348eefc8473764374652f84d7d89732bdae7cf",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 165,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 11, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-jdbc-prepare-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"portIdFromSoap (method parameter)\", \"sink\": \"connection.prepareStatement(...)\", \"data_flow\": \"portIdFromSoap is concatenated into the query text passed to prepareStatement\", \"snippet\": \"PreparedStatement stmt = connection.prepareStatement(\", \"verdict_reason\": \"The SOAP value is concatenated into the SQL text, so it can change the query.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
-}

@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5279,
-  "key": "f0c08ddd8763e89a3085e7eaf5b980108c5c70b6358e91b0344b6bcbd147269d",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 150,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 12, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-jdbc-prepare-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"ids (method parameter)\", \"sink\": \"connection.prepareStatement(...)\", \"data_flow\": \"the raw ids are joined into the IN list text\", \"snippet\": \"PreparedStatement ps = connection.prepareStatement(\", \"verdict_reason\": \"The caller's id strings are joined straight into the SQL text.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
-}

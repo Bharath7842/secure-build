@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5526,
+  "key": "863be9b1652d7959f798a91717bf6a1acdbd986730082c3fe641523e1524bd6c",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 149,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 12, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-sql-string-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"region (method parameter)\", \"sink\": \"st.executeQuery(...)\", \"data_flow\": \"region is concatenated into the query text\", \"snippet\": \"return st.executeQuery(\\\"SELECT * FROM tariffs WHERE region = '\\\" + region + \\\"'\\\");\", \"verdict_reason\": \"region is concatenated into the SQL text.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
+}

@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5284,
-  "key": "6f3b93157361a38a2d338a88523f72dcd397f0512ff9d01d859b0b50827e3fbc",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 158,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 11, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-jdbc-prepare-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"status (method parameter)\", \"sink\": \"connection.prepareStatement(...)\", \"data_flow\": \"customer is bound, but status is concatenated into the query text\", \"snippet\": \"PreparedStatement stmt = connection.prepareStatement(\", \"verdict_reason\": \"status is concatenated into the SQL text even though customer is bound.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
-}

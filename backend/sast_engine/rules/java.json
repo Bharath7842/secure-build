@@ -499,7 +499,15 @@
     "frameworks": [],
     "pattern": "(?i)log(ger)?\\.(error|warn|info|debug)\\s*\\([^)]*\\b\\w+\\.toString\\s*\\(\\s*\\)",
     "issue_class": "quality",
-    "group_by_rule": true
+    "group_by_rule": true,
+    "examples": {
+      "match": [
+        "log.error(\"failed \" + ex.toString());"
+      ],
+      "no_match": [
+        "log.error(\"failed\", ex);"
+      ]
+    }
   },
   {
     "id": "struts-formfile-upload-handling",
@@ -863,7 +871,17 @@
       "java"
     ],
     "frameworks": [],
-    "pattern": "\\.printStackTrace\\s*\\("
+    "pattern": "\\.printStackTrace\\s*\\(",
+    "issue_class": "quality",
+    "examples": {
+      "match": [
+        "e.printStackTrace();",
+        "ex.printStackTrace(System.err);"
+      ],
+      "no_match": [
+        "log.error(\"failed\", e);"
+      ]
+    }
   },
   {
     "id": "java-sql-error-detail-exposed",
@@ -891,7 +909,18 @@
       "java"
     ],
     "frameworks": [],
-    "pattern": "\\bSystem\\s*\\.\\s*(?:out|err)\\s*\\.\\s*print(?:ln|f)?\\s*\\("
+    "pattern": "\\bSystem\\s*\\.\\s*(?:out|err)\\s*\\.\\s*print(?:ln|f)?\\s*\\(",
+    "issue_class": "quality",
+    "examples": {
+      "match": [
+        "System.out.println(\"done\");",
+        "System.err.printf(\"%s\", name);"
+      ],
+      "no_match": [
+        "log.info(\"done\");",
+        "String s = \"System\"; s.length();"
+      ]
+    }
   },
   {
     "id": "java-hardcoded-local-endpoint",

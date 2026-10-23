@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5587,
+  "key": "5a87f973e6c854455a344b13342394276c2a23a08dfef22dffafd4a21f11201d",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 134,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 17, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-jdbc-prepare-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"msg (method parameter)\", \"sink\": \"insert.addBatch()\", \"data_flow\": \"\", \"snippet\": \"insert.addBatch();\", \"verdict_reason\": \"User-supplied msg is added to a batch statement; the query construction is not visible here.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
+}

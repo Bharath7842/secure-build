@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5330,
-  "key": "5088b0dc4514a41d19acf2393fceee1d45038400825037f5e6fad34629efcf88",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 199,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 14, \"verdict\": \"true_positive\", \"confidence\": 0.9, \"rule_id\": \"java-xxe-documentbuilder\", \"severity\": \"HIGH\", \"cwe\": \"CWE-611\", \"title\": \"XML external entity injection through a JMS message\", \"owasp_category\": \"A05:2021-Security-Misconfiguration\", \"source\": \"TextMessage.getText()\", \"sink\": \"DocumentBuilderFactory.newInstance()\", \"data_flow\": \"the JMS message text is parsed by a DocumentBuilder created from a factory with no entity restrictions\", \"snippet\": \"DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();\", \"verdict_reason\": \"The message body is attacker-controlled XML and the factory does not disable DTDs or external entities.\", \"ai_fix\": \"Set disallow-doctype-decl (or disable external entities) on this factory before creating the builder.\"}]}"
-}

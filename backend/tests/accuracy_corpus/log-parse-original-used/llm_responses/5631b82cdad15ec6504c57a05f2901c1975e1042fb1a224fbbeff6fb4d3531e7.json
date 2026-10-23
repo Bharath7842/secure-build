@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5505,
+  "key": "5631b82cdad15ec6504c57a05f2901c1975e1042fb1a224fbbeff6fb4d3531e7",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 130,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 10, \"verdict\": \"true_positive\", \"confidence\": 0.8, \"rule_id\": \"java-log-injection-unsanitized-input\", \"severity\": \"MEDIUM\", \"cwe\": \"CWE-117\", \"title\": \"Unsanitized data reaches a log call\", \"owasp_category\": \"A09:2021-Security-Logging-and-Monitoring-Failures\", \"verdict_reason\": \"The raw string is logged.\", \"source\": \"the logged value\", \"sink\": \"log.info\", \"data_flow\": \"the value reaches the log call unchanged\", \"snippet\": \"log.info(\\\"job \\\" + raw);\", \"ai_fix\": \"Encode CR/LF before logging.\"}]}"
+}
