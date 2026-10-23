@@ -249,7 +249,10 @@ class Finding(Base):
     # file could not be parsed and on rows from before the column.
     facts: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Short machine tag of the deterministic proof behind a verdict, e.g.
-    # `match_is_declaration` or `stub_no_sink` (validators/); NULL otherwise.
+    # `match_is_declaration`, `stub_no_sink`, `log_source_outside_call`,
+    # `log_arg_constrained`, `exception_message_constrained`,
+    # `log_layout_neutralises`, `xss_sink_not_http_response` or
+    # `angular_text_interpolation` (validators/); NULL otherwise.
     reason_tag: Mapped[str | None] = mapped_column(String(60), nullable=True)
     # {"reviewed": k, "total": n}: how many members of its group the grouped
     # confirmation actually looked at. NULL for findings never group-confirmed.

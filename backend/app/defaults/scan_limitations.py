@@ -230,7 +230,7 @@ SCAN_LIMITATIONS: tuple[ScanLimitation, ...] = (
         category="analysis-check",
         title="Deterministic Checks Run on Each Occurrence",
         description="Every finding gets its parsed facts (enclosing method, the call at the flagged line, the receiver's type and each argument's kind) and a set of deterministic checks run on it before findings are grouped or published. A check can prove an occurrence is not what its rule says (a call-site rule that matched a method declaration, or a method whose body is a stub) and dismiss that one occurrence with the proof recorded; it can never dismiss on a rule name, file path or logger spelling, and a model's dismissal never overrules a proven unsafe construct (it is left unresolved as a conflict). Turn this off to skip the facts and the checks entirely.",
-        affected_scope="Java and TypeScript findings from every scan tier",
+        affected_scope="Java, JSP and TypeScript findings from every scan tier",
         source="pipeline/finding_facts.py prepare_findings, pipeline/validators/; state['occurrence_validators']",
     ),
     ScanLimitation(
