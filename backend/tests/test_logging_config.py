@@ -173,7 +173,7 @@ def test_no_configuration_is_a_gap_that_does_not_lower_a_confirmed_finding(tmp_p
 
 
 def test_a_note_never_changes_an_undecided_finding_either(tmp_path):
-    f = {"file_path": "com/acme/service/Svc.java", "line": 14, "rule_id": "java-log-injection-unsanitized-input",
+    f = {"file_path": "com/acme/service/Svc.java", "line": 10, "rule_id": "java-log-injection-unsanitized-input",
          "cwe": "CWE-117", "kind": "regex", "verdict": "unverified", "verdict_reason": "Regex hit.",
          "issue_class": "security", "unresolved_reason": "not_reviewed_regex"}
     finding_facts.prepare_findings([f], SVC, file_path=f["file_path"],
