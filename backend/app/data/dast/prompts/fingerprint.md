@@ -1,0 +1,1 @@
+Task: fingerprint. Decide what kind of target this is, or classify its login flow, from the signals given. Use only the evidence provided. When the evidence does not support a confident answer, choose the "unknown" value rather than guessing. Reply with strict JSON in exactly the shape requested.

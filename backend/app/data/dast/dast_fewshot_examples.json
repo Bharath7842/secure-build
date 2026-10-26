@@ -1,0 +1,476 @@
+{
+  "_comment": "Few-shot reference examples for the DAST model (gpt-oss:20b or any provider). Not for training. At call time, pick the block matching the task and include a few examples in the prompt as input->output demonstrations. 'output' is the gold answer; it comes from the deterministic detectors, never the model's own opinion. Payloads shown are standard detection canaries only; real attack-input generation is the model's runtime job under the check-catalog templates.",
+  "rule": [
+    {
+      "input": {
+        "check": "dast-sqli",
+        "target": "GET /api/products?id=",
+        "signals": [
+          "db_error_surfaced",
+          "boolean_divergence"
+        ],
+        "baseline": {
+          "status": 200,
+          "len": 812
+        },
+        "test": {
+          "status": 500,
+          "len": 1340,
+          "body_excerpt": "SQLSTATE[42000]: syntax error or access violation near ..."
+        }
+      },
+      "output": {
+        "verdict": "FAIL",
+        "severity": "high",
+        "confidence": "HIGH",
+        "finding": "Parameter 'id' is injectable; a malformed value triggers a database syntax error, confirming unsanitized SQL."
+      }
+    },
+    {
+      "input": {
+        "check": "dast-sqli",
+        "target": "GET /api/search?q=",
+        "signals": [],
+        "baseline": {
+          "status": 200,
+          "len": 540
+        },
+        "test": {
+          "status": 200,
+          "len": 540,
+          "body_excerpt": "no results found"
+        }
+      },
+      "output": {
+        "verdict": "INCONCLUSIVE",
+        "severity": "info",
+        "confidence": "LOW",
+        "finding": "No database error, timing, or content divergence observed; injection not demonstrated. Retained as unverified."
+      }
+    },
+    {
+      "input": {
+        "check": "dast-sqli",
+        "target": "GET /api/items?id=",
+        "signals": [
+          "transport_error"
+        ],
+        "test": {
+          "error": "timeout after 10s"
+        }
+      },
+      "output": {
+        "verdict": "INCONCLUSIVE",
+        "severity": "info",
+        "confidence": "LOW",
+        "finding": "Request failed in transport; no evidence either way. Retained as unverified."
+      }
+    },
+    {
+      "input": {
+        "check": "dast-xss",
+        "target": "GET /search?term=",
+        "signals": [
+          "input_reflected_unescaped"
+        ],
+        "test": {
+          "status": 200,
+          "body_excerpt": "You searched for dz9k1<q> \u2014 0 results"
+        }
+      },
+      "output": {
+        "verdict": "FAIL",
+        "severity": "medium",
+        "confidence": "HIGH",
+        "finding": "Canary input is reflected into the HTML response with angle brackets intact (unencoded), indicating a cross-site scripting sink."
+      }
+    },
+    {
+      "input": {
+        "check": "dast-xss",
+        "target": "GET /profile?name=",
+        "signals": [
+          "input_reflected_encoded"
+        ],
+        "test": {
+          "status": 200,
+          "body_excerpt": "Hello &lt;dz9k1&gt;"
+        }
+      },
+      "output": {
+        "verdict": "PASS",
+        "severity": "info",
+        "confidence": "HIGH",
+        "finding": "Reflected input is HTML-entity encoded; not exploitable."
+      }
+    },
+    {
+      "input": {
+        "check": "dast-bola",
+        "target": "GET /api/orders/{id}",
+        "signals": [
+          "auth_boundary_crossed"
+        ],
+        "note": "user B session requested user A's order id",
+        "baseline": {
+          "status": 200,
+          "as": "owner"
+        },
+        "test": {
+          "status": 200,
+          "as": "other_user",
+          "body_excerpt": "{\"orderId\":1021,\"owner\":\"userA\"}"
+        }
+      },
+      "output": {
+        "verdict": "FAIL",
+        "severity": "critical",
+        "confidence": "HIGH",
+        "finding": "Object-level authorization missing: user B can read user A's order by id (OWASP API1 BOLA)."
+      }
+    },
+    {
+      "input": {
+        "check": "dast-bola",
+        "target": "GET /api/orders/{id}",
+        "signals": [],
+        "test": {
+          "status": 403,
+          "as": "other_user"
+        }
+      },
+      "output": {
+        "verdict": "PASS",
+        "severity": "info",
+        "confidence": "HIGH",
+        "finding": "Cross-user object access correctly denied (403)."
+      }
+    },
+    {
+      "input": {
+        "check": "dast-bfla",
+        "target": "POST /api/admin/users",
+        "signals": [
+          "auth_boundary_crossed"
+        ],
+        "note": "standard user invoked admin-only function",
+        "test": {
+          "status": 200,
+          "as": "standard_user"
+        }
+      },
+      "output": {
+        "verdict": "FAIL",
+        "severity": "high",
+        "confidence": "HIGH",
+        "finding": "Function-level authorization missing: a standard user can invoke an admin-only endpoint (OWASP API5 BFLA)."
+      }
+    },
+    {
+      "input": {
+        "check": "dast-cmdi",
+        "target": "POST /api/ping",
+        "signals": [
+          "command_output_marker"
+        ],
+        "test": {
+          "status": 200,
+          "body_excerpt": "uid=33(www-data) gid=33(www-data) groups=33"
+        }
+      },
+      "output": {
+        "verdict": "FAIL",
+        "severity": "critical",
+        "confidence": "HIGH",
+        "finding": "User input reaches a shell; operating-system command output is returned in the response."
+      }
+    },
+    {
+      "input": {
+        "check": "dast-info-disclosure",
+        "target": "GET /api/report",
+        "signals": [
+          "stack_trace_leaked"
+        ],
+        "test": {
+          "status": 500,
+          "body_excerpt": "Traceback (most recent call last): File \"/app/views.py\", line 88, in get_report"
+        }
+      },
+      "output": {
+        "verdict": "FAIL",
+        "severity": "medium",
+        "confidence": "HIGH",
+        "finding": "Unhandled error exposes a server stack trace and internal file paths."
+      }
+    },
+    {
+      "input": {
+        "check": "dast-misconfig",
+        "target": "GET /",
+        "signals": [
+          "header_absent"
+        ],
+        "test": {
+          "status": 200,
+          "headers": {
+            "server": "nginx"
+          }
+        }
+      },
+      "output": {
+        "verdict": "FAIL",
+        "severity": "medium",
+        "confidence": "HIGH",
+        "finding": "Security headers absent: no Strict-Transport-Security and no Content-Security-Policy (OWASP API8 / Web A05)."
+      }
+    },
+    {
+      "input": {
+        "check": "dast-session",
+        "target": "POST /login",
+        "signals": [
+          "cookie_flag_missing"
+        ],
+        "test": {
+          "status": 200,
+          "set_cookie": "session=abc; Path=/"
+        }
+      },
+      "output": {
+        "verdict": "FAIL",
+        "severity": "medium",
+        "confidence": "HIGH",
+        "finding": "Session cookie set without HttpOnly or Secure flags."
+      }
+    },
+    {
+      "input": {
+        "check": "dast-authn",
+        "target": "GET /api/account",
+        "signals": [
+          "auth_boundary_crossed"
+        ],
+        "test": {
+          "status": 200,
+          "as": "no_session",
+          "body_excerpt": "{\"email\":\"userA@example.com\"}"
+        }
+      },
+      "output": {
+        "verdict": "FAIL",
+        "severity": "high",
+        "confidence": "HIGH",
+        "finding": "Protected endpoint returns account data without any authentication (OWASP API2 Broken Authentication)."
+      }
+    },
+    {
+      "input": {
+        "check": "dast-misconfig",
+        "target": "GET /api/data",
+        "signals": [
+          "cors_permissive"
+        ],
+        "test": {
+          "status": 200,
+          "headers": {
+            "access-control-allow-origin": "*",
+            "access-control-allow-credentials": "true"
+          }
+        }
+      },
+      "output": {
+        "verdict": "FAIL",
+        "severity": "medium",
+        "confidence": "HIGH",
+        "finding": "CORS allows any origin while also allowing credentials, exposing authenticated responses cross-origin."
+      }
+    }
+  ],
+  "construct": [
+    {
+      "input": {
+        "endpoint": "GET /api/products?id=42",
+        "params": [
+          {
+            "name": "id",
+            "type": "number",
+            "location": "query"
+          }
+        ],
+        "catalog_applicable": [
+          "dast-sqli"
+        ]
+      },
+      "output": {
+        "tests": [
+          {
+            "check_id": "dast-sqli",
+            "parameter": "id",
+            "location": "query",
+            "input": "42'",
+            "expected_signal": "db_error_surfaced or boolean_divergence"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "endpoint": "GET /search?term=hello",
+        "params": [
+          {
+            "name": "term",
+            "type": "string",
+            "location": "query"
+          }
+        ],
+        "catalog_applicable": [
+          "dast-xss"
+        ]
+      },
+      "output": {
+        "tests": [
+          {
+            "check_id": "dast-xss",
+            "parameter": "term",
+            "location": "query",
+            "input": "dz9k1<q>",
+            "expected_signal": "input_reflected_unescaped or input_reflected_encoded"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "endpoint": "POST /api/users",
+        "params": [
+          {
+            "name": "email",
+            "type": "string",
+            "location": "body"
+          },
+          {
+            "name": "role",
+            "type": "string",
+            "location": "body",
+            "schema_only": true
+          }
+        ],
+        "catalog_applicable": [
+          "dast-mass-assignment"
+        ]
+      },
+      "output": {
+        "tests": [
+          {
+            "check_id": "dast-mass-assignment",
+            "parameter": "role",
+            "location": "body",
+            "input": "<send-unexpected-privileged-property>",
+            "expected_signal": "unexpected_property_accepted"
+          }
+        ]
+      }
+    }
+  ],
+  "fingerprint": [
+    {
+      "input": {
+        "root_html_excerpt": "<div id=\"root\"></div><script src=\"/static/js/main.3f2.js\"></script>",
+        "headers": {
+          "content-type": "text/html"
+        },
+        "schema_probe": {
+          "openapi": false,
+          "graphql": false
+        }
+      },
+      "output": {
+        "shape": "spa",
+        "auth": "unknown",
+        "schema": "none",
+        "reason": "Empty root div plus a bundled JS app shell indicates a client-rendered single-page app; drive it with the browser crawler."
+      }
+    },
+    {
+      "input": {
+        "root_html_excerpt": "{\"openapi\":\"3.0.1\",\"paths\":{\"/users\":{}}}",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "schema_probe": {
+          "openapi": true
+        }
+      },
+      "output": {
+        "shape": "api",
+        "auth": "token",
+        "schema": "openapi",
+        "reason": "A JSON OpenAPI document is served with no HTML UI; treat as an API-only target and discover from the schema."
+      }
+    },
+    {
+      "input": {
+        "root_html_excerpt": "<html><body><form action=\"/login\" method=\"post\">...</form></body></html>",
+        "headers": {
+          "content-type": "text/html"
+        },
+        "schema_probe": {
+          "openapi": false,
+          "graphql": false
+        }
+      },
+      "output": {
+        "shape": "mpa",
+        "auth": "form",
+        "schema": "none",
+        "reason": "Server-rendered HTML with a login form; classic multi-page app with form authentication."
+      }
+    }
+  ],
+  "crawl_plan": [
+    {
+      "input": {
+        "visited": [
+          "/",
+          "/products",
+          "/login"
+        ],
+        "queue": [
+          "/products/12",
+          "/account",
+          "/admin",
+          "/about"
+        ],
+        "budget_left": {
+          "pages": 20
+        }
+      },
+      "output": {
+        "next": "/admin",
+        "reason": "Admin path is high-value for authorization testing; prioritized over informational pages."
+      }
+    },
+    {
+      "input": {
+        "visited": [
+          "/",
+          "/admin",
+          "/account"
+        ],
+        "queue": [
+          "/about",
+          "/contact",
+          "/terms"
+        ],
+        "budget_left": {
+          "pages": 15
+        }
+      },
+      "output": {
+        "next": "/contact",
+        "reason": "No high-value paths remain; contact page has a form worth inspecting, preferred over static legal pages."
+      }
+    }
+  ]
+}

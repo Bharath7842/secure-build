@@ -1,0 +1,1083 @@
+# DAST check catalog (DAST-03-010 / -020 / -030).
+# A check is data: identity, standards, where to inject, which detector signals prove it, severity,
+# mode, remediation and dependencies. It never carries a payload; the model builds inputs at scan
+# time. Validated at load by app/dast/domain/catalog.py (unknown fields are errors).
+- id: dast-bola
+  title: Broken object level authorization (BOLA)
+  description: Request another object's id, or replay as another identity; a success where denial was expected proves
+    the flaw.
+  owasp:
+  - A01:2021
+  apisec:
+  - API1:2023
+  wstg:
+  - WSTG-ATHZ-04
+  cwe:
+  - CWE-639
+  location: path
+  signal:
+  - auth_boundary_crossed
+  severity: HIGH
+  mode: automated
+  remediation_ref: rem-bola
+  aliases:
+  - dast-authz
+  dependencies:
+    second_identity: degrade
+  degraded_note: no-session replay only
+  applies_to:
+    locations:
+    - path
+    - query
+    - body
+    needs_object_id: true
+- id: dast-authn
+  title: Broken authentication
+  description: Replay an authenticated request with no session or an invalid token; success proves an authentication
+    gap.
+  owasp:
+  - A07:2021
+  apisec:
+  - API2:2023
+  wstg:
+  - WSTG-ATHN-04
+  cwe:
+  - CWE-287
+  location: header
+  signal:
+  - auth_boundary_crossed
+  severity: HIGH
+  mode: automated
+  remediation_ref: rem-authn
+- id: dast-mass-assignment
+  title: Mass assignment (broken object property level authorization)
+  description: Add properties the client never sends and see whether the server accepts and acts on them.
+  owasp:
+  - A01:2021
+  apisec:
+  - API3:2023
+  cwe:
+  - CWE-915
+  location: body
+  signal:
+  - status_length_divergence
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-mass-assignment
+  dependencies:
+    schema: degrade
+  degraded_note: on observed properties only
+  applies_to:
+    locations:
+    - body
+    methods:
+    - POST
+    - PUT
+    - PATCH
+- id: dast-excessive-data
+  title: Excessive data exposure
+  description: Responses carry more fields than the operation needs, including sensitive ones.
+  owasp:
+  - A01:2021
+  apisec:
+  - API3:2023
+  wstg:
+  - WSTG-INFO-05
+  cwe:
+  - CWE-213
+  location: response
+  signal:
+  - sensitive_data_exposed
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-excessive-data
+  passive: true
+- id: dast-resource-consumption
+  title: Unrestricted resource consumption
+  description: Probe for missing rate and size limits. Generates load, so it is off until explicitly enabled.
+  owasp:
+  - A04:2021
+  apisec:
+  - API4:2023
+  wstg:
+  - WSTG-BUSL-05
+  cwe:
+  - CWE-770
+  location: query
+  signal:
+  - time_delta
+  - status_length_divergence
+  severity: MEDIUM
+  mode: opt-in
+  remediation_ref: rem-resource-consumption
+  load_generating: true
+  enabled: false
+- id: dast-bfla
+  title: Broken function level authorization (BFLA)
+  description: Call a privileged function as a lower-privilege or anonymous identity; success proves the flaw.
+  owasp:
+  - A01:2021
+  apisec:
+  - API5:2023
+  wstg:
+  - WSTG-ATHZ-02
+  cwe:
+  - CWE-285
+  location: header
+  signal:
+  - auth_boundary_crossed
+  severity: HIGH
+  mode: automated
+  remediation_ref: rem-bfla
+  dependencies:
+    second_identity: degrade
+  degraded_note: anonymous replay only
+- id: dast-business-flows
+  title: Unrestricted access to sensitive business flows
+  description: Surface sensitive flows (checkout, invite, password reset) for human review. Flow abuse is business
+    logic.
+  owasp:
+  - A04:2021
+  apisec:
+  - API6:2023
+  wstg:
+  - WSTG-BUSL-06
+  cwe:
+  - CWE-840
+  location: response
+  signal: []
+  severity: MEDIUM
+  mode: assist-only
+  remediation_ref: rem-business-flows
+- id: dast-ssrf
+  title: Server-side request forgery (SSRF)
+  description: Supply an out-of-band address in URL-accepting parameters; a received callback is unambiguous proof.
+  owasp:
+  - A10:2021
+  apisec:
+  - API7:2023
+  wstg:
+  - WSTG-INPV-19
+  cwe:
+  - CWE-918
+  location: query
+  signal:
+  - oast_callback_received
+  severity: HIGH
+  mode: automated
+  remediation_ref: rem-ssrf
+  dependencies:
+    oast: assist-only
+  applies_to:
+    locations:
+    - query
+    - body
+    param_types:
+    - url
+- id: dast-misconfig
+  title: Security misconfiguration
+  description: The target advertises dangerous HTTP methods (TRACE, PUT, DELETE, CONNECT) in the Allow header of an
+    OPTIONS response on the scan root. Header findings stay on the dedicated passive checks.
+  owasp:
+  - A05:2021
+  apisec:
+  - API8:2023
+  wstg:
+  - WSTG-CONF-07
+  cwe:
+  - CWE-16
+  location: header
+  signal:
+  - dangerous_method_accepted
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-misconfig
+- id: dast-api-inventory
+  title: Improper inventory management
+  description: Endpoints that exist but are not documented in the API schema (shadow, old-version and debug endpoints).
+  owasp:
+  - A05:2021
+  apisec:
+  - API9:2023
+  wstg:
+  - WSTG-INFO-06
+  cwe:
+  - CWE-1059
+  location: response
+  signal:
+  - undocumented_endpoint
+  severity: LOW
+  mode: automated
+  remediation_ref: rem-api-inventory
+  passive: true
+  dependencies:
+    schema: skip
+- id: dast-unsafe-consumption
+  title: Unsafe consumption of APIs
+  description: Trust placed in upstream third-party APIs is largely invisible from outside; flagged for human review.
+  owasp:
+  - A08:2021
+  apisec:
+  - API10:2023
+  cwe:
+  - CWE-1357
+  location: response
+  signal: []
+  severity: LOW
+  mode: assist-only
+  remediation_ref: rem-unsafe-consumption
+- id: dast-sqli
+  title: SQL injection
+  description: 'Input reaches a database query unsanitized: a data-layer error surfaces, or behaviour diverges between
+    true and false variants.'
+  owasp:
+  - A03:2021
+  wstg:
+  - WSTG-INPV-05
+  cwe:
+  - CWE-89
+  location: query
+  signal:
+  - db_error_surfaced
+  - boolean_divergence
+  - time_delta
+  severity: HIGH
+  mode: automated
+  remediation_ref: rem-sqli
+  applies_to:
+    locations:
+    - query
+    - body
+    - path
+    param_types:
+    - string
+    - number
+- id: dast-xss
+  title: Cross-site scripting (reflected)
+  description: Supplied markup comes back unescaped in a response that browsers render.
+  owasp:
+  - A03:2021
+  wstg:
+  - WSTG-INPV-01
+  cwe:
+  - CWE-79
+  location: query
+  signal:
+  - input_reflected_unescaped
+  - marker_executed_in_browser
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-xss
+  applies_to:
+    locations:
+    - query
+    - body
+    - path
+    content_types:
+    - text/html
+- id: dast-xss-dom
+  title: Cross-site scripting (DOM)
+  description: Client-side code sends a page input to a markup sink, and the marker runs in the browser.
+  owasp:
+  - A03:2021
+  wstg:
+  - WSTG-CLNT-01
+  cwe:
+  - CWE-79
+  location: query
+  signal:
+  - marker_executed_in_browser
+  - marker_reaches_dom_sink
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-xss-dom
+  applies_to:
+    locations:
+    - query
+    content_types:
+    - text/html
+- id: dast-xss-stored
+  title: Cross-site scripting (stored)
+  description: A submitted marker is stored and later rendered as live markup. Opt-in, and only against a disposable target.
+  wstg:
+  - WSTG-INPV-02
+  cwe:
+  - CWE-79
+  location: body
+  signal:
+  - marker_executed_in_browser
+  - marker_persisted_unescaped
+  severity: HIGH
+  mode: opt-in
+  remediation_ref: rem-xss-stored
+  applies_to:
+    locations:
+    - body
+    content_types:
+    - text/html
+- id: dast-cmdi
+  title: OS command injection
+  description: 'Input reaches a shell: command output appears in the response or the response is measurably delayed.'
+  owasp:
+  - A03:2021
+  wstg:
+  - WSTG-INPV-12
+  cwe:
+  - CWE-78
+  location: query
+  signal:
+  - command_output_marker
+  - time_delta
+  severity: CRITICAL
+  mode: automated
+  remediation_ref: rem-cmdi
+- id: dast-session
+  title: Session management weakness
+  description: A session token keeps working after logout or invalidation.
+  owasp:
+  - A07:2021
+  apisec:
+  - API2:2023
+  wstg:
+  - WSTG-SESS-01
+  cwe:
+  - CWE-613
+  location: header
+  signal:
+  - auth_boundary_crossed
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-session
+- id: dast-info-disclosure
+  title: Error handling and information disclosure
+  description: Malformed input provokes an error response that exposes stack traces, database errors or internal
+    paths.
+  owasp:
+  - A05:2021
+  wstg:
+  - WSTG-ERRH-01
+  cwe:
+  - CWE-209
+  location: query
+  signal:
+  - stack_trace_leaked
+  - db_error_surfaced
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-info-disclosure
+- id: dast-input-validation
+  title: Input validation
+  description: Boundary and malformed values are accepted or mishandled in a way that changes behaviour.
+  owasp:
+  - A03:2021
+  wstg:
+  - WSTG-BUSL-01
+  cwe:
+  - CWE-20
+  location: body
+  signal:
+  - status_length_divergence
+  - stack_trace_leaked
+  severity: LOW
+  mode: automated
+  remediation_ref: rem-input-validation
+- id: dast-robustness
+  title: Exceptional condition handling
+  description: Oversized or chaotic input crashes the service or yields inconsistent behaviour.
+  owasp:
+  - A05:2021
+  wstg:
+  - WSTG-ERRH-01
+  cwe:
+  - CWE-248
+  location: body
+  signal:
+  - stack_trace_leaked
+  - status_length_divergence
+  severity: LOW
+  mode: automated
+  remediation_ref: rem-robustness
+- id: dast-passive-missing-csp
+  title: Missing Content-Security-Policy header
+  description: An HTML response carries no Content-Security-Policy header.
+  owasp:
+  - A05:2021
+  apisec:
+  - API8:2023
+  wstg:
+  - WSTG-CONF-12
+  cwe:
+  - CWE-693
+  location: header
+  signal:
+  - header_absent
+  - header_misconfigured
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-csp
+  passive: true
+- id: dast-passive-missing-hsts
+  title: Missing Strict-Transport-Security header
+  description: An HTTPS response carries no Strict-Transport-Security header.
+  owasp:
+  - A02:2021
+  - A05:2021
+  apisec:
+  - API8:2023
+  wstg:
+  - WSTG-CONF-07
+  cwe:
+  - CWE-319
+  location: header
+  signal:
+  - header_absent
+  - header_misconfigured
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-hsts
+  passive: true
+- id: dast-passive-missing-xcto
+  title: Missing X-Content-Type-Options header
+  description: 'Responses can be MIME-sniffed because X-Content-Type-Options: nosniff is absent.'
+  owasp:
+  - A05:2021
+  apisec:
+  - API8:2023
+  wstg:
+  - WSTG-CONF-02
+  cwe:
+  - CWE-693
+  location: header
+  signal:
+  - header_absent
+  - header_misconfigured
+  severity: LOW
+  mode: automated
+  remediation_ref: rem-xcto
+  passive: true
+- id: dast-passive-missing-referrer-policy
+  title: Missing Referrer-Policy header
+  description: A page response carries no Referrer-Policy header, so full URLs (which may hold identifiers or tokens)
+    can leak to other sites in the Referer header.
+  owasp:
+  - A05:2021
+  wstg:
+  - WSTG-CONF-12
+  cwe:
+  - CWE-200
+  location: header
+  signal:
+  - header_absent
+  - header_misconfigured
+  severity: LOW
+  mode: automated
+  remediation_ref: rem-referrer-policy
+  passive: true
+- id: dast-passive-clickjacking
+  title: Page can be framed (clickjacking)
+  description: Neither X-Frame-Options nor a CSP frame-ancestors directive restricts who may frame the page.
+  owasp:
+  - A05:2021
+  wstg:
+  - WSTG-CLNT-09
+  cwe:
+  - CWE-1021
+  location: header
+  signal:
+  - header_absent
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-clickjacking
+  passive: true
+- id: dast-passive-cookie-flags
+  title: Cookie without security attributes
+  description: A session or sensitive cookie is set without HttpOnly, Secure or SameSite.
+  owasp:
+  - A05:2021
+  - A07:2021
+  apisec:
+  - API2:2023
+  wstg:
+  - WSTG-SESS-02
+  cwe:
+  - CWE-1004
+  - CWE-614
+  location: header
+  signal:
+  - cookie_flag_missing
+  severity: LOW
+  mode: automated
+  remediation_ref: rem-cookie-flags
+  passive: true
+- id: dast-passive-cors-permissive
+  title: Over-permissive CORS policy
+  description: The server allows any origin, or reflects the request origin, together with credentials.
+  owasp:
+  - A05:2021
+  apisec:
+  - API8:2023
+  wstg:
+  - WSTG-CLNT-07
+  cwe:
+  - CWE-942
+  location: header
+  signal:
+  - cors_permissive
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-cors
+  passive: true
+- id: dast-passive-tech-disclosure
+  title: Server or framework version disclosure
+  description: Response headers or bodies reveal the server software, framework or version.
+  owasp:
+  - A05:2021
+  apisec:
+  - API8:2023
+  wstg:
+  - WSTG-INFO-02
+  cwe:
+  - CWE-200
+  location: header
+  signal:
+  - technology_disclosed
+  severity: LOW
+  mode: automated
+  remediation_ref: rem-tech-disclosure
+  passive: true
+- id: dast-passive-verbose-errors
+  title: Verbose error output
+  description: A response already observed contains a stack trace, database error or internal path.
+  owasp:
+  - A05:2021
+  apisec:
+  - API8:2023
+  wstg:
+  - WSTG-ERRH-02
+  cwe:
+  - CWE-209
+  location: response
+  signal:
+  - verbose_error_exposed
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-verbose-errors
+  passive: true
+- id: dast-path-traversal
+  title: Path traversal / local file inclusion
+  description: Supply a relative-path payload (e.g. ../../../../etc/passwd) in a file or path parameter and check whether
+    the response contains the target file's content rather than the normal page.
+  owasp:
+  - A01:2021
+  wstg:
+  - WSTG-ATHZ-01
+  cwe:
+  - CWE-22
+  location: query
+  signal:
+  - file_disclosure_marker
+  severity: HIGH
+  mode: automated
+  remediation_ref: rem-path-traversal
+  applies_to:
+    locations:
+    - query
+    - body
+    - path
+- id: dast-ssti
+  title: Server-side template injection (SSTI)
+  description: 'Supply a template expression such as {{7*7}}, ${7*7}, #{7*7}, <%= 7*7 %> or @(7*7) and check whether the
+    evaluated product (e.g. 49) appears in the response rather than the literal expression.'
+  owasp:
+  - A03:2021
+  wstg:
+  - WSTG-INPV-18
+  cwe:
+  - CWE-1336
+  location: query
+  signal:
+  - template_expression_evaluated
+  severity: CRITICAL
+  mode: automated
+  remediation_ref: rem-ssti
+- id: dast-open-redirect
+  title: Open redirect
+  description: Supply an absolute, off-site URL (e.g. https://evil.example.com or //evil.example.com) in a redirect-target
+    parameter and check whether the response redirects the browser there.
+  owasp:
+  - A01:2021
+  wstg:
+  - WSTG-CLNT-04
+  cwe:
+  - CWE-601
+  location: query
+  signal:
+  - open_redirect_location
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-open-redirect
+- id: dast-csrf
+  title: Cross-site request forgery (CSRF)
+  description: On a state-changing request, replace or remove the anti-CSRF token parameter or header and check whether
+    the request still succeeds as if the token had been valid.
+  owasp:
+  - A01:2021
+  wstg:
+  - WSTG-SESS-05
+  cwe:
+  - CWE-352
+  location: body
+  signal:
+  - csrf_not_enforced
+  severity: HIGH
+  mode: automated
+  remediation_ref: rem-csrf
+  applies_to:
+    methods:
+    - POST
+    - PUT
+    - PATCH
+    - DELETE
+- id: dast-nosqli
+  title: NoSQL injection
+  description: Supply an operator-shaped value (e.g. a JSON object with $ne or $where) where a plain string or number
+    is expected, and check for a store error or a true/false behaviour divergence.
+  owasp:
+  - A03:2021
+  wstg:
+  - WSTG-INPV-05
+  cwe:
+  - CWE-943
+  location: body
+  signal:
+  - nosql_error_surfaced
+  - boolean_divergence
+  severity: HIGH
+  mode: automated
+  remediation_ref: rem-nosqli
+  applies_to:
+    locations:
+    - query
+    - body
+- id: dast-ldapi
+  title: LDAP injection
+  description: Supply an LDAP filter metacharacter (e.g. *)(uid=*)) in a parameter the directory search uses, and check
+    for a directory error or a true/false behaviour divergence.
+  owasp:
+  - A03:2021
+  wstg:
+  - WSTG-INPV-06
+  cwe:
+  - CWE-90
+  location: query
+  signal:
+  - ldap_error_surfaced
+  - boolean_divergence
+  severity: HIGH
+  mode: automated
+  remediation_ref: rem-ldapi
+- id: dast-xpathi
+  title: XPath injection
+  description: Supply an XPath metacharacter (e.g. ' or '1'='1) in a parameter an XPath query uses, and check for an XML
+    engine error or a true/false behaviour divergence.
+  owasp:
+  - A03:2021
+  wstg:
+  - WSTG-INPV-09
+  cwe:
+  - CWE-643
+  location: query
+  signal:
+  - xpath_error_surfaced
+  - boolean_divergence
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-xpathi
+- id: dast-ssi
+  title: Server-side includes (SSI) injection
+  description: Supply an SSI exec directive (e.g. <!--#exec cmd="id"-->) and check whether the response contains the
+    executed command's output.
+  owasp:
+  - A03:2021
+  wstg:
+  - WSTG-INPV-08
+  cwe:
+  - CWE-97
+  location: query
+  signal:
+  - command_output_marker
+  severity: CRITICAL
+  mode: automated
+  remediation_ref: rem-ssi
+  applies_to:
+    content_types:
+    - text/html
+- id: dast-html-injection
+  title: HTML injection
+  description: Supply plain markup with no script intent (e.g. <b>probe</b> or <img src=x>) and check whether it comes
+    back unescaped in a response that browsers render.
+  owasp:
+  - A03:2021
+  wstg:
+  - WSTG-INPV-01
+  cwe:
+  - CWE-79
+  location: query
+  signal:
+  - input_reflected_unescaped
+  severity: LOW
+  mode: automated
+  remediation_ref: rem-html-injection
+  applies_to:
+    locations:
+    - query
+    - body
+    - path
+    content_types:
+    - text/html
+- id: dast-tls-expired
+  title: Expired TLS certificate
+  description: The certificate the target presented over HTTPS has passed its expiry date.
+  owasp:
+  - A02:2021
+  wstg:
+  - WSTG-CRYP-01
+  cwe:
+  - CWE-298
+  location: response
+  signal:
+  - tls_cert_expired
+  severity: HIGH
+  mode: automated
+  remediation_ref: rem-tls-expired
+- id: dast-tls-expiring-soon
+  title: TLS certificate expiring soon
+  description: The certificate the target presented over HTTPS is still valid but expires within 30 days.
+  owasp:
+  - A02:2021
+  wstg:
+  - WSTG-CRYP-01
+  cwe:
+  - CWE-298
+  location: response
+  signal:
+  - tls_cert_expiring_soon
+  severity: LOW
+  mode: automated
+  remediation_ref: rem-tls-expiring-soon
+- id: dast-tls-weak-protocol
+  title: Deprecated TLS protocol version
+  description: The target accepted a connection using SSLv2, SSLv3, TLS 1.0 or TLS 1.1.
+  owasp:
+  - A02:2021
+  wstg:
+  - WSTG-CRYP-01
+  cwe:
+  - CWE-327
+  location: response
+  signal:
+  - tls_weak_protocol
+  severity: HIGH
+  mode: automated
+  remediation_ref: rem-tls-weak-protocol
+- id: dast-tls-weak-cipher
+  title: Weak TLS cipher suite
+  description: The target negotiated a cipher suite built on a broken or deprecated algorithm (RC4, 3DES, a NULL cipher,
+    an export-grade suite, or MD5).
+  owasp:
+  - A02:2021
+  wstg:
+  - WSTG-CRYP-01
+  cwe:
+  - CWE-327
+  location: response
+  signal:
+  - tls_weak_cipher
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-tls-weak-cipher
+- id: dast-tls-self-signed
+  title: Self-signed TLS certificate
+  description: The certificate the target presented over HTTPS was not issued by a certificate authority a standard
+    trust store recognizes.
+  owasp:
+  - A02:2021
+  wstg:
+  - WSTG-CRYP-01
+  cwe:
+  - CWE-295
+  location: response
+  signal:
+  - tls_cert_self_signed
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-tls-self-signed
+- id: dast-tls-hostname-mismatch
+  title: TLS certificate hostname mismatch
+  description: The certificate the target presented over HTTPS does not cover the hostname the scan connected to.
+  owasp:
+  - A02:2021
+  wstg:
+  - WSTG-CRYP-01
+  cwe:
+  - CWE-297
+  location: response
+  signal:
+  - tls_hostname_mismatch
+  severity: HIGH
+  mode: automated
+  remediation_ref: rem-tls-hostname-mismatch
+- id: dast-tls-not-trusted
+  title: TLS certificate not trusted
+  description: A standard trust store could not validate the certificate chain the target presented, for a reason other
+    than expiry, self-signing or a hostname mismatch.
+  owasp:
+  - A02:2021
+  wstg:
+  - WSTG-CRYP-01
+  cwe:
+  - CWE-295
+  location: response
+  signal:
+  - tls_cert_not_trusted
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-tls-not-trusted
+- id: dast-passive-sensitive-data
+  title: Sensitive data in responses
+  description: A response already observed contains credentials, tokens, keys or personal data that should not be
+    returned.
+  owasp:
+  - A02:2021
+  apisec:
+  - API3:2023
+  wstg:
+  - WSTG-INFO-05
+  cwe:
+  - CWE-200
+  location: response
+  signal:
+  - sensitive_data_exposed
+  severity: HIGH
+  mode: automated
+  remediation_ref: rem-sensitive-data
+  passive: true
+- id: dast-xxe
+  title: XML external entity injection (in-band)
+  description: Supply a short XML document that declares an entity (an internal marker, or a file entity) and check
+    whether the response contains the expanded text or a parser error that says the entity was loaded.
+  owasp:
+  - A05:2021
+  wstg:
+  - WSTG-INPV-07
+  cwe:
+  - CWE-611
+  location: body
+  signal:
+  - xxe_entity_resolved
+  severity: HIGH
+  mode: automated
+  remediation_ref: rem-xxe
+  applies_to:
+    locations:
+    - body
+    content_types:
+    - application/xml
+    - text/xml
+- id: dast-hpp
+  title: HTTP parameter pollution
+  description: Send the same parameter twice, the second value a short distinct token, and check whether the response
+    selects that second value.
+  owasp:
+  - A03:2021
+  wstg:
+  - WSTG-INPV-04
+  cwe:
+  - CWE-235
+  location: query
+  signal:
+  - parameter_pollution_selected
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-hpp
+  applies_to:
+    locations:
+    - query
+    - body
+- id: dast-waf
+  title: WAF or CDN detected
+  description: Response headers or body match a known WAF or CDN signature. Informational; it changes how later
+    findings should be read, it is not itself a vulnerability.
+  owasp:
+  - A05:2021
+  wstg:
+  - WSTG-INFO-02
+  cwe:
+  - CWE-200
+  location: response
+  signal:
+  - waf_detected
+  severity: INFO
+  mode: automated
+  remediation_ref: rem-waf
+- id: dast-forced-browse
+  title: Hidden path exposed
+  description: A small bundled list of well-known sensitive paths answered with its own document rather than the
+    site's normal page.
+  owasp:
+  - A01:2021
+  wstg:
+  - WSTG-CONF-04
+  cwe:
+  - CWE-538
+  location: path
+  signal:
+  - hidden_path_exposed
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-forced-browse
+- id: dast-directory-listing
+  title: Directory listing
+  description: A response body is an index of files in a directory.
+  owasp:
+  - A05:2021
+  wstg:
+  - WSTG-CONF-04
+  cwe:
+  - CWE-548
+  location: response
+  signal:
+  - directory_listed
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-directory-listing
+- id: dast-session-fixation
+  title: Session fixation
+  description: A session cookie set before login still has the same value after login.
+  owasp:
+  - A07:2021
+  wstg:
+  - WSTG-SESS-03
+  cwe:
+  - CWE-384
+  location: header
+  signal:
+  - session_fixed
+  severity: HIGH
+  mode: automated
+  remediation_ref: rem-session-fixation
+- id: dast-session-timeout
+  title: Excessive session lifetime
+  description: A session cookie's expiry or Max-Age is longer than 24 hours.
+  owasp:
+  - A07:2021
+  wstg:
+  - WSTG-SESS-07
+  cwe:
+  - CWE-613
+  location: header
+  signal:
+  - session_lifetime_excessive
+  severity: LOW
+  mode: automated
+  remediation_ref: rem-session-timeout
+- id: dast-credential-reuse
+  title: Credential reuse across identities
+  description: Two identities in this scan ended up holding the same session cookie value.
+  owasp:
+  - A07:2021
+  wstg:
+  - WSTG-SESS-01
+  cwe:
+  - CWE-287
+  location: header
+  signal:
+  - credential_reused
+  severity: HIGH
+  mode: automated
+  remediation_ref: rem-credential-reuse
+- id: dast-graphql-introspection
+  title: GraphQL introspection enabled
+  description: The GraphQL endpoint returned its schema to an introspection query.
+  owasp:
+  - A05:2021
+  apisec:
+  - API9:2023
+  wstg:
+  - WSTG-INFO-08
+  cwe:
+  - CWE-200
+  location: body
+  signal:
+  - graphql_introspection_enabled
+  severity: LOW
+  mode: automated
+  remediation_ref: rem-graphql-introspection
+- id: dast-graphql-batch
+  title: GraphQL query batching
+  description: The GraphQL endpoint accepted a JSON array of operations and returned a JSON array of results.
+  owasp:
+  - A04:2021
+  apisec:
+  - API4:2023
+  cwe:
+  - CWE-770
+  location: body
+  signal:
+  - graphql_batch_accepted
+  severity: LOW
+  mode: automated
+  remediation_ref: rem-graphql-batch
+- id: dast-request-smuggling
+  title: Ambiguous request framing
+  description: One request carrying both Content-Length and Transfer-Encoding was accepted with a success status.
+    Off unless enabled. The probe does not prefix a second request onto the connection.
+  owasp:
+  - A05:2021
+  wstg:
+  - WSTG-INPV-16
+  cwe:
+  - CWE-444
+  location: header
+  signal:
+  - ambiguous_request_framing
+  severity: HIGH
+  mode: opt-in
+  remediation_ref: rem-request-smuggling
+  enabled: false
+- id: dast-prototype-pollution
+  title: Prototype pollution
+  description: Supply a JSON object that sets __proto__ or constructor.prototype and check whether a new key from
+    that object appears on the parsed response.
+  owasp:
+  - A03:2021
+  wstg:
+  - WSTG-CLNT-08
+  cwe:
+  - CWE-1321
+  location: body
+  signal:
+  - prototype_pollution_applied
+  severity: HIGH
+  mode: automated
+  remediation_ref: rem-prototype-pollution
+  applies_to:
+    locations:
+    - body
+    content_types:
+    - application/json
+- id: dast-postmessage
+  title: postMessage without an origin check
+  description: A fetched script registers a message listener and the following code does not read event.origin.
+  owasp:
+  - A05:2021
+  wstg:
+  - WSTG-CLNT-11
+  cwe:
+  - CWE-346
+  location: response
+  signal:
+  - postmessage_origin_missing
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-postmessage

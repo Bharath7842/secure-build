@@ -1,0 +1,39 @@
+# Rule packs are selections over the catalog (by tag, by id, or 'passive'), never copies of checks.
+# A check may belong to several packs and still runs once.
+- id: owasp-api-top10-2023
+  title: OWASP API Security Top 10
+  enabled_by_default: true
+  description: Every check tagged with an API Security Top 10 risk.
+  select:
+    tags:
+      apisec:
+      - '*'
+- id: owasp-web-top10
+  title: OWASP Web Application Top 10
+  enabled_by_default: true
+  description: Every check tagged with an OWASP Top 10 category.
+  select:
+    tags:
+      owasp:
+      - '*'
+- id: wstg-full
+  title: OWASP Web Security Testing Guide
+  enabled_by_default: false
+  description: Every check mapped to a WSTG test.
+  select:
+    tags:
+      wstg:
+      - '*'
+- id: thorough
+  title: Thorough
+  enabled_by_default: false
+  description: Opt-in checks that write a marker into the target, including stored cross-site scripting.
+  select:
+    ids:
+    - dast-xss-stored
+- id: passive-only
+  title: Passive only
+  enabled_by_default: false
+  description: Only checks that need no request beyond what discovery already observed.
+  select:
+    passive: true

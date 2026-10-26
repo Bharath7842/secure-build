@@ -1,0 +1,16 @@
+# A custom check. Copy this into the custom-rule editor. It carries no payload:
+# the model builds the input, and an existing detector signal decides the result.
+id: dast-custom-example
+title: Example reflected marker
+description: A response reflected a marker that was not in the baseline.
+owasp:
+  - A03:2021
+cwe:
+  - CWE-79
+location: query
+signal:
+  - input_reflected_unescaped
+severity: LOW
+mode: assist-only
+remediation_ref: rem-xss
+enabled: false
