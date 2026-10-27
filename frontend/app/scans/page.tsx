@@ -7,7 +7,7 @@ import { useConfirmDialog } from "@/components/ConfirmDialog";
 import PageContainer from "@/components/PageContainer";
 import ScanStatusBadge from "@/components/ScanStatusBadge";
 import { ApiError, api } from "@/lib/api";
-import { claudeModelName } from "@/lib/formatUsage";
+import { claudeModelName, gptModelName } from "@/lib/formatUsage";
 import type { Scan } from "@/lib/types";
 import { useAuth, useCan } from "@/components/auth/AuthProvider";
 import { useActiveProject } from "@/components/project/ActiveProjectProvider";
@@ -32,6 +32,9 @@ function llmLabel(scan: Scan): string {
   }
   if (provider === "claude_cli") {
     return claudeModelName(model);
+  }
+  if (provider === "openai_cli") {
+    return gptModelName(model);
   }
   if (provider === "bedrock") {
     if (model && /haiku/i.test(model)) return "Claude Haiku (Bedrock)";

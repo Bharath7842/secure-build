@@ -20,6 +20,11 @@ def test_friendly_llm_label_claude_cli_keeps_alias():
     assert _friendly_llm_label("claude_cli", "claude-haiku-5-5", True) == "Claude Haiku 5.5"
 
 
+def test_friendly_llm_label_openai_cli_shows_the_model_only():
+    assert _friendly_llm_label("openai_cli", "gpt-5.6-sol", True) == "GPT-5.6 Sol"
+    assert _friendly_llm_label("openai_cli", "gpt-6-astra", True) == "GPT-6 Astra"
+
+
 def test_friendly_llm_label_no_llm():
     assert _friendly_llm_label(None, None, False) == "heuristics only (no LLM)"
 

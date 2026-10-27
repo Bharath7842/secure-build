@@ -3216,6 +3216,12 @@ GROUP_CONFIRM_MEMBER_CHAR_BUDGET = 16_000
 GROUP_CONFIRM_WINDOW_LINES = 4
 GROUP_CONFIRM_LINE_MAX_CHARS = 240
 GROUP_CONFIRM_EVIDENCE_MEMBERS = 3
+# Bounds on one call, so an answer stays short enough to come back quickly:
+# at most this many occurrences shown per group, and per batched call.
+GROUP_CONFIRM_MAX_SHOWN = 20
+GROUP_CONFIRM_BATCH_MAX_SHOWN = 24
+# Output tokens allowed per occurrence shown (a one-sentence reason).
+GROUP_CONFIRM_TOKENS_PER_MEMBER = 90
 CONFIRM_STEP = "group_confirm_triage_findings"
 
 _GROUP_CONFIRM_SYSTEM = (
@@ -3237,8 +3243,8 @@ _GROUP_RESPONSE_SCHEMA = """Output format — one JSON object with exactly one d
   "member": "<the occurrence id, e.g. m1>",
   "verdict": "true_positive" | "false_positive",
   "confidence": <0.0-1.0, how sure you are of this verdict (1.0 = certain), whichever verdict it is>,
-  "verdict_reason": "<why this occurrence is/isn't a real issue — required, at most 2 sentences>",
-  "ai_fix": "<at most 2 sentences; only when verdict is true_positive>"
+  "verdict_reason": "<why this occurrence is/isn't a real issue — required, one short sentence>",
+  "ai_fix": "<at most 2 sentences; only on the FIRST true_positive occurrence of a pattern, omitted on every other>"
 }, ...]}"""
 
 
@@ -3405,17 +3411,33 @@ def _excerpt_signature(entry: Dict[str, Any], index: int) -> str:
     return "\n".join(" ".join(lines[n - 1].split()) for n in range(lo, hi + 1) if n - 1 < len(lines))
 
 
+def _variant_of(entry: Dict[str, Any]) -> Dict[int, List[int]]:
+    """member index -> the indices of every member with identical code, itself
+    included, in member order. Members are identical when they have the same
+    semantic signature and the same normalized excerpt: nothing in the code tells
+    them apart, so one decision is, verifiably, a decision for each. The first
+    index of a variant is the one shown."""
+    cached = entry.get("_variant_of")
+    if cached is not None:
+        return cached
+    by_code: Dict[Tuple[str, str], List[int]] = {}
+    for idx, member in enumerate(entry["members"]):
+        key = (semantic_signature(member.get("facts")), _excerpt_signature(entry, idx))
+        by_code.setdefault(key, []).append(idx)
+    variant_of = {idx: variant for variant in by_code.values() for idx in variant}
+    entry["_variant_of"] = variant_of
+    return variant_of
+
+
+def variant_count(entry: Dict[str, Any]) -> int:
+    """How many distinct pieces of code a group holds: what confirming it costs."""
+    return len({variant[0] for variant in _variant_of(entry).values()})
+
+
 def _is_uniform(entry: Dict[str, Any]) -> bool:
-    """Every member has the same semantic signature (the group key guarantees
-    it) and the same normalized excerpt, so one decision is a decision for all."""
+    """Every member is identical code, so one decision is a decision for all."""
     members = entry["members"]
-    if len(members) < 2:
-        return False
-    signatures = {semantic_signature(m.get("facts")) for m in members}
-    if len(signatures) != 1:
-        return False
-    first = _excerpt_signature(entry, 0)
-    return all(_excerpt_signature(entry, i) == first for i in range(1, len(members)))
+    return len(members) > 1 and len(_variant_of(entry)[0]) == len(members)
 
 
 def _fact_summary(member: Dict[str, Any]) -> str:
@@ -3434,27 +3456,33 @@ def _fact_summary(member: Dict[str, Any]) -> str:
 def _plan_members(
     entry: Dict[str, Any], indices: Sequence[int], budget: Optional[int] = None
 ) -> Tuple[List[int], List[int], bool]:
-    """(shown, left over, uniform): as many of `indices`, in order, as fit the
-    character budget — always at least one. A uniform group shows its first
-    member and leaves nothing over."""
+    """(shown, left over, uniform): one member per variant of identical code
+    among `indices`, in order, as many as fit the character budget and
+    `GROUP_CONFIRM_MAX_SHOWN` — always at least one. A shown member stands for
+    every member of its variant; the left over are the members of variants not
+    shown. `uniform` says the whole group is one variant."""
     if budget is None:
         budget = GROUP_CONFIRM_MEMBER_CHAR_BUDGET
-    if list(indices) == list(range(len(entry["members"]))) and _is_uniform(entry):
-        return [indices[0]], [], True
+    variant_of = _variant_of(entry)
+    representatives: List[int] = []
+    for idx in indices:
+        first = variant_of[idx][0]
+        if first not in representatives:
+            representatives.append(first)
     shown: List[int] = []
     used = 0
-    for idx in indices:
+    for idx in representatives:
         lo, hi, lines = _member_window(entry, idx)
         cost = 120 + sum(
             min(len(lines[n - 1]), GROUP_CONFIRM_LINE_MAX_CHARS) + 8
             for n in range(lo, hi + 1) if n - 1 < len(lines)
         )
-        if shown and used + cost > budget:
+        if shown and (used + cost > budget or len(shown) >= GROUP_CONFIRM_MAX_SHOWN):
             break
         shown.append(idx)
         used += cost
-    taken = set(shown)
-    return shown, [i for i in indices if i not in taken], False
+    covered = {member for idx in shown for member in variant_of[idx]}
+    return shown, [i for i in indices if i not in covered], _is_uniform(entry)
 
 
 def _render_members(entry: Dict[str, Any], shown: Sequence[int], uniform: bool) -> str:
@@ -3468,11 +3496,14 @@ def _render_members(entry: Dict[str, Any], shown: Sequence[int], uniform: bool) 
             f"the same resolved call. m1 stands for all of them; your decision for m1 is the "
             f"decision for every occurrence."
         )
+    variant_of = _variant_of(entry)
     for idx in shown:
         m = members[idx]
         summary = _fact_summary(m)
+        copies = len(variant_of[idx]) - 1
         lines_out.append(
             f"{_member_id(idx)} | {m.get('file_path')}:{m.get('line')}" + (f" | {summary}" if summary else "")
+            + (f" | stands for {copies} more identical occurrence(s)" if copies and not uniform else "")
         )
     by_file: Dict[str, List[int]] = {}
     for idx in shown:
@@ -3573,8 +3604,8 @@ _GROUP_BATCH_RESPONSE_SCHEMA = """Output format — one JSON object with exactly
   "member": "<the occurrence id within that pattern, e.g. m1>",
   "verdict": "true_positive" | "false_positive",
   "confidence": <0.0-1.0, how sure you are of this verdict (1.0 = certain), whichever verdict it is>,
-  "verdict_reason": "<why this occurrence is/isn't a real issue — required, at most 2 sentences>",
-  "ai_fix": "<at most 2 sentences; only when verdict is true_positive>"
+  "verdict_reason": "<why this occurrence is/isn't a real issue — required, one short sentence>",
+  "ai_fix": "<at most 2 sentences; only on the FIRST true_positive occurrence of a pattern, omitted on every other>"
 }, ...]}"""
 
 
@@ -3640,27 +3671,30 @@ def _record_round(
     state: Dict[str, Any], shown: Sequence[int], decisions: Dict[int, Dict[str, Any]],
     *, uniform: bool, cache_hit: bool, usage: Optional[Dict[str, Any]],
 ) -> None:
+    variant_of = _variant_of(state["entry"])
+    if uniform:
+        state["uniform"] = True
     for idx in shown:
-        state["shown"].add(idx)
+        # A shown member stands for every member of identical code.
+        variant = variant_of[idx]
+        state["shown"].update(variant)
         item = decisions.get(idx)
         if item is None:
             # Keep a more specific earlier reason (an unrecognised verdict) over
             # the blanket "nothing came back" of a follow-up that found nothing.
-            state["reasons"].setdefault(idx, "llm_missing_verdict")
+            for member in variant:
+                state["reasons"].setdefault(member, "llm_missing_verdict")
             continue
         result = _confirm_result_from_item(item, usage=usage)
         if result["error"] is not None:
-            state["reasons"][idx] = result["unresolved_reason"]
-            state["detail"][idx] = result["error"]
+            for member in variant:
+                state["reasons"][member] = result["unresolved_reason"]
+                state["detail"][member] = result["error"]
             continue
         result["result_cache_hit"] = cache_hit
-        state["reasons"].pop(idx, None)
-        if uniform:
-            state["uniform"] = True
-            for every in range(len(state["entry"]["members"])):
-                state["results"][every] = dict(result)
-        else:
-            state["results"][idx] = result
+        for member in variant:
+            state["reasons"].pop(member, None)
+            state["results"][member] = dict(result)
 
 
 def _finalize_state(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -3716,7 +3750,7 @@ def _ask_group(
     def _call(prompt: str) -> str:
         with _INFLIGHT:
             return call_llm_fn(
-                system, prompt, max_tokens=max(512, 130 * len(shown)), temperature=0.0,
+                system, prompt, max_tokens=max(512, GROUP_CONFIRM_TOKENS_PER_MEMBER * len(shown)), temperature=0.0,
                 usage=usage, step=CONFIRM_STEP,
                 provider=llm_provider, model=llm_model, json_mode=True,
             )
@@ -3759,9 +3793,10 @@ def confirm_finding_group(
     response left out, and members the budget could not show, get one follow-up
     call carrying just their excerpts. What is still undecided after that is
     `unverified`: `llm_missing_verdict` when it was shown, `not_in_sample` when
-    it never fit. No member ever takes a sibling's verdict — except in a group
-    whose members all have the same signature *and* the same excerpt, where one
-    decision is, verifiably, a decision for each.
+    it never fit. No member ever takes a sibling's verdict — except a member of
+    identical code (same signature *and* same normalized excerpt, `_variant_of`):
+    only one of those is shown, and its decision is, verifiably, a decision for
+    each.
 
     Returns {"results" (one per member, in `entry["members"]` order),
     "reviewed", "total", "not_in_sample", "uniform", "error"}; `error` is set
@@ -3819,8 +3854,9 @@ def _resolve_member_contradictions(
                 bump_counter(usage, "explanation_contradictions", c["check"])
     if not found:
         return outcome
-    # A uniform group's one decision stands for every member: one retry is enough.
-    retry_indices = [min(found)] if state["uniform"] else sorted(found)
+    # A decision stands for every member of identical code: one retry per variant.
+    variant_of = _variant_of(entry)
+    retry_indices = sorted({variant_of[index][0] for index in found})
     retried: Dict[int, Dict[str, Any]] = {}
     if stage_has_budget(usage, CONFIRM_STEP):
         bump_counter(usage, "explanation_contradictions", "retries")
@@ -3836,7 +3872,7 @@ def _resolve_member_contradictions(
         retried = retry_state["results"]
     reviewed = outcome["reviewed"]
     for index, contradictions in found.items():
-        again = retried.get(index if not state["uniform"] else retry_indices[0])
+        again = retried.get(index)
         if again is not None and not _contradictions_of(entry, index, again):
             results[index] = again
             bump_counter(usage, "explanation_contradictions", "retry_resolved")
@@ -3885,7 +3921,7 @@ def confirm_finding_group_batch(
         shown, _left, uniform = _plan_members(entry, list(range(len(entry["members"]))))
         plans.append({"entry": entry, "shown": shown, "uniform": uniform})
     system, user = build_group_confirm_batch_prompt(plans=plans, stack_context=stack_context)
-    max_tokens = max(512, 130 * sum(len(p["shown"]) for p in plans))
+    max_tokens = max(512, GROUP_CONFIRM_TOKENS_PER_MEMBER * sum(len(p["shown"]) for p in plans))
 
     def _call(prompt: str) -> str:
         with _INFLIGHT:
@@ -4008,6 +4044,13 @@ def group_confirm_unverified_findings(
     def _apply_outcome(entry: Dict[str, Any], outcome: Dict[str, Any]) -> None:
         members = entry["members"]
         coverage = {"reviewed": outcome["reviewed"], "total": outcome["total"]}
+        # The model writes a fix once per pattern; every confirmed occurrence of
+        # it gets that fix (guidance, not a verdict).
+        pattern_fix = next(
+            (r["ai_fix"] for r in outcome["results"]
+             if r.get("error") is None and r["verdict"] == "true_positive" and r.get("ai_fix")),
+            None,
+        )
         note = f"Reviewed {outcome['reviewed']} of {outcome['total']} occurrences"
         for member, result in zip(members, outcome["results"]):
             member["review_coverage"] = coverage
@@ -4031,8 +4074,8 @@ def group_confirm_unverified_findings(
             member["verdict"] = result["verdict"]
             member["confidence"] = result["confidence"]
             member["verdict_reason"] = f"{result['verdict_reason']} ({note})"
-            if result["verdict"] == "true_positive" and result.get("ai_fix"):
-                member["ai_fix"] = result["ai_fix"]
+            if result["verdict"] == "true_positive" and (result.get("ai_fix") or pattern_fix):
+                member["ai_fix"] = result.get("ai_fix") or pattern_fix
             # A deterministic proof or fact on this occurrence still outranks
             # the model's answer for it.
             reapply_precedence(member)
@@ -4084,7 +4127,21 @@ def group_confirm_unverified_findings(
         else:
             outcomes = [_run(item) for item in numbered]
     else:
-        batches = [numbered[i:i + groups_per_call] for i in range(0, len(numbered), groups_per_call)]
+        # Pack groups by what they cost to show (one occurrence per variant of
+        # identical code, at most GROUP_CONFIRM_MAX_SHOWN), not by a fixed count,
+        # so no call asks for an answer long enough to time out.
+        batches: List[List[Tuple[int, tuple]]] = []
+        current: List[Tuple[int, tuple]] = []
+        load = 0
+        for item in numbered:
+            weight = min(GROUP_CONFIRM_MAX_SHOWN, variant_count(_entry(0, item[1])))
+            if current and (len(current) >= groups_per_call or load + weight > GROUP_CONFIRM_BATCH_MAX_SHOWN):
+                batches.append(current)
+                current, load = [], 0
+            current.append(item)
+            load += weight
+        if current:
+            batches.append(current)
         if len(batches) > 1 and group_workers > 1:
             with ThreadPoolExecutor(max_workers=min(group_workers, len(batches))) as pool:
                 outcomes = [o for batch_outcomes in pool.map(_run_batch, batches) for o in batch_outcomes]

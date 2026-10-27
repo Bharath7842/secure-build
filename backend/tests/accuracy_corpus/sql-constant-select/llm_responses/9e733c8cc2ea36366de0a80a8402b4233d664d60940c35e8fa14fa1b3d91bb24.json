@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5843,
+  "key": "9e733c8cc2ea36366de0a80a8402b4233d664d60940c35e8fa14fa1b3d91bb24",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 144,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 12, \"verdict\": \"true_positive\", \"confidence\": 0.55, \"rule_id\": \"java-jdbc-prepare-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"\", \"sink\": \"connection.prepareStatement(COUNT_DONE)\", \"data_flow\": \"\", \"snippet\": \"PreparedStatement stmt = connection.prepareStatement(COUNT_DONE);\", \"verdict_reason\": \"The statement is executed from a variable, which may be built from input elsewhere.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
+}

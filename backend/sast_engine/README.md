@@ -349,6 +349,21 @@ python sast_scan_agent.py --path /path/to/project --llm-provider openai_compat \
   id (`claude-sonnet-5-5`, `claude-haiku-5-5`; the short aliases `sonnet`/`haiku` are pinned to those). `CLAUDE_CLI_PATH`, `CLAUDE_CLI_MODEL`,
   `CLAUDE_CLI_REQUEST_TIMEOUT`. Cost is notional (Sonnet/Haiku rates). Without a
   session id (`--llm-provider claude_cli` from the engine CLI) calls are ephemeral.
+- **openai_cli** — a local OpenAI-model CLI, one `exec --json` subprocess per call
+  and one thread per scan. The CLI chooses the thread id, so the first call's
+  `thread.started` id is remembered in `_OPENAI_CLI_SESSIONS` (keyed by
+  `provider_options["openai_cli"]["session_id"]`) and later calls run
+  `exec resume <id>`, serialized by a per-session lock. Runs in a read-only
+  sandbox in an empty workdir with the user's config and rules ignored; unlike
+  `claude_cli` it cannot be given no tools, so the message tells the model not to
+  use them (a prompt-injected file could still make it read files on disk).
+  Models: `gpt-5.6-sol` (default), `gpt-6-astra`, `gpt-5.6-terra`, `gpt-5.6-luna`.
+  `CODEX_CLI_PATH`, `OPENAI_CLI_MODEL`, `CODEX_CLI_REQUEST_TIMEOUT`,
+  `OPENAI_CLI_REASONING_EFFORT` (default `medium`),
+  `OPENAI_CLI_INPUT_PRICE_PER_MTOK` / `OPENAI_CLI_OUTPUT_PRICE_PER_MTOK` (notional
+  placeholders, not published rates). Without a session id calls are ephemeral
+  (`--ephemeral`). Each resumed call re-sends the thread so far, so input tokens
+  grow across a scan.
 - **ollama** — local models at `OLLAMA_BASE_URL` (optional; nothing requires it)
 
 All are reached through the shared `llm_client.call_llm`; an unknown provider

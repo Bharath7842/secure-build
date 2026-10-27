@@ -202,6 +202,16 @@ def test_project_accepts_claude_cli_provider(client):
     assert resp.json()["llm_provider"] == "claude_cli"
 
 
+def test_project_accepts_openai_cli_provider(client):
+    resp = client.post(
+        "/projects",
+        json=_payload(name="openai-cli", llm_provider="openai_cli", llm_model="gpt-5.6-sol"),
+        headers=AUTH_HEADER,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["llm_provider"] == "openai_cli"
+
+
 def test_llm_api_key_is_write_only(client):
     resp = client.post(
         "/projects",

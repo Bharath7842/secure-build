@@ -36,6 +36,11 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPresetInfo> = {
     provider: "claude_cli",
     model: "claude-haiku-5-5",
   },
+  // A local OpenAI-model CLI, one thread per scan; labels name the model only.
+  "openai-cli-sol": { label: "GPT-5.6 Sol", provider: "openai_cli", model: "gpt-5.6-sol" },
+  "openai-cli-astra": { label: "GPT-6 Astra", provider: "openai_cli", model: "gpt-6-astra" },
+  "openai-cli-terra": { label: "GPT-5.6 Terra", provider: "openai_cli", model: "gpt-5.6-terra" },
+  "openai-cli-luna": { label: "GPT-5.6 Luna", provider: "openai_cli", model: "gpt-5.6-luna" },
   // Any OpenAI-compatible /chat/completions server; the model id and base URL
   // are entered on the project form.
   "openai-compat-qwen-coder-32b": {
@@ -112,6 +117,10 @@ export function llmPresetForProviderModel(
   if (provider === "claude_cli") {
     const match = entries.find(([, p]) => p.provider === "claude_cli" && p.model === model);
     return match ? match[0] : "claude-cli-sonnet";
+  }
+  if (provider === "openai_cli") {
+    const match = entries.find(([, p]) => p.provider === "openai_cli" && p.model === model);
+    return match ? match[0] : "openai-cli-sol";
   }
   if (provider === "openai_compat") {
     return entries.find(([, p]) => p.provider === "openai_compat")?.[0] ?? "openai-compat-qwen-coder-32b";

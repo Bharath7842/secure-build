@@ -65,6 +65,9 @@ def _sync_env_from_settings() -> None:
     if settings.claude_cli_path:
         os.environ.setdefault("CLAUDE_CLI_PATH", settings.claude_cli_path)
     os.environ.setdefault("CLAUDE_CLI_REQUEST_TIMEOUT", str(settings.claude_cli_request_timeout))
+    if settings.codex_cli_path:
+        os.environ.setdefault("CODEX_CLI_PATH", settings.codex_cli_path)
+    os.environ.setdefault("CODEX_CLI_REQUEST_TIMEOUT", str(settings.codex_cli_request_timeout))
     if settings.joern_home:
         os.environ.setdefault("JOERN_HOME", settings.joern_home)
     os.environ.setdefault("JOERN_TIMEOUT_SEC", str(settings.joern_timeout_sec))
@@ -117,6 +120,7 @@ def llm_usage_options(project: Project, scan: Scan | None = None) -> dict:
     options: dict = {"openai_compat": {"base_url": base_url, "api_key": api_key}}
     if getattr(scan, "id", None):
         options["claude_cli"] = claude_cli_session(scan)
+        options["openai_cli"] = openai_cli_session(scan)
     return {"provider_options": options}
 
 
@@ -128,6 +132,15 @@ def claude_cli_session(scan: Scan) -> dict:
     return {
         "session_id": str(uuid.uuid5(_CLAUDE_SESSION_NAMESPACE, str(scan.id))),
         "workdir": str(Path(settings.claude_cli_dir) / str(scan.id)),
+    }
+
+
+def openai_cli_session(scan: Scan) -> dict:
+    """The scan's key into the engine's thread registry (the CLI chooses the real
+    thread id on the first call) and the empty directory every call runs in."""
+    return {
+        "session_id": str(uuid.uuid5(_CLAUDE_SESSION_NAMESPACE, f"openai_cli:{scan.id}")),
+        "workdir": str(Path(settings.openai_cli_dir) / str(scan.id)),
     }
 
 

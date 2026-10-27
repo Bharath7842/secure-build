@@ -1,8 +1,0 @@
-{
-  "input_tokens": 1112,
-  "key": "db83078a8b70337fafb97d88b5f0f635ec86fe5b55f854bde16ef90f806efd37",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 120,
-  "step": "group_confirm_triage_findings",
-  "text": "{\"decisions\": [{\"group_index\": 0, \"verdict\": \"true_positive\", \"confidence\": 0.7, \"verdict_reason\": \"The number is formatted into the query text, so it can change the statement.\", \"ai_fix\": \"Bind the number as a parameter instead of formatting it into the SQL.\"}, {\"group_index\": 1, \"verdict\": \"true_positive\", \"confidence\": 0.7, \"verdict_reason\": \"The number reaches the wrapper's query from the service layer.\", \"ai_fix\": \"Bind the number as a parameter and validate its format.\"}]}"
-}

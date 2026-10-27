@@ -1,8 +1,0 @@
-{
-  "input_tokens": 967,
-  "key": "6845974ff2ef4173bc65d236ba487363edfe150c05f1f58351c211030be3bff6",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 54,
-  "step": "group_confirm_triage_findings",
-  "text": "{\"decisions\": [{\"group_index\": 0, \"member\": \"m1\", \"verdict\": \"true_positive\", \"confidence\": 0.8, \"verdict_reason\": \"The message is logged unchanged and can carry a newline.\", \"ai_fix\": \"Encode CR/LF before logging.\"}]}"
-}

@@ -1,8 +1,0 @@
-{
-  "input_tokens": 959,
-  "key": "a0c8a17871ee092b9c8165967f0d1bc1df8bf9eb8459048a944aa9cda87a25f4",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 56,
-  "step": "group_confirm_triage_findings",
-  "text": "{\"decisions\": [{\"group_index\": 0, \"member\": \"m1\", \"verdict\": \"true_positive\", \"confidence\": 0.8, \"verdict_reason\": \"The requested URI is client-controlled and is logged unchanged.\", \"ai_fix\": \"Encode CR/LF before logging.\"}]}"
-}

@@ -1529,3 +1529,26 @@ def test_llm_usage_options_gives_each_scan_one_stable_claude_session(tmp_path, m
     assert first["session_id"] != other["session_id"]
     assert first["workdir"] == str(tmp_path / "scan-a")
     assert "claude_cli" not in agent_bridge.llm_usage_options(project, None)["provider_options"]
+
+
+def test_llm_usage_options_gives_each_scan_one_stable_openai_cli_key(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.config import settings
+    from app.models import Project
+    from app.services import agent_bridge
+
+    monkeypatch.setattr(settings, "openai_cli_dir", str(tmp_path))
+    project = Project(name="p", default_git_url="https://example.com/r.git")
+    scan_a = SimpleNamespace(id="scan-a", llm_base_url=None)
+    scan_b = SimpleNamespace(id="scan-b", llm_base_url=None)
+
+    first = agent_bridge.llm_usage_options(project, scan_a)["provider_options"]["openai_cli"]
+    again = agent_bridge.llm_usage_options(project, scan_a)["provider_options"]["openai_cli"]
+    other = agent_bridge.llm_usage_options(project, scan_b)["provider_options"]["openai_cli"]
+    claude = agent_bridge.llm_usage_options(project, scan_a)["provider_options"]["claude_cli"]
+
+    assert first == again
+    assert first["session_id"] != other["session_id"]
+    assert first["session_id"] != claude["session_id"]
+    assert first["workdir"] == str(tmp_path / "scan-a")

@@ -20,6 +20,7 @@ export function providerLabel(provider: string | undefined): string {
   if (key === "ollama") return "Ollama";
   if (key === "openai_compat") return "OpenAI-compatible";
   if (key === "claude_cli") return "Claude";
+  if (key === "openai_cli") return "OpenAI";
   if (key === "anthropic") return "Anthropic";
   if (key === "openai") return "OpenAI";
   return provider || "Unknown";
@@ -37,16 +38,27 @@ export function claudeModelName(model: string | undefined | null): string {
   return words[0] === "Claude" ? words.join(" ") : `Claude ${words.join(" ")}`;
 }
 
+/** "gpt-5.6-sol" -> "GPT-5.6 Sol", "gpt-6-astra" -> "GPT-6 Astra". */
+export function gptModelName(model: string | undefined | null): string {
+  const parts = (model || "").split("-").filter(Boolean);
+  if (parts.length < 2 || parts[0].toLowerCase() !== "gpt") return model || "OpenAI";
+  const rest = parts.slice(2).map((w) => (/^\d/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)));
+  return [`GPT-${parts[1]}`, ...rest].join(" ");
+}
+
 /**
- * Provider + model as shown in usage panels. The Claude CLI is just a way of running Claude, so
- * it reads "Claude Sonnet 5.5"; other providers keep "Provider · model" (or "Provider (model)").
+ * Provider + model as shown in usage panels. The Claude and OpenAI CLIs are just ways of running
+ * a model, so they read "Claude Sonnet 5.5" / "GPT-5.6 Sol"; other providers keep
+ * "Provider · model" (or "Provider (model)").
  */
 export function llmLabel(
   provider: string | undefined,
   model: string | undefined,
   style: "dot" | "paren" = "dot",
 ): string {
-  if ((provider || "").trim().toLowerCase() === "claude_cli") return claudeModelName(model);
+  const key = (provider || "").trim().toLowerCase();
+  if (key === "claude_cli") return claudeModelName(model);
+  if (key === "openai_cli") return gptModelName(model);
   return style === "paren"
     ? `${providerLabel(provider)} (${model})`
     : `${providerLabel(provider)} · ${model}`;

@@ -22,7 +22,7 @@ SCAN_LIMITATIONS: tuple[ScanLimitation, ...] = (
         enabled_by_default=True,
         category="engine-cap",
         title="Bedrock Spend Cutoff: $2.00",
-        description="Once estimated Bedrock spend for a scan reaches $2.00, remaining LLM work stops and is recorded as unverified (unless the project names a fallback provider). Not applied to the Claude CLI or Ollama providers. Does not cap how many files are queued.",
+        description="Once estimated Bedrock spend for a scan reaches $2.00, remaining LLM work stops and is recorded as unverified (unless the project names a fallback provider). Not applied to the Claude CLI, OpenAI CLI or Ollama providers. Does not cap how many files are queued.",
         affected_scope="Every LLM stage, Bedrock and OpenAI-compatible primary providers",
         source="llm_client.py LLM_COST_CUTOFF_USD",
     ),

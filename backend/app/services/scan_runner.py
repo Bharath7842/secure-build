@@ -47,6 +47,7 @@ _PROVIDER_LABELS = {
     "ollama": "Ollama",
     "openai_compat": "OpenAI-compatible",
     "claude_cli": "Claude",
+    "openai_cli": "OpenAI",
 }
 
 # DAST credentials (passwords, tokens, saved sessions), handed over by the trigger endpoint and
@@ -73,12 +74,23 @@ def set_dast_password(scan_id: str, password: str) -> None:
     set_dast_credentials(scan_id, {"identity-default": {"password": password}})
 
 
+def _gpt_model_label(model: str) -> str:
+    """'gpt-5.6-sol' -> 'GPT-5.6 Sol', 'gpt-6-astra' -> 'GPT-6 Astra'."""
+    parts = [p for p in model.split("-") if p]
+    if len(parts) < 2 or parts[0].lower() != "gpt":
+        return model
+    version, rest = parts[1], parts[2:]
+    return " ".join([f"GPT-{version}", *(w if w[:1].isdigit() else w.capitalize() for w in rest)])
+
+
 def _friendly_model_label(provider: str, model: str | None) -> str | None:
     """Turn a raw Bedrock model id (e.g. 'us.anthropic.claude-haiku-4-5-20251001-v1:0')
     into a readable name ('Claude Haiku 4.5'). Ollama tags (e.g. 'granite-code:3b')
     are already short/conventional and left as-is."""
     if not model:
         return None
+    if provider == "openai_cli":
+        return _gpt_model_label(model)
     if provider not in ("bedrock", "claude_cli"):
         return model
     name = re.sub(r"^(us\.|eu\.|apac\.)?anthropic\.", "", model)
@@ -95,8 +107,8 @@ def _friendly_llm_label(provider: str | None, model: str | None, use_llm: bool) 
     provider_key = (provider or "").strip().lower()
     provider_label = _PROVIDER_LABELS.get(provider_key, provider or "an LLM")
     model_label = _friendly_model_label(provider_key, model)
-    if provider_key == "claude_cli":
-        # The CLI is only how Claude is reached: "Claude Sonnet 5.5", not "Claude CLI (...)".
+    if provider_key in ("claude_cli", "openai_cli"):
+        # The CLI is only how the model is reached: "Claude Sonnet 5.5", not "Claude CLI (...)".
         return model_label or provider_label
     return f"{provider_label} ({model_label})" if model_label else provider_label
 

@@ -291,6 +291,7 @@ def run_case(case: Case, *, record: str | None = None, check_consistency: bool =
                     llm_client._call_openai_compat = _refusing_provider(unrecorded)
                     llm_client._call_ollama = _refusing_provider(unrecorded)
                     llm_client._call_claude_cli = _refusing_provider(unrecorded)
+                    llm_client._call_openai_cli = _refusing_provider(unrecorded)
 
                 with db_module.SessionLocal() as db:
                     project = Project(

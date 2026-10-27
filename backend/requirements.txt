@@ -1,6 +1,6 @@
 # Python 3.12. DAST-relevant packages are pinned to the exact versions in
 # spec/dast-requirements.lock.txt (see spec/tech-stack.md). SAST-only packages
-# (tree-sitter*, semgrep, networkx, ...) keep their original specifiers.
+# (tree-sitter*, ripgrep, ...) keep their original specifiers.
 
 # --- API and data ---
 fastapi==0.141.1
@@ -53,10 +53,7 @@ tree-sitter>=0.23.0
 tree-sitter-java>=0.23.0
 tree-sitter-python>=0.23.0
 tree-sitter-typescript>=0.23.0
-networkx>=3.2
 python-dotenv>=1.0.0
-beautifulsoup4>=4.12.0
-semgrep==1.34.1
 # Triage catalog prefilter (pipeline/rg_prefilter.py): ships a pinned `rg`
 # binary into the interpreter's bin/ (pipeline/rg_runner.find_rg_binary looks
 # there). RG_PATH can point at another build instead.

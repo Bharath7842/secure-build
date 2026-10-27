@@ -380,6 +380,7 @@ The backend reads the **root** `.env` file (`secure-build/.env`) via `app/config
 | `AWS_REGION`, `BEDROCK_MODEL_ID` | AWS Bedrock (default model: Claude Haiku 4.5). Uses the standard AWS credential chain. |
 | `BEDROCK_PROMPT_CACHE` | Set `0` to disable Bedrock prompt caching. |
 | `CLAUDE_CLI_PATH`, `CLAUDE_CLI_REQUEST_TIMEOUT` | Local `claude` CLI provider (`claude_cli`); path defaults to `claude` on `PATH`. Each scan runs as one Claude session under `claude_cli_dir`. |
+| `CODEX_CLI_PATH`, `CODEX_CLI_REQUEST_TIMEOUT` | Local OpenAI-model CLI provider (`openai_cli`); path defaults to `codex` on `PATH`. Each scan runs as one thread under `openai_cli_dir`. |
 | `OLLAMA_BASE_URL`, `OLLAMA_REQUEST_TIMEOUT` | Local Ollama server (default `http://localhost:11434`). |
 | `OPENAI_COMPAT_BASE_URL`, `OPENAI_COMPAT_API_KEY` | Default OpenAI-compatible endpoint (per-project overrides available). |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | Hosted providers for DAST model routing. Read from the environment only. |

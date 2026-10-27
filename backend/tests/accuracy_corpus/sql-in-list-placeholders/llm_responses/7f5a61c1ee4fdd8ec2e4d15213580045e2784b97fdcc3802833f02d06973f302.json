@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5872,
-  "key": "7f5a61c1ee4fdd8ec2e4d15213580045e2784b97fdcc3802833f02d06973f302",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 135,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 12, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-jdbc-prepare-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"ids (method parameter)\", \"sink\": \"connection.prepareStatement(...)\", \"data_flow\": \"\", \"snippet\": \"PreparedStatement ps = connection.prepareStatement(\", \"verdict_reason\": \"The IN list is concatenated into the query text.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
-}

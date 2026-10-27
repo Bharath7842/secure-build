@@ -164,11 +164,12 @@ _INDEX_MAX_ROWS = 60
 
 
 def _llm_display(scan) -> str:
-    """`provider / model` for the report header; the Claude CLI reads as plain "Claude Sonnet 5.5"."""
-    if (scan.llm_provider or "").strip().lower() == "claude_cli":
+    """`provider / model` for the report header; the CLI providers read as the plain model name."""
+    provider = (scan.llm_provider or "").strip().lower()
+    if provider in ("claude_cli", "openai_cli"):
         from app.services.scan_runner import _friendly_model_label
 
-        return _friendly_model_label("claude_cli", scan.llm_model) or "Claude"
+        return _friendly_model_label(provider, scan.llm_model) or ("OpenAI" if provider == "openai_cli" else "Claude")
     return f"{scan.llm_provider or '—'} / {scan.llm_model or '—'}"
 
 

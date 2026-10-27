@@ -347,7 +347,7 @@ def test_flow_verify_leaves_an_unrecognised_verdict_unresolved(agent, tmp_path):
 # --- result cache -----------------------------------------------------------
 
 def test_the_result_cache_key_changes_with_the_cache_version(llm_client, monkeypatch):
-    assert llm_client.RESULT_CACHE_VERSION == "5"
+    assert llm_client.RESULT_CACHE_VERSION == "6"
     args = ("system", "user")
     kwargs = dict(provider="bedrock", model="m", max_tokens=100, temperature=0.0, json_mode=True)
     current = llm_client.result_cache_key(*args, **kwargs)

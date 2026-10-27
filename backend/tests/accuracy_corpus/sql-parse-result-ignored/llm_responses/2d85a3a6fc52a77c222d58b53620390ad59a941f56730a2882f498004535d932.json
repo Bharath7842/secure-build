@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5833,
-  "key": "2d85a3a6fc52a77c222d58b53620390ad59a941f56730a2882f498004535d932",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 166,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 13, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-sql-string-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"idText (method parameter)\", \"sink\": \"stmt.executeQuery(...)\", \"data_flow\": \"idText is parsed into id, but idText itself is concatenated into the query\", \"snippet\": \"return stmt.executeQuery(\\\"SELECT * FROM lookups WHERE id = \\\" + idText);\", \"verdict_reason\": \"The parsed number is never used; the raw idText string is concatenated into the SQL.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
-}

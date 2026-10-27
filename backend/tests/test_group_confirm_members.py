@@ -324,3 +324,118 @@ def test_a_member_whose_retry_still_contradicts_is_unresolved_not_dismissed(tmp_
     update = writes[0][1][0]
     assert update["verdict"] == "unverified" and update["unresolved_reason"] == "explanation_contradiction"
     assert update["decision_detail"]["contradictions"]
+
+
+# --- cost bounds: identical code once, bounded calls, short answers ------------------
+
+def _write(tmp_path, i, header):
+    path = tmp_path / "src" / f"f{i:03d}.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{header}\nimport os\npassword = 'x'\n", encoding="utf-8")
+
+
+def test_identical_code_is_shown_once_and_decided_for_every_copy(tmp_path):
+    # f000..f003 are the same code; f004 differs.
+    for i in range(5):
+        _write(tmp_path, i, "# generated" if i < 4 else "# hand written")
+    results = _results(5)
+    model = Model(verdicts={"src/f004.py": "false_positive"})
+    _confirm(tmp_path, results, model)
+    (prompt,) = model.calls
+    assert "m1 | src/f000.py:3" in prompt and "stands for 3 more identical occurrence(s)" in prompt
+    assert "m5 | src/f004.py:3" in prompt
+    assert not re.search(r"^m[234] \|", prompt, flags=re.M)  # the copies are not shown again
+    assert [_finding(results, i)["verdict"] for i in range(5)] == [
+        "true_positive"] * 4 + ["false_positive"]
+    assert _finding(results, 2)["review_coverage"] == {"reviewed": 5, "total": 5}
+
+
+def test_a_copy_never_takes_the_verdict_of_different_code(tmp_path):
+    for i in range(3):
+        _write(tmp_path, i, f"# file {i}")
+    results = _results(3)
+    model = Model(verdicts={"src/f001.py": "false_positive"})
+    _confirm(tmp_path, results, model)
+    assert [_finding(results, i)["verdict"] for i in range(3)] == [
+        "true_positive", "false_positive", "true_positive",
+    ]
+
+
+def test_one_call_shows_at_most_the_per_group_cap(tmp_path):
+    n = lfs.GROUP_CONFIRM_MAX_SHOWN + 5
+    for i in range(n):
+        _write(tmp_path, i, f"# file {i}")
+    results = _results(n)
+    model = Model()
+    _confirm(tmp_path, results, model)
+    first, follow_up = model.calls
+    assert len(re.findall(r"^m\d+ \|", first, flags=re.M)) == lfs.GROUP_CONFIRM_MAX_SHOWN
+    assert len(re.findall(r"^m\d+ \|", follow_up, flags=re.M)) == 5
+    assert all(_finding(results, i)["verdict"] == "true_positive" for i in range(n))
+
+
+def test_batches_are_packed_by_occurrences_shown_not_by_group_count(tmp_path):
+    # Three groups of 12 distinct occurrences each: two would be 24 shown, the
+    # most one call may carry, so three groups need two calls even though five
+    # groups per call are allowed.
+    results = []
+    for g in range(3):
+        for i in range(12):
+            n = g * 12 + i
+            _write(tmp_path, n, f"# file {n}")
+            finding = _member(n)
+            finding["matched_text"] = f"password = '{g}'"
+            results.append({"file_path": f"src/f{n:03d}.py", "findings": [finding]})
+    model = BatchModel()
+    lfs.group_confirm_unverified_findings(
+        file_results=results, repo_root=tmp_path, rules=[], call_llm_fn=model,
+        group_workers=1, usage={}, groups_per_call=5,
+    )
+    assert len(model.calls) == 2
+    assert all(r["findings"][0]["verdict"] == "true_positive" for r in results)
+
+
+class BatchModel:
+    """Answers every occurrence of every pattern in a batched prompt."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, system, user, **kwargs):
+        self.calls.append(user)
+        decisions = []
+        parts = re.split(r"^Pattern (\d+) — occurrences", user, flags=re.M)
+        for gi, body in zip(parts[1::2], parts[2::2]):
+            for member in re.findall(r"^(m\d+) \|", body, flags=re.M):
+                decisions.append({"group_index": int(gi), "member": member, "verdict": "true_positive",
+                                  "confidence": 0.8, "verdict_reason": "ok"})
+        return json.dumps({"decisions": decisions})
+
+
+def test_one_fix_is_written_per_pattern_and_given_to_every_confirmed_occurrence(tmp_path):
+    for i in range(3):
+        _write(tmp_path, i, f"# file {i}")
+    results = _results(3)
+
+    def model(system, user, **kwargs):
+        members = re.findall(r"^(m\d+) \|", user, flags=re.M)
+        decisions = [{"member": m, "verdict": "true_positive", "confidence": 0.9, "verdict_reason": "real"}
+                     for m in members]
+        decisions[0]["ai_fix"] = "Load the password from the environment."
+        return json.dumps({"decisions": decisions})
+
+    _confirm(tmp_path, results, model)
+    assert {_finding(results, i)["ai_fix"] for i in range(3)} == {"Load the password from the environment."}
+
+
+def test_answers_are_asked_to_be_short():
+    assert "one short sentence" in lfs._GROUP_RESPONSE_SCHEMA
+    assert "FIRST true_positive occurrence" in lfs._GROUP_BATCH_RESPONSE_SCHEMA
+
+
+def test_bedrock_allows_long_answers_and_does_not_retry_behind_the_app():
+    import llm_client
+
+    config = llm_client._bedrock.meta.config
+    assert config.read_timeout == llm_client.BEDROCK_READ_TIMEOUT_SECONDS >= 300
+    assert config.retries["total_max_attempts"] == 1

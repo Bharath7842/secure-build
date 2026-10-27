@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     claude_cli_path: str = ""
     claude_cli_request_timeout: int = 600  # seconds per `claude -p` call
     claude_cli_dir: str = str(DATA_DIR / "claude_cli")
+    # Local OpenAI-model CLI for projects with llm_provider == "openai_cli". Empty
+    # path means "find `codex` on PATH". Each scan gets one persisted thread whose
+    # working directory lives under openai_cli_dir.
+    codex_cli_path: str = ""
+    codex_cli_request_timeout: int = 600  # seconds per call
+    openai_cli_dir: str = str(DATA_DIR / "openai_cli")
     nvd_api_key: str | None = None
     database_url: str = DEFAULT_DATABASE_URL
     workspaces_dir: str = str(DATA_DIR / "workspaces")

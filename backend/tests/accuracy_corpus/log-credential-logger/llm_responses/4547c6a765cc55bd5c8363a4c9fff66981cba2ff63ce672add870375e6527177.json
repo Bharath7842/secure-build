@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5806,
-  "key": "4547c6a765cc55bd5c8363a4c9fff66981cba2ff63ce672add870375e6527177",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 280,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 9, \"verdict\": \"true_positive\", \"confidence\": 0.8, \"rule_id\": \"java-log-injection-unsanitized-input\", \"severity\": \"MEDIUM\", \"cwe\": \"CWE-117\", \"title\": \"Unsanitized data reaches a log call\", \"owasp_category\": \"A09:2021-Security-Logging-and-Monitoring-Failures\", \"verdict_reason\": \"A request value is logged.\", \"source\": \"the logged value\", \"sink\": \"log.debug\", \"data_flow\": \"the value reaches the log call unchanged\", \"snippet\": \"log.debug(\\\"login attempt user={} password={}\\\", user, password);\", \"ai_fix\": \"Encode CR/LF before logging.\"}, {\"line\": 9, \"verdict\": \"true_positive\", \"confidence\": 0.8, \"rule_id\": \"java-sensitive-data-in-logs\", \"severity\": \"MEDIUM\", \"cwe\": \"CWE-532\", \"title\": \"Sensitive data written to a log\", \"owasp_category\": \"A09:2021-Security-Logging-and-Monitoring-Failures\", \"verdict_reason\": \"The password is written out in clear text.\", \"source\": \"password (parameter)\", \"sink\": \"log.debug\", \"data_flow\": \"the password reaches the output unchanged\", \"snippet\": \"log.debug(\\\"login attempt user={} password={}\\\", user, password);\", \"ai_fix\": \"Do not write credentials to logs.\"}]}"
-}

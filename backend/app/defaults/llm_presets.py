@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-LlmProvider = Literal["bedrock", "openai_compat", "ollama", "claude_cli"]
+LlmProvider = Literal["bedrock", "openai_compat", "ollama", "claude_cli", "openai_cli"]
 OllamaSizeClass = Literal["small", "large"]
 
 
@@ -44,6 +44,32 @@ LLM_PRESETS: tuple[LlmPreset, ...] = (
         label="Claude Haiku 5.5",
         provider="claude_cli",
         model="claude-haiku-5-5",
+    ),
+    # A local OpenAI-model CLI (one thread per scan), using whatever login it has
+    # on this machine. Labels name the model only; the CLI is just how it is reached.
+    LlmPreset(
+        id="openai-cli-sol",
+        label="GPT-5.6 Sol",
+        provider="openai_cli",
+        model="gpt-5.6-sol",
+    ),
+    LlmPreset(
+        id="openai-cli-astra",
+        label="GPT-6 Astra",
+        provider="openai_cli",
+        model="gpt-6-astra",
+    ),
+    LlmPreset(
+        id="openai-cli-terra",
+        label="GPT-5.6 Terra",
+        provider="openai_cli",
+        model="gpt-5.6-terra",
+    ),
+    LlmPreset(
+        id="openai-cli-luna",
+        label="GPT-5.6 Luna",
+        provider="openai_cli",
+        model="gpt-5.6-luna",
     ),
     # Any OpenAI-compatible /chat/completions server (vLLM, LM Studio,
     # llama.cpp server, SGLang, a hosted gateway, ...). The model id is

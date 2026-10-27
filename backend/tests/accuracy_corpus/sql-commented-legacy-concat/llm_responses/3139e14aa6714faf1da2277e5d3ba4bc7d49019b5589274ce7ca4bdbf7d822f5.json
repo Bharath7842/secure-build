@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5863,
-  "key": "3139e14aa6714faf1da2277e5d3ba4bc7d49019b5589274ce7ca4bdbf7d822f5",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 159,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 12, \"verdict\": \"true_positive\", \"confidence\": 0.7, \"rule_id\": \"java-jdbc-prepare-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"invoiceNo (method parameter)\", \"sink\": \"connection.prepareStatement(...)\", \"data_flow\": \"invoiceNo is concatenated into sql\", \"snippet\": \"PreparedStatement stmt = connection.prepareStatement(\\\"SELECT * FROM invoices WHERE invoice_no = ?\\\");\", \"verdict_reason\": \"The query is built by concatenating invoiceNo into sql.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
-}

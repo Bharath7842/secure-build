@@ -70,7 +70,7 @@ class Project(Base):
     llm_api_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # After spend hits the soft cutoff, continue on this provider/model;
     # "none" stops LLM work and leaves the rest unverified. Ignored when
-    # llm_provider is ollama or claude_cli.
+    # llm_provider is ollama, claude_cli or openai_cli.
     fallback_llm_provider: Mapped[str] = mapped_column(String(20), default="none")
     fallback_llm_model: Mapped[str] = mapped_column(String(200), default="")
     owasp_mode: Mapped[str] = mapped_column(String(20), default="top10")  # top10|top15|custom

@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5852,
-  "key": "8ee064e13aabe1040e00d08c58116063f8bf48ba3ab253d9c716f1d05cbe4ad6",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 164,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 14, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-sql-string-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"stale.getString(\\\"owner\\\")\", \"sink\": \"stmt.executeUpdate(...)\", \"data_flow\": \"a stored owner value is concatenated into the DELETE\", \"snippet\": \"stmt.executeUpdate(\\\"DELETE FROM sessions WHERE owner = '\\\" + owner + \\\"'\\\");\", \"verdict_reason\": \"A string read back from the database is concatenated into the DELETE (second-order injection).\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
-}

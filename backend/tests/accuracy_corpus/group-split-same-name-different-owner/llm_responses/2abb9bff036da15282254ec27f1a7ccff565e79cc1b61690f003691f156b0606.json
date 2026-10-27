@@ -1,0 +1,8 @@
+{
+  "input_tokens": 1214,
+  "key": "2abb9bff036da15282254ec27f1a7ccff565e79cc1b61690f003691f156b0606",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 125,
+  "step": "group_confirm_triage_findings",
+  "text": "{\"decisions\": [{\"group_index\": 0, \"member\": \"m1\", \"verdict\": \"true_positive\", \"confidence\": 0.7, \"verdict_reason\": \"The number is formatted into the query text, so it can change the statement.\", \"ai_fix\": \"Bind the number as a parameter instead of formatting it into the SQL.\"}, {\"group_index\": 1, \"member\": \"m1\", \"verdict\": \"true_positive\", \"confidence\": 0.7, \"verdict_reason\": \"The caller's number reaches the DAO query unchanged.\", \"ai_fix\": \"Validate the number's format and bind it in the DAO.\"}]}"
+}

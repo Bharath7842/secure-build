@@ -1,5 +1,5 @@
 /** SAST LLM backends (backend app/services/llm_policy.py). */
-export type SastLlmProvider = "bedrock" | "openai_compat" | "ollama" | "claude_cli";
+export type SastLlmProvider = "bedrock" | "openai_compat" | "ollama" | "claude_cli" | "openai_cli";
 /** "none": stop LLM work at the cost cutoff instead of switching providers. */
 export type SastFallbackProvider = SastLlmProvider | "none";
 

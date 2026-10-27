@@ -1,0 +1,8 @@
+{
+  "input_tokens": 681,
+  "key": "26036785d24958df1fb4dac99bdb09ea80e9c8c6466a6fdd8499541fbc3db821",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 55,
+  "step": "group_confirm_triage_findings",
+  "text": "{\"decisions\": [{\"group_index\": 0, \"member\": \"m1\", \"verdict\": \"true_positive\", \"confidence\": 0.8, \"verdict_reason\": \"The bound value is a trusted-value bypass.\", \"ai_fix\": \"Do not bypass sanitisation for dictionary text.\"}]}"
+}

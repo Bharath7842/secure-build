@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5868,
+  "key": "6f04411f0ccd69c6db40c6bcd390f591b7a3699dc75552ed31c3b94273e9951f",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 152,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 15, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-jdbc-prepare-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"login (method parameter)\", \"sink\": \"query.executeQuery()\", \"data_flow\": \"login is bound to `check`, but `query` concatenates it and is the one executed\", \"snippet\": \"return query.executeQuery();\", \"verdict_reason\": \"The executed statement concatenates login; the bound one is never run.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
+}

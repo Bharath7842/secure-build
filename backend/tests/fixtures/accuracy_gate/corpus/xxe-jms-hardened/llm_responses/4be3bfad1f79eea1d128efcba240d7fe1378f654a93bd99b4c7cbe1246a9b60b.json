@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5921,
+  "key": "4be3bfad1f79eea1d128efcba240d7fe1378f654a93bd99b4c7cbe1246a9b60b",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 135,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 14, \"verdict\": \"false_positive\", \"confidence\": 0.3, \"rule_id\": \"java-xxe-documentbuilder\", \"severity\": \"LOW\", \"cwe\": \"CWE-611\", \"title\": \"DocumentBuilderFactory created for a JMS message\", \"owasp_category\": \"A05:2021-Security-Misconfiguration\", \"sink\": \"DocumentBuilderFactory.newInstance()\", \"snippet\": \"DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();\", \"verdict_reason\": \"The same factory sets disallow-doctype-decl before the builder is created, so DTDs and external entities are rejected.\"}]}"
+}

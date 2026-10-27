@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5800,
-  "key": "5b7604e4472087b7fca6482cb45bd17721f32153c1b7126819ab7b5135bbb533",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 141,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 9, \"verdict\": \"true_positive\", \"confidence\": 0.8, \"rule_id\": \"java-sensitive-data-in-logs\", \"severity\": \"MEDIUM\", \"cwe\": \"CWE-532\", \"title\": \"Sensitive data written to a log\", \"owasp_category\": \"A09:2021-Security-Logging-and-Monitoring-Failures\", \"verdict_reason\": \"The password is written out in clear text.\", \"source\": \"password (parameter)\", \"sink\": \"System.out.println\", \"data_flow\": \"the password reaches the output unchanged\", \"snippet\": \"System.out.println(\\\"password=\\\" + password);\", \"ai_fix\": \"Do not write credentials to logs.\"}]}"
-}

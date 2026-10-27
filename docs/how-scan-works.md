@@ -126,7 +126,7 @@ Bridges the FastAPI app into the in-repo SAST agent:
 2. **Sync env** — sets AWS region, Bedrock model, Ollama URL, and `RUN_SCA` / `RUN_REGEX_SCAN` flags from `app.config`
 3. **Build initial state** from project settings:
    - `local_path` → workspace directory
-   - `llm_provider` / `llm_model` (bedrock, claude_cli or ollama)
+   - `llm_provider` / `llm_model` (bedrock, claude_cli, openai_cli or ollama)
    - `scope` → monorepo/subdirectory limit
    - `enable_secrets` → gates the secrets/config stage
    - `run_dependency_scan` → gates SCA (`project.enable_sca` + `settings.run_sca`)
@@ -217,6 +217,7 @@ Gate logic (`app/services/gates.py`) evaluates findings against project severity
 |----------|--------|---------|
 | `bedrock` | `AWS_REGION`, `BEDROCK_MODEL_ID`, AWS creds | Detect Stack, LLM Analysis |
 | `claude_cli` | local `claude` CLI (`CLAUDE_CLI_PATH`), model `claude-sonnet-5-5` / `claude-haiku-5-5` | Same stages; one Claude session per scan, calls serialized |
+| `openai_cli` | local OpenAI-model CLI (`CODEX_CLI_PATH`), models `gpt-5.6-sol` / `gpt-6-astra` / `gpt-5.6-terra` / `gpt-5.6-luna` | Same stages; one thread per scan, calls serialized |
 | `ollama` | `OLLAMA_BASE_URL`, model name | Same stages; smaller batch sizes via `scan_hybrid` |
 
 Set per-project via `llm_provider` and `llm_model` on the Project model.

@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5819,
-  "key": "e00fab2a15abd765af351e8452f9bf6ad35f4aed1d6039509920427a98569075",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 135,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 10, \"verdict\": \"true_positive\", \"confidence\": 0.8, \"rule_id\": \"java-xss-jsp-servlet\", \"severity\": \"HIGH\", \"cwe\": \"CWE-79\", \"title\": \"Reflected XSS\", \"owasp_category\": \"A03:2021-Injection\", \"verdict_reason\": \"The q parameter is written to the response without encoding.\", \"source\": \"request.getParameter(\\\"q\\\")\", \"sink\": \"response.getWriter().write\", \"data_flow\": \"q goes from the request to the response body\", \"snippet\": \"response.getWriter().write(request.getParameter(\\\"q\\\"));\", \"ai_fix\": \"HTML-encode the value.\"}]}"
-}

@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5850,
-  "key": "f5e9cd95eb265811787202209e72489d646d58634fcee0d6dc6ea32c59748ed1",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 146,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 13, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-jdbc-prepare-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"accountId (method parameter)\", \"sink\": \"stmt.setObject(1, accountId)\", \"data_flow\": \"accountId reaches setObject on the statement\", \"snippet\": \"stmt.setObject(1, accountId);\", \"verdict_reason\": \"accountId flows into setObject, which passes it to the SQL statement.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
-}

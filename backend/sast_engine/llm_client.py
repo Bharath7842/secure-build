@@ -1,6 +1,7 @@
 """Shared LLM client — Bedrock (Claude), any OpenAI-compatible
 `/chat/completions` server (vLLM, LM Studio, llama.cpp, OpenAI, ...), the
-local `claude` CLI (one session per scan), and Ollama (local, optional)."""
+local `claude` CLI and the local OpenAI-model CLI (one session per scan each),
+and Ollama (local, optional)."""
 
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import boto3
 import requests
+from botocore.config import Config as BotoConfig
 
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 BEDROCK_MODEL_ID = os.environ.get(
@@ -65,15 +67,29 @@ CLAUDE_CLI_MODEL = os.environ.get("CLAUDE_CLI_MODEL", "claude-sonnet-5-5")
 CLAUDE_CLI_MODEL_ALIASES = {"sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5"}
 CLAUDE_CLI_REQUEST_TIMEOUT = int(os.environ.get("CLAUDE_CLI_REQUEST_TIMEOUT", "600"))
 
+# Local OpenAI-model CLI (`<binary> exec --json`), driven as a subprocess like
+# the claude CLI. The CLI picks the session (thread) id itself, so the first
+# call's id is remembered per scan and later calls resume it. Prices are
+# notional, as above.
+OPENAI_CLI_PATH = os.environ.get("CODEX_CLI_PATH", "")
+OPENAI_CLI_MODEL = os.environ.get("OPENAI_CLI_MODEL", "gpt-5.6-sol")
+OPENAI_CLI_REQUEST_TIMEOUT = int(os.environ.get("CODEX_CLI_REQUEST_TIMEOUT", "600"))
+OPENAI_CLI_REASONING_EFFORT = os.environ.get("OPENAI_CLI_REASONING_EFFORT", "medium")
+OPENAI_CLI_INPUT_PRICE_PER_MTOK = float(os.environ.get("OPENAI_CLI_INPUT_PRICE_PER_MTOK", "1.25"))
+OPENAI_CLI_OUTPUT_PRICE_PER_MTOK = float(os.environ.get("OPENAI_CLI_OUTPUT_PRICE_PER_MTOK", "10.00"))
+
 PROVIDER_BEDROCK = "bedrock"
 PROVIDER_OLLAMA = "ollama"
 PROVIDER_OPENAI_COMPAT = "openai_compat"
 PROVIDER_CLAUDE_CLI = "claude_cli"
+PROVIDER_OPENAI_CLI = "openai_cli"
 # Fallback-only: stop making LLM calls once the cost cutoff is reached.
 PROVIDER_NONE = "none"
-KNOWN_PROVIDERS = (PROVIDER_BEDROCK, PROVIDER_OLLAMA, PROVIDER_OPENAI_COMPAT, PROVIDER_CLAUDE_CLI)
+KNOWN_PROVIDERS = (
+    PROVIDER_BEDROCK, PROVIDER_OLLAMA, PROVIDER_OPENAI_COMPAT, PROVIDER_CLAUDE_CLI, PROVIDER_OPENAI_CLI,
+)
 # Primary providers that run with no spend cutoff (and so never use a fallback).
-UNCAPPED_PROVIDERS = (PROVIDER_OLLAMA, PROVIDER_CLAUDE_CLI)
+UNCAPPED_PROVIDERS = (PROVIDER_OLLAMA, PROVIDER_CLAUDE_CLI, PROVIDER_OPENAI_CLI)
 
 # Soft spend cap: once estimated cost_usd reaches this, remaining calls route
 # to the fallback provider — or, with the default fallback "none", raise
@@ -226,7 +242,21 @@ class LlmBudgetExhausted(RuntimeError):
     """The cost cutoff was reached and no fallback provider is configured."""
 
 
-_bedrock = boto3.client("bedrock-runtime", region_name=AWS_REGION)
+# botocore's defaults are a 60 s read timeout and several silent retries of a
+# timed-out call. A call that needs more than 60 s to write its answer (a large
+# grouped confirmation) was abandoned and resent from scratch, again and again,
+# each time waiting the full 60 s. Allow long answers, and leave retrying to
+# `_call_bedrock`, which backs off and shares the throttle limiter.
+BEDROCK_READ_TIMEOUT_SECONDS = int(os.environ.get("BEDROCK_READ_TIMEOUT", "300"))
+_bedrock = boto3.client(
+    "bedrock-runtime",
+    region_name=AWS_REGION,
+    config=BotoConfig(
+        read_timeout=BEDROCK_READ_TIMEOUT_SECONDS,
+        connect_timeout=10,
+        retries={"mode": "standard", "total_max_attempts": 1},
+    ),
+)
 
 # Bedrock prompt caching: a cache checkpoint after the system prompt lets every
 # later chunk/file of the same language reuse the (large, catalog-bearing)
@@ -294,6 +324,8 @@ def _price_per_mtok(provider: str, model: Optional[str] = None) -> Tuple[float, 
         return OLLAMA_INPUT_PRICE_PER_MTOK, OLLAMA_OUTPUT_PRICE_PER_MTOK
     if name == PROVIDER_OPENAI_COMPAT:
         return OPENAI_COMPAT_INPUT_PRICE_PER_MTOK, OPENAI_COMPAT_OUTPUT_PRICE_PER_MTOK
+    if name == PROVIDER_OPENAI_CLI:
+        return OPENAI_CLI_INPUT_PRICE_PER_MTOK, OPENAI_CLI_OUTPUT_PRICE_PER_MTOK
     if "sonnet" in (model or "").lower():
         return BEDROCK_SONNET_INPUT_PRICE_PER_MTOK, BEDROCK_SONNET_OUTPUT_PRICE_PER_MTOK
     return BEDROCK_INPUT_PRICE_PER_MTOK, BEDROCK_OUTPUT_PRICE_PER_MTOK
@@ -332,6 +364,8 @@ def _default_model_for(provider: str) -> str:
         return OPENAI_COMPAT_MODEL
     if provider == PROVIDER_CLAUDE_CLI:
         return CLAUDE_CLI_MODEL
+    if provider == PROVIDER_OPENAI_CLI:
+        return OPENAI_CLI_MODEL
     return BEDROCK_MODEL_ID
 
 
@@ -863,6 +897,21 @@ def call_llm(
                 workdir=str(options.get("workdir") or ""),
                 meta_out=meta_out,
             )
+    elif provider == PROVIDER_OPENAI_CLI:
+        options = ((usage or {}).get(PROVIDER_OPTIONS_USAGE_KEY) or {}).get(provider) or {}
+        with _LIMITER.slot():
+            text = _call_openai_cli(
+                system,
+                user,
+                model,
+                retries,
+                usage=usage,
+                step=step,
+                json_mode=json_mode,
+                session_id=str(options.get("session_id") or ""),
+                workdir=str(options.get("workdir") or ""),
+                meta_out=meta_out,
+            )
     else:
         cache_system = should_cache_system_prompt(system, model)
 
@@ -928,7 +977,10 @@ def call_llm(
 #        reads this version off `Scan.metadata_json["versions"]` to know a
 #        group-confirmed false positive's confidence can be trusted
 #        (app/services/fp_visibility.py).
-RESULT_CACHE_VERSION = "5"
+#   "6": grouped confirmation shows one occurrence per variant of identical
+#        code and applies its decision to the whole variant; one-sentence
+#        reasons, one fix per pattern.
+RESULT_CACHE_VERSION = "6"
 # The cache object rides on the shared scan usage dict — the one object every
 # LLM-calling stage already threads through — rather than a new parameter on
 # every call site. It must expose get(key) -> {text, input_tokens,
@@ -1466,6 +1518,200 @@ def _parse_claude_cli_output(proc: "subprocess.CompletedProcess[str]") -> Dict[s
     if "result" not in payload:
         raise ValueError(f"claude CLI returned no result: {stdout[:200]}")
     return payload
+
+
+# --- OpenAI-model CLI: one `exec --json` subprocess per call, one thread per scan ---
+
+# Unlike the claude CLI this one cannot be told a session id: the first call of
+# a scan creates a thread and reports its id, which later calls resume. The
+# stage's own `system` text rides on the message, as with the claude CLI.
+_OPENAI_CLI_PREAMBLE = (
+    "You are a precise static-application-security-testing assistant. This message is an "
+    "independent task: ignore earlier messages in this conversation, follow the instructions "
+    "below exactly, and answer only from the text given here. Do not run commands or read "
+    "files; reply with the answer only."
+)
+_OPENAI_THREAD_MISSING_RE = re.compile(r"no rollout found|thread.{0,40}not found", re.IGNORECASE)
+_OPENAI_THROTTLE_RE = re.compile(r"rate.?limit|overloaded|usage limit|too many requests|429", re.IGNORECASE)
+
+# session_id -> {"lock": Lock, "thread_id": str | None}. Calls of one scan hold
+# the lock so two resumes of one thread never overlap; process-wide so the
+# reconcile sweep after the scan continues the same thread.
+_OPENAI_CLI_SESSIONS: Dict[str, Dict[str, Any]] = {}
+_OPENAI_CLI_SESSIONS_LOCK = threading.Lock()
+
+
+def _openai_cli_session_state(session_id: str) -> Dict[str, Any]:
+    with _OPENAI_CLI_SESSIONS_LOCK:
+        return _OPENAI_CLI_SESSIONS.setdefault(session_id, {"lock": threading.Lock(), "thread_id": None})
+
+
+def _openai_cli_binary() -> str:
+    path = OPENAI_CLI_PATH or os.environ.get("CODEX_CLI_PATH", "") or shutil.which("codex") or ""
+    if not path:
+        raise _NonRetryableHttpError(
+            "OpenAI CLI not found: install it or set CODEX_CLI_PATH to its binary"
+        )
+    return path
+
+
+def _openai_cli_command(binary: str, model: str, *, thread_id: str, ephemeral: bool) -> List[str]:
+    cmd = [binary, "exec"]
+    if thread_id:
+        cmd += ["resume", thread_id]
+    cmd += [
+        "--json",
+        "--skip-git-repo-check",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "-m", model,
+        "-c", 'sandbox_mode="read-only"',
+        "-c", 'approval_policy="never"',
+        "-c", f'model_reasoning_effort="{OPENAI_CLI_REASONING_EFFORT}"',
+    ]
+    if ephemeral:
+        cmd.append("--ephemeral")
+    cmd.append("-")  # the prompt is read from stdin
+    return cmd
+
+
+def _call_openai_cli(
+    system: str,
+    user: str,
+    model: str,
+    retries: int,
+    *,
+    usage: Optional[Dict[str, Any]],
+    step: str,
+    json_mode: bool = False,
+    session_id: str = "",
+    workdir: str = "",
+    meta_out: Optional[Dict[str, Any]] = None,
+) -> str:
+    """One `exec --json` call. With a `session_id` the scan's calls share one
+    thread (created by the first call, resumed by the rest, serialized by a
+    per-session lock); without one the call is ephemeral. It runs in `workdir`
+    (an empty per-scan directory) in a read-only sandbox with the user's
+    config and rules ignored. Unlike the claude CLI it cannot be given no
+    tools at all, so the preamble tells the model not to use them.
+    `max_tokens`/`temperature` have no CLI equivalent and are not sent."""
+    binary = _openai_cli_binary()
+    message = f"{_OPENAI_CLI_PREAMBLE}\n\n<instructions>\n{system}\n</instructions>\n\n{user}"
+    if json_mode:
+        message += _CLAUDE_CLI_JSON_SUFFIX
+    timeout = int(os.environ.get("CODEX_CLI_REQUEST_TIMEOUT", str(OPENAI_CLI_REQUEST_TIMEOUT)))
+    if workdir:
+        os.makedirs(workdir, exist_ok=True)
+    state = _openai_cli_session_state(session_id) if session_id else None
+
+    last_exc: Optional[Exception] = None
+    attempt = 0
+    throttles = 0
+    while attempt < retries:
+        try:
+            with (state["lock"] if state else _NULL_LOCK):
+                cmd = _openai_cli_command(
+                    binary, model,
+                    thread_id=str(state["thread_id"] or "") if state else "",
+                    ephemeral=state is None,
+                )
+                proc = subprocess.run(
+                    cmd,
+                    input=message,
+                    capture_output=True,
+                    text=True,
+                    cwd=workdir or None,
+                    timeout=timeout,
+                )
+                result = _parse_openai_cli_output(proc)
+                if state is not None and result["thread_id"]:
+                    state["thread_id"] = result["thread_id"]
+            text = result["text"]
+            if json_mode:
+                text = _THINK_BLOCK_RE.sub("", text)
+            raw = result["usage"]
+            cache_read = int(raw.get("cached_input_tokens") or 0)
+            cache_write = int(raw.get("cache_write_input_tokens") or 0)
+            meta: Dict[str, Any] = {
+                # `input_tokens` already counts the cached portions for this provider.
+                "input_tokens": int(raw.get("input_tokens") or 0),
+                "output_tokens": int(raw.get("output_tokens") or 0),
+                "cache_read_tokens": cache_read,
+                "cache_write_tokens": cache_write,
+            }
+            if not raw:
+                meta = {}
+            recorded = _record_llm_usage_from_meta(
+                usage, step, system, user, text, meta,
+                provider=PROVIDER_OPENAI_CLI, model=model, stop_reason="",
+            )
+            if meta_out is not None:
+                meta_out.update(recorded)
+                meta_out["stop_reason"] = ""
+            return text
+        except _NonRetryableHttpError:
+            raise
+        except (RuntimeError, OSError, subprocess.SubprocessError, ValueError) as exc:
+            last_exc = exc
+            message_text = str(exc)
+            if state is not None and state["thread_id"] and _OPENAI_THREAD_MISSING_RE.search(message_text):
+                state["thread_id"] = None  # thread was deleted: start a new one
+                continue
+            if _OPENAI_THROTTLE_RE.search(message_text) and throttles < THROTTLE_RETRIES:
+                throttles += 1
+                _LIMITER.on_throttle()
+                wait = throttle_wait_seconds(throttles)
+                print(f"  [openai-cli] rate limited; backing off {wait:.1f}s "
+                      f"(concurrency limit now {_LIMITER.limit})...")
+                time.sleep(wait)
+                continue
+            wait = 2**attempt
+            print(f"  [openai-cli] call failed ({type(exc).__name__}), retrying in {wait}s...")
+            time.sleep(wait)
+            attempt += 1
+    raise last_exc  # type: ignore[misc]
+
+
+def _parse_openai_cli_output(proc: "subprocess.CompletedProcess[str]") -> Dict[str, Any]:
+    """The JSONL event stream folded into {"thread_id", "text", "usage"}, or an
+    exception naming what failed (stderr/errors truncated; the prompt is never
+    echoed). The reply is the last agent message."""
+    thread_id = ""
+    text: Optional[str] = None
+    usage: Dict[str, Any] = {}
+    errors: List[str] = []
+    completed = False
+    stdout = proc.stdout or ""
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        kind = event.get("type")
+        if kind == "thread.started":
+            thread_id = str(event.get("thread_id") or "")
+        elif kind == "item.completed":
+            item = event.get("item") or {}
+            if item.get("type") == "agent_message":
+                text = str(item.get("text") or "")
+        elif kind == "turn.completed":
+            completed = True
+            usage = event.get("usage") or {}
+        elif kind == "turn.failed":
+            errors.append(str((event.get("error") or {}).get("message") or event))
+        elif kind == "error":
+            errors.append(str(event.get("message") or event))
+    if proc.returncode != 0 or errors or not completed:
+        detail = (" ".join(errors) or proc.stderr or stdout)[:300].strip()
+        raise RuntimeError(f"OpenAI CLI failed (exit {proc.returncode}): {detail}")
+    if text is None:
+        raise ValueError(f"OpenAI CLI returned no reply: {stdout[:200]}")
+    return {"thread_id": thread_id, "text": text, "usage": usage}
 
 
 def _record_llm_usage_from_meta(

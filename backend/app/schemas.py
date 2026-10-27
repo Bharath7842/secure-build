@@ -42,7 +42,7 @@ class ProjectBase(BaseModel):
     # openai_compat endpoint (e.g. http://localhost:8000/v1); None = server default.
     llm_base_url: str | None = None
     # After the soft $ cutoff, continue on this provider/model; "none" stops
-    # LLM work instead (ignored if primary is ollama or claude_cli).
+    # LLM work instead (ignored if primary is ollama, claude_cli or openai_cli).
     fallback_llm_provider: str = "none"
     fallback_llm_model: str = ""
     owasp_mode: str = "top10"  # top10|top15|custom (synced from reference_sources)

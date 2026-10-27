@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5823,
-  "key": "f42b1b6ccf10cce4ac2b4ce455ac3c2f537569ae43114d543705df68a1feade3",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 158,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 10, \"verdict\": \"true_positive\", \"confidence\": 0.6, \"rule_id\": \"java-jdbc-prepare-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"jobId (method parameter)\", \"sink\": \"connection.prepareStatement(\\\"DELETE FROM jobs WHERE job_id = ?\\\")\", \"data_flow\": \"\", \"snippet\": \"PreparedStatement stmt = connection.prepareStatement(\\\"DELETE FROM jobs WHERE job_id = ?\\\");\", \"verdict_reason\": \"jobId comes from the caller; validate the caller before deleting.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
-}

@@ -1,8 +1,0 @@
-{
-  "input_tokens": 810,
-  "key": "28f50da94e215de1da031ba1c1fb6e927114a7b6aaa7d9d549788395d681450c",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 60,
-  "step": "group_confirm_triage_findings",
-  "text": "{\"decisions\": [{\"group_index\": 0, \"member\": \"m1\", \"verdict\": \"true_positive\", \"confidence\": 0.9, \"verdict_reason\": \"The String name is concatenated into a quoted SQL literal.\", \"ai_fix\": \"Bind the name with a PreparedStatement parameter.\"}]}"
-}

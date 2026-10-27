@@ -1,0 +1,8 @@
+{
+  "input_tokens": 810,
+  "key": "f9c9230f4b0caf14c947abeefa335a627056f586d018ee91c192d5d62ba12ec3",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 49,
+  "step": "group_confirm_triage_findings",
+  "text": "{\"decisions\": [{\"group_index\": 0, \"member\": \"m1\", \"verdict\": \"true_positive\", \"confidence\": 0.7, \"verdict_reason\": \"The stack trace is discarded.\", \"ai_fix\": \"Pass the exception as an argument.\"}]}"
+}

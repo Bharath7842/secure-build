@@ -1,0 +1,8 @@
+{
+  "input_tokens": 820,
+  "key": "f7f90b866a825ee03d9b7077e581e9db6ffb0c8596153a0379def4cf1b979e3e",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 68,
+  "step": "group_confirm_triage_findings",
+  "text": "{\"decisions\": [{\"group_index\": 0, \"member\": \"m1\", \"verdict\": \"true_positive\", \"confidence\": 0.8, \"verdict_reason\": \"The caller's owner is formatted into the wrapper's DELETE statement.\", \"ai_fix\": \"Bind the owner inside the wrapper instead of formatting it into the SQL.\"}]}"
+}
