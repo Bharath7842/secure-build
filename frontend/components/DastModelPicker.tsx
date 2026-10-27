@@ -15,6 +15,7 @@ const TASKS: { task: DastModelTask; label: string }[] = [
   { task: "fingerprint", label: "Fingerprinting" },
   { task: "crawl_plan", label: "Crawl planning" },
   { task: "login_selectors", label: "Login selectors" },
+  { task: "normalize_endpoints", label: "API list cleanup" },
 ];
 
 export const PROVIDER_LABELS: Record<DastModelProvider, string> = {

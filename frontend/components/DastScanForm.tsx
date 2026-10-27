@@ -57,6 +57,8 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   return <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">{children}</p>;
 }
 
+const MAX_EXTRA_ENDPOINTS_CHARS = 65536;
+
 function describePreset(preset: Record<string, number> | undefined): string {
   if (!preset) return "";
   return `up to ${preset.max_targets} endpoints, ${preset.max_tests_per_target} tests each, ${preset.max_pages} pages, depth ${preset.max_depth}`;
@@ -74,6 +76,7 @@ export default function DastScanForm({ project, onSubmit }: DastScanFormProps) {
   const [agentMode, setAgentMode] = useState<boolean | null>(null);
   const [agentTurns, setAgentTurns] = useState("");
   const [hypothesisTurns, setHypothesisTurns] = useState("");
+  const [extraEndpoints, setExtraEndpoints] = useState("");
 
   const [identities, setIdentities] = useState<IdentityDraft[]>(() => [newIdentity(PRACTICE_IDENTITY)]);
   const [rulePacks, setRulePacks] = useState<string[] | null>(null);
@@ -117,6 +120,9 @@ export default function DastScanForm({ project, onSubmit }: DastScanFormProps) {
         return setError(`${label} must be a whole number between 1 and ${limit}.`);
       }
     }
+    if (extraEndpoints.length > MAX_EXTRA_ENDPOINTS_CHARS) {
+      return setError(`The API list is longer than ${MAX_EXTRA_ENDPOINTS_CHARS.toLocaleString()} characters. Remove some entries.`);
+    }
     setError(null);
     setSubmitting(true);
     try {
@@ -136,6 +142,7 @@ export default function DastScanForm({ project, onSubmit }: DastScanFormProps) {
           ...(agentTurns ? { max_agent_turns: Number(agentTurns) } : {}),
           ...(hypothesisTurns ? { max_turns_per_hypothesis: Number(hypothesisTurns) } : {}),
           headless,
+          ...(extraEndpoints.trim() ? { extra_endpoints: extraEndpoints } : {}),
           ...(identities.length > 0 ? { identities: identities.map(toIdentityInput) } : {}),
           ...(rulePacks ? { rule_packs: rulePacks } : {}),
           ...(Object.keys(modelRouting).length > 0 ? { model_routing: modelRouting } : {}),
@@ -266,6 +273,37 @@ export default function DastScanForm({ project, onSubmit }: DastScanFormProps) {
 
         <p className="text-xs text-[var(--muted)]">
           Stored-XSS form markers are submitted automatically for the approved disposable practice target, then checked again on crawled pages.
+        </p>
+      </section>
+
+      <section aria-labelledby={`${uid}-apis`} className="space-y-3">
+        <SectionLabel>
+          <span id={`${uid}-apis`}>Known API endpoints (optional)</span>
+        </SectionLabel>
+        <label htmlFor="dast-extra-endpoints" className="block text-sm font-medium text-[var(--ink)]">
+          APIs the crawl may miss
+        </label>
+        <textarea
+          id="dast-extra-endpoints"
+          rows={8}
+          value={extraEndpoints}
+          onChange={(e) => setExtraEndpoints(e.target.value)}
+          spellCheck={false}
+          autoComplete="off"
+          autoCorrect="off"
+          aria-describedby="dast-extra-endpoints-hint"
+          placeholder={"GET /api/users/1\nPOST /api/orders {\"qty\": 1}\nhttp://localhost:3000/api/admin/stats\ncurl -X DELETE http://localhost:3000/api/items/9"}
+          className="agent-focus-ring w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-xs text-[var(--ink)]"
+        />
+        <p id="dast-extra-endpoints-hint" className="text-xs text-[var(--muted)]">
+          One per line, in any form: <code>METHOD /path</code>, a full URL on this target, a curl command, or an OpenAPI/Swagger document. Messy lines are tidied up and
+          anything the scan already found is merged, not repeated. Do not paste tokens, cookies or Authorization headers (they are refused); add the login under Identities.
+          Because this scan treats the target as disposable, POST, PUT, PATCH and DELETE entries are tested too.
+          {extraEndpoints.trim() && (
+            <span className="ml-1">
+              {extraEndpoints.split("\n").filter((l) => l.trim()).length} line(s), {extraEndpoints.length.toLocaleString()} / {MAX_EXTRA_ENDPOINTS_CHARS.toLocaleString()} characters.
+            </span>
+          )}
         </p>
       </section>
 

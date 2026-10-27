@@ -127,7 +127,7 @@ def test_existing_dast_and_bedrock_settings_keep_working(clean_env):
 def test_routing_covers_all_seven_tasks(clean_env):
     routing = make_settings().dast_model_routing
     assert set(routing) == set(DAST_MODEL_TASKS) == {
-        "fingerprint", "crawl_plan", "login_selectors", "plan", "construct", "rule", "narrate",
+        "fingerprint", "crawl_plan", "login_selectors", "normalize_endpoints", "plan", "construct", "rule", "narrate",
     }
     # Plain structure EPIC-15 can persist: task -> (provider, model).
     assert all(provider == "ollama" and model == "gpt-oss:20b" for provider, model in routing.values())

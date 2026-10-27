@@ -248,6 +248,12 @@ def discover(state: GraphState) -> GraphState:
         if ingested == 0:
             print("    No API description could be read.")
 
+    if (runtime.effective.get("user_endpoints") or {}) and not runtime.cancelled():
+        try:
+            ingest_schemas.ingest_user_endpoints(state)
+        except Exception as exc:  # noqa: BLE001 - a bad list must never end the scan
+            print(f"    Your API list could not be added: {type(exc).__name__}.")
+
     diff = compare_observed_vs_documented(inventory, schema_found=ingested > 0)
     state["inventory_diff"] = diff.to_dict()
     if diff.compared:

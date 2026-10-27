@@ -287,6 +287,9 @@ class DastInput(BaseModel):
     model_routing: dict[str, DastModelRoute] | None = None  # task -> provider/model for this scan
     # A published API description to ingest even when the fingerprint finds none.
     schema_url: str = ""
+    # APIs the operator pastes because the crawl may not find them: `METHOD /path` lines, URLs, curl
+    # commands or an OpenAPI description. Read once at scan setup; the text itself is never stored.
+    extra_endpoints: str = Field(default="", max_length=65536)
     # Explicit acknowledgement that the caller is allowed to test the target.
     authorized: bool = False
 

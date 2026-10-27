@@ -115,6 +115,7 @@ def merge_endpoints(a: Endpoint, b: Endpoint) -> Endpoint:
         # The schema side is the only one that can ever know this; prefer it over an
         # observed-only sighting's unavoidable None.
         security_declared=schema_first.security_declared if schema_first.security_declared is not None else other.security_declared,
+        user_supplied=a.user_supplied or b.user_supplied,
     )
 
 
@@ -288,6 +289,7 @@ def endpoint_to_dict(e: Endpoint) -> dict[str, Any]:
         "body_schema": dict(e.body_schema) if e.body_schema else None,
         "body_sample": e.body_sample,
         "note": e.note,
+        "user_supplied": e.user_supplied,
     }
 
 
@@ -316,5 +318,6 @@ def compare_observed_vs_documented(inventory: "Inventory", *, schema_found: bool
     if not schema_found:
         return InventoryDiff(False, reason="no API schema was found, so observed endpoints cannot be compared with documentation")
     observed_only = [e for e in inventory.only(EndpointSource.OBSERVED) if e.kind == "api"]
-    schema_only = inventory.only(EndpointSource.SCHEMA)
+    # An endpoint the operator pasted is not a statement by the schema, so it is not "documented but never seen".
+    schema_only = [e for e in inventory.only(EndpointSource.SCHEMA) if not e.user_supplied]
     return InventoryDiff(True, tuple(observed_only), tuple(schema_only))

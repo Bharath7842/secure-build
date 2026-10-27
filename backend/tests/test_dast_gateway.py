@@ -22,7 +22,7 @@ from app.services.model_gateway.gateway import ModelGatewayImpl
 
 pytestmark = pytest.mark.unit
 
-ROUTING = {t: ("ollama", "gpt-oss:20b") for t in ("fingerprint", "crawl_plan", "login_selectors", "plan", "construct", "rule", "narrate")}
+ROUTING = {t: ("ollama", "gpt-oss:20b") for t in ("fingerprint", "crawl_plan", "login_selectors", "normalize_endpoints", "plan", "construct", "rule", "narrate")}
 SCHEMA = {"type": "object", "required": ["verdict"], "properties": {"verdict": {"type": "string", "enum": ["PASS", "FAIL", "INCONCLUSIVE"]}}}
 
 
@@ -453,7 +453,7 @@ def test_redact_text_covers_values_and_key_shapes():
 
 # ---- prompts (DAST-02-060) --------------------------------------------------------------------
 
-TASKS = ("fingerprint", "crawl_plan", "login_selectors", "plan", "construct", "rule", "narrate")
+TASKS = ("fingerprint", "crawl_plan", "login_selectors", "normalize_endpoints", "plan", "construct", "rule", "narrate")
 
 
 def test_every_task_loads_and_carries_the_shared_preamble():

@@ -128,6 +128,23 @@ including "only `app/services/model_gateway/` imports a model SDK".
   counters. The loop excludes authorization, OAST, passive, opt-in, assist-only and browser-only checks
   (`dast-xss-dom`, `dast-xss-stored`): those signals are in the detector registry so a check may name them,
   and excluded from the HTTP loop because a response pair cannot raise them.
+- **Pasted APIs** (`domain/endpoint_input.py`, `ingest_schemas.ingest_user_endpoints`) — the crawl cannot find every
+  endpoint, so the scan form takes a free-text list (`DastInput.extra_endpoints`: `METHOD /path` lines, bare
+  paths, URLs, curl, markdown bullets or an OpenAPI/Swagger document). `dast_scan_setup._user_endpoints` reads
+  it once at start with the pure parser; the **text is never stored**, only the validated records
+  (`dast_effective["user_endpoints"]`: endpoints, unreadable lines, off-host count) and counts in `dast_input`.
+  A credential anywhere (Authorization/Cookie/API-key header, bearer/JWT/cloud-key shapes, `curl -u/-b`) refuses
+  the paste with a 422 naming the line; values of credential-named query/body fields are blanked. Request
+  headers are read only to find credentials, none are replayed. URLs must be on the target host (others are
+  dropped and counted); `state_changing` is always derived from the method. In `discover`, after crawl and
+  schema ingestion and before the inventory diff, entries go through `Inventory.add` as documented (schema-side)
+  sightings flagged `user_supplied`, so they merge by method + path template with what the crawl found
+  (`/users/7` joins `/users/{id}`), are tested like any endpoint (safe mode still skips state-changing ones), and
+  never raise a bogus "undocumented endpoint" finding. Lines the parser cannot read go to **one** optional
+  `normalize_endpoints` model call that only reformats; every suggestion passes `build_endpoint` (scope, method,
+  credential and shape checks) like pasted text. A failed call leaves the readable lines and the scan intact.
+  Known limit: an endpoint the crawl saw but the schema did not, and the operator also pasted, is merged as
+  "both" and so no longer reported as undocumented.
 - **`nodes/plan_tests.py`** + **`domain/agent.py`** — optional `plan` task between passive and active
   analysis. Agent mode defaults off (`agent_mode`, `max_agent_turns=60`,
   `max_turns_per_hypothesis=4`, per scan and global settings). Only known endpoint keys and enabled
@@ -229,9 +246,9 @@ the API tests send through the guarded executor; browser traffic goes through `b
 
 ## Model task registry and agent limits
 
-The seven routed tasks are `fingerprint`, `crawl_plan`, `login_selectors`, `plan`, `construct`,
-`rule` and `narrate`. Every task needs its prompt under `app/data/dast/prompts/`; the gateway loads
-all seven on startup. `DAST_MODEL_PLAN_PROVIDER` / `DAST_MODEL_PLAN_MODEL` configure the planner.
+The eight routed tasks are `fingerprint`, `crawl_plan`, `login_selectors`, `normalize_endpoints`, `plan`,
+`construct`, `rule` and `narrate`. Every task needs its prompt under `app/data/dast/prompts/` (a gitignored
+tree: new prompt files need `git add -f`); the gateway loads all eight on startup. `DAST_MODEL_PLAN_PROVIDER` / `DAST_MODEL_PLAN_MODEL` configure the planner.
 `DAST_AGENT_MODE_DEFAULT`, `DAST_MAX_AGENT_TURNS` and `DAST_MAX_TURNS_PER_HYPOTHESIS` supply global
 baselines; the settings API and scan request can override them for new scans.
 

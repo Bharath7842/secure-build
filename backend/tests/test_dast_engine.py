@@ -677,3 +677,82 @@ def test_the_discovery_summary_has_everything_the_next_stages_read():
     assert {"fingerprint", "preflight", "inventory", "inventory_count", "inventory_diff", "identities", "api_calls", "pages"} <= set(discovery)
     json.dumps(discovery)  # JSON-safe
     assert "tok-admin" not in json.dumps(discovery)
+
+
+# ---- operator-pasted APIs (the crawl cannot find every endpoint) -------------------------------
+
+
+def _user_block(text: str, **extra) -> dict:
+    from app.dast.domain.endpoint_input import parse_endpoint_text
+
+    result = parse_endpoint_text(text, base_url=BASE)
+    return {"user_endpoints": {"endpoints": [e.to_dict() for e in result.endpoints], "unparsed": result.unparsed, "dropped_off_scope": result.dropped_off_scope, **extra}}
+
+
+def test_a_pasted_api_the_crawl_cannot_see_is_inventoried_tested_and_labelled(capsys):
+    target = api_target(openapi=False)
+    target.add_json("/api/hidden", {"ok": True})
+    gateway = FakeModelGateway(strict=False)
+    gateway.script("construct", {"tests": [{"check_id": "dast-sqli", "parameter": "id", "location": "query", "input": "1'", "expected_signal": "sql error"}]}, repeat=5)
+    harness = Harness(target, identities(), gateway=gateway, rule_set=default_rule_set(), request=_user_block("GET /api/hidden?id=3"))
+    discovery = harness.run(run_analysis=True)
+    (entry,) = [e for e in discovery["inventory"] if e["path_template"] == "/api/hidden"]
+    assert entry["user_supplied"] is True and entry["kind"] == "api"
+    assert f"GET {BASE}/api/hidden" in {a["label"] for a in discovery["api_analysis"]}
+    assert target.requests_to("/api/hidden")
+    assert "Your API list: 1 new endpoint(s)" in capsys.readouterr().out
+
+
+def test_a_pasted_api_the_scan_already_found_is_merged_not_duplicated(capsys):
+    discovery = Harness(api_target(), identities(), request=_user_block("GET /api/items/5\nGET /api/items")).run()
+    items = [e for e in discovery["inventory"] if e["path_template"] in ("/api/items", "/api/items/{id}") and e["method"] == "GET"]
+    assert len(items) == 2 and all(e["user_supplied"] and e["source"] == "schema" for e in items)
+    assert "0 new endpoint(s), 2 already found" in capsys.readouterr().out
+    assert discovery["inventory_diff"]["undocumented"] == []
+
+
+def test_a_pasted_state_changing_api_is_listed_but_never_sent_in_safe_mode():
+    target = api_target(openapi=False)
+    target.add_json("/api/orders", {"created": True}, method="POST")
+    target.add_json("/api/orders", {"orders": []})
+    gateway = FakeModelGateway(strict=False)
+    gateway.script("construct", {"tests": [{"check_id": "dast-sqli", "parameter": "id", "location": "query", "input": "1'", "expected_signal": "sql error"}]}, repeat=5)
+    discovery = Harness(target, identities(), gateway=gateway, rule_set=default_rule_set(), request=_user_block('POST /api/orders {"qty": 1}')).run(run_analysis=True)
+    assert any(e["method"] == "POST" and e["state_changing"] and e["user_supplied"] for e in discovery["inventory"])
+    assert {r.method for r in target.requests_to("/api/orders")} == set()
+    assert f"POST {BASE}/api/orders" not in {a["label"] for a in discovery["api_analysis"]}
+
+
+def test_unreadable_lines_are_reformatted_by_the_model_and_every_suggestion_is_rechecked(capsys):
+    target = api_target(openapi=False)
+    target.add_json("/api/cart", {"items": []})
+    gateway = FakeModelGateway(strict=False)
+    gateway.script("normalize_endpoints", {"endpoints": [
+        {"method": "get", "path": "/api/cart", "query": {"user": "7"}},
+        {"method": "GET", "path": "http://evil.test/api/steal"},  # off the target host
+        {"method": "TRACE", "path": "/api/trace"},  # not a supported method
+        {"method": "GET", "path": "/api/x", "query": {"note": "Bearer abcdefghijklmnop"}},  # a credential
+        "not even an object",
+    ]})
+    discovery = Harness(target, identities(), gateway=gateway, request=_user_block("the cart thing: api/cart for user 7")).run()
+    paths = {e["path_template"] for e in discovery["inventory"] if e["user_supplied"]}
+    assert paths == {"/api/cart"}
+    assert "1 recovered from 1 unreadable line(s)" in capsys.readouterr().out
+    assert not target.requests_to("/api/steal") and not target.requests_to("/api/trace")
+
+
+@pytest.mark.parametrize("reply", [None, {"endpoints": "nope"}, {"unexpected": []}])
+def test_a_failed_or_unusable_cleanup_leaves_the_scan_and_the_readable_lines_intact(reply, capsys):
+    gateway = FakeModelGateway(strict=False)
+    if reply is not None:
+        gateway.script("normalize_endpoints", reply)
+    discovery = Harness(api_target(openapi=False), identities(), gateway=gateway, request=_user_block("GET /api/ok\nsome prose nobody can read")).run()
+    assert discovery["connection_ok"] is True
+    assert [e["path_template"] for e in discovery["inventory"] if e["user_supplied"]] == ["/api/ok"]
+
+
+def test_no_pasted_list_changes_nothing():
+    plain = Harness(api_target(), identities()).run()
+    empty = Harness(api_target(), identities(), request={"user_endpoints": {}}).run()
+    assert [e for e in plain["inventory"]] == [e for e in empty["inventory"]]
+    assert not any(e["user_supplied"] for e in plain["inventory"])

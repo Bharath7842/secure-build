@@ -11,6 +11,7 @@ const TASK_LABEL: Record<DastModelTask, string> = {
   fingerprint: "Fingerprinting the target",
   crawl_plan: "Planning the crawl",
   login_selectors: "Finding login fields",
+  normalize_endpoints: "Cleaning up your API list",
   plan: "Planning adaptive tests",
   construct: "Constructing tests",
   rule: "Ruling on test results",

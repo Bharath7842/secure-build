@@ -184,7 +184,7 @@ def test_a_hosted_model_is_accepted_when_its_key_is_configured(client, project_i
 
 
 def test_dast_scan_row_records_bedrock_when_every_task_uses_it(client, project_id):
-    routing = {task: {"provider": "bedrock", "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0"} for task in ("fingerprint", "crawl_plan", "login_selectors", "plan", "construct", "rule", "narrate")}
+    routing = {task: {"provider": "bedrock", "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0"} for task in ("fingerprint", "crawl_plan", "login_selectors", "normalize_endpoints", "plan", "construct", "rule", "narrate")}
     r = post(client, project_id, model_routing=routing)
     assert r.status_code == 202, r.text
     with app_db.SessionLocal() as db:
@@ -240,7 +240,7 @@ def test_the_snapshot_holds_what_the_scan_ran_with_and_no_secret(client, project
     assert eff["safe_mode"] is False and eff["method_policy"] == "opt_in_mutating" and eff["allow_state_changing"] is True
     assert eff["second_identity"] is True and eff["rule_packs"] == ["owasp-api-top10-2023", "owasp-web-top10"]
     assert eff["rule_checks_enabled"] > 0 and eff["catalog_version"] and set(eff["model_routing"]) == {
-        "fingerprint", "crawl_plan", "login_selectors", "plan", "construct", "rule", "narrate"}
+        "fingerprint", "crawl_plan", "login_selectors", "normalize_endpoints", "plan", "construct", "rule", "narrate"}
     blob = json.dumps(eff)
     assert not any(secret in blob for secret in (PASSWORD, TOKEN, COOKIE)) and "password" not in blob.lower()
     safe = stored(post(client, project_id).json()["scan_id"])["dast_effective"]
@@ -369,3 +369,62 @@ def test_a_restart_fails_interrupted_dast_scans_without_resuming_them(client, pr
     assert status(with_secret)["status"] == "failed" and "credentials were lost" in status(with_secret)["message"]
     assert status(without)["status"] == "failed" and "interrupted" in status(without)["message"]
     assert status(done)["status"] == "success" and scan_runner.recover_interrupted_dast_scans() == 0
+
+
+# ---- operator-pasted APIs ---------------------------------------------------------------------
+
+PASTED = f"""GET /api/users/1
+POST /api/orders {{"qty": 1, "password": "{PASSWORD}"}}
+curl -X PUT '{URL}/api/items/4?api_key={TOKEN}' -d 'name=a'
+GET http://other.example/api/steal
+the cart page, I think /api/cart
+"""
+
+
+def test_a_pasted_api_list_is_stored_sanitized_and_the_text_is_not(client, project_id):
+    r = post(client, project_id, extra_endpoints=PASTED)
+    assert r.status_code == 202, r.text
+    meta = stored(r.json()["scan_id"])
+    block = meta["dast_effective"]["user_endpoints"]
+    assert [(e["method"], e["path"]) for e in block["endpoints"]] == [("GET", "/api/users/1"), ("POST", "/api/orders"), ("PUT", "/api/items/4")]
+    assert block["dropped_off_scope"] == 1 and len(block["unparsed"]) == 1
+    assert meta["dast_input"]["extra_endpoints"] == {"parsed": 3, "unparsed": 1, "dropped_off_scope": 1, "warnings": []}
+    blob = json.dumps(meta)
+    assert PASSWORD not in blob and TOKEN not in blob and "extra_endpoints\": \"" not in blob and "other.example" not in blob
+
+
+def test_no_pasted_list_leaves_the_stored_input_as_it_was(client, project_id):
+    meta = stored(post(client, project_id).json()["scan_id"])
+    assert meta["dast_effective"]["user_endpoints"] == {} and meta["dast_input"]["extra_endpoints"] is None
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["curl -H 'Authorization: Bearer abcdefghijklmnop' http://localhost:3000/api/x", "Cookie: sid=abc", "GET /api/x?token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig"],
+)
+def test_a_pasted_credential_is_refused_before_a_scan_exists(client, project_id, line):
+    before = len(client.get("/scans", headers=HDR).json())
+    r = post(client, project_id, extra_endpoints="GET /api/ok\n" + line)
+    assert r.status_code == 422 and "line 2" in r.text and "Identities" in r.text
+    assert len(client.get("/scans", headers=HDR).json()) == before
+    assert "abcdefghijklmnop" not in r.text and "eyJhbGci" not in r.text
+
+
+def test_a_pasted_openapi_description_becomes_endpoints(client, project_id):
+    spec = {"openapi": "3.0.0", "paths": {"/v2/things/{id}": {"get": {"parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}]}}, "/v2/things": {"post": {}}}}
+    r = post(client, project_id, extra_endpoints=json.dumps(spec))
+    assert r.status_code == 202, r.text
+    block = stored(r.json()["scan_id"])["dast_effective"]["user_endpoints"]
+    assert {(e["method"], e["path"], e["origin"]) for e in block["endpoints"]} == {("GET", "/v2/things/{id}", "openapi"), ("POST", "/v2/things", "openapi")}
+
+
+def test_a_pasted_text_that_is_not_an_api_description_is_refused(client, project_id):
+    r = post(client, project_id, extra_endpoints="openapi: 3.0.0\npaths: [unterminated")
+    assert r.status_code == 422 and "could not be read" in r.text
+
+
+def test_the_pasted_list_has_a_size_limit(client, project_id):
+    assert post(client, project_id, extra_endpoints="GET /a\n" + "x" * 70000).status_code == 422
+
+
+# ---- scan again: the saved, secret-free request ---------------------------------------------------

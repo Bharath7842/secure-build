@@ -95,6 +95,7 @@ def build_effective_settings(
         "oast_configured": oast_configured,
         "headless": bool(request.get("headless", True)),
         "schema_url": request.get("schema_url") or "",
+        "user_endpoints": request.get("user_endpoints") or {},
         "agent_mode": bool(request["agent_mode"]) if request.get("agent_mode") is not None else bool(base.get("agent_mode", False)),
         "max_agent_turns": int(request.get("max_agent_turns") or base.get("max_agent_turns") or 60),
         "max_turns_per_hypothesis": int(request.get("max_turns_per_hypothesis") or base.get("max_turns_per_hypothesis") or 4),

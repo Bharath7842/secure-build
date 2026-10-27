@@ -15,6 +15,7 @@ Every problem is a `DastSetupError` carrying an HTTP status and a message fit fo
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.config import DAST_MODEL_TASKS, Settings
 from app.config import settings as app_settings
+from app.dast.domain.endpoint_input import MAX_ENDPOINTS, UserEndpoint, parse_endpoint_text
 from app.dast.domain.identities import (
     AuthMethod,
     IdentityError,
@@ -29,7 +31,11 @@ from app.dast.domain.identities import (
     build_identities,
     has_second_identity,
 )
+from app.dast.domain.entities import Location
+from app.dast.domain.fingerprint import classify_schema_document
+from app.dast.domain.openapi import endpoints_from_openapi
 from app.dast.domain.presets import PresetError, build_effective_settings
+from app.dast.domain.redaction import is_sensitive_name
 from app.dast.domain.ruleset import RuleConfigError, ScanInputs
 from app.models import DAST_SETTINGS_SNAPSHOT_KEY, Project
 from app.schemas import DastInput
@@ -113,7 +119,45 @@ def _credentials(dast: DastInput, specs: list[IdentitySpec]) -> dict[str, dict[s
     return out
 
 
-def _public_input(dast: DastInput, specs: list[IdentitySpec], credentials: dict[str, dict[str, str]], method_policy: str) -> dict[str, Any]:
+def _user_endpoints(dast: DastInput) -> dict[str, Any]:
+    """Read the pasted API list into the sanitized block the engine adds to its inventory. A paste
+    that holds a credential is refused (credentials belong in identities, which are never stored);
+    otherwise unreadable lines are kept for the engine's optional model cleanup. Empty when there is
+    no paste."""
+    text = (dast.extra_endpoints or "").strip()
+    if not text:
+        return {}
+    result = parse_endpoint_text(text, base_url=dast.target_url)
+    if result.rejected:
+        shown = "; ".join(f"line {number}: {why}" for number, why in result.rejected[:3])
+        more = f" (and {len(result.rejected) - 3} more)" if len(result.rejected) > 3 else ""
+        raise DastSetupError(f"The pasted API list was not accepted. {shown}{more}", 422)
+    endpoints = list(result.endpoints)
+    warnings = list(result.warnings)
+    if result.openapi_text is not None:
+        from app.dast.nodes.ingest_schemas import parse_schema_text  # the one bounded, alias-capped reader
+
+        document, problem = parse_schema_text(result.openapi_text)
+        if problem or classify_schema_document(json.dumps(document) if isinstance(document, (dict, list)) else "") != "openapi":
+            raise DastSetupError(f"The pasted API description could not be read: {problem or 'it is not an OpenAPI or Swagger document'}.", 422)
+        parsed = endpoints_from_openapi(document, base_url=dast.target_url, max_endpoints=MAX_ENDPOINTS)
+        warnings.extend(parsed.warnings[:5])
+        for endpoint in parsed.endpoints:
+            keep = tuple(
+                p for p in endpoint.parameters
+                if p.location in (Location.QUERY, Location.PATH, Location.BODY, Location.HEADER) and not is_sensitive_name(p.name)
+            )
+            endpoints.append(UserEndpoint(endpoint.method, endpoint.path_template, parameters=keep, body_schema=endpoint.body_schema, origin="openapi"))
+    return {
+        "endpoints": [e.to_dict() for e in endpoints[:MAX_ENDPOINTS]],
+        "unparsed": result.unparsed,
+        "dropped_off_scope": result.dropped_off_scope,
+        "warnings": warnings[:10],
+        "truncated": result.truncated or len(endpoints) > MAX_ENDPOINTS,
+    }
+
+
+def _public_input(dast: DastInput, specs: list[IdentitySpec], credentials: dict[str, dict[str, str]], method_policy: str, user_endpoints: dict[str, Any] | None = None) -> dict[str, Any]:
     """The stored, secret-free copy of the request. Keeps the legacy keys other readers use."""
     legacy_form = not dast.identities and bool(dast.login_url)
     public_identities = []
@@ -148,6 +192,15 @@ def _public_input(dast: DastInput, specs: list[IdentitySpec], credentials: dict[
         "browser_marker_posts": dast.browser_marker_posts,
         "rule_packs": dast.rule_packs,
         "schema_url": dast.schema_url,
+        # This scan's own per-task overrides (not the merged routing), so a rescan can reuse them.
+        "model_routing": {task: route.model_dump() for task, route in (dast.model_routing or {}).items()},
+        # Counts only: the pasted text is not kept, and the readable endpoints live in `dast_effective`.
+        "extra_endpoints": {
+            "parsed": len((user_endpoints or {}).get("endpoints") or []),
+            "unparsed": len((user_endpoints or {}).get("unparsed") or []),
+            "dropped_off_scope": (user_endpoints or {}).get("dropped_off_scope", 0),
+            "warnings": list((user_endpoints or {}).get("warnings") or []),
+        } if user_endpoints else None,
     }
 
 
@@ -197,6 +250,7 @@ def prepare_dast_scan(db: Session, project: Project, dast: DastInput, cfg: Setti
         )
 
     credentials = _credentials(dast, specs)
+    user_endpoints = _user_endpoints(dast)
     routing, routing_problems = _routing(dast, cfg)
     if routing_problems:
         raise DastSetupError("The model selected for this scan cannot be used: " + "; ".join(routing_problems), 422)
@@ -238,6 +292,7 @@ def prepare_dast_scan(db: Session, project: Project, dast: DastInput, cfg: Setti
         "rate_limit_per_sec": dast.rate_limit_per_sec,
         "headless": dast.headless,
         "schema_url": dast.schema_url,
+        "user_endpoints": user_endpoints,
         "agent_mode": dast.agent_mode,
         "max_agent_turns": dast.max_agent_turns,
         "max_turns_per_hypothesis": dast.max_turns_per_hypothesis,
@@ -259,7 +314,7 @@ def prepare_dast_scan(db: Session, project: Project, dast: DastInput, cfg: Setti
 
     return PreparedDastScan(
         identities=specs,
-        dast_input=_public_input(dast, specs, credentials, method_policy),
+        dast_input=_public_input(dast, specs, credentials, method_policy, user_endpoints),
         effective=effective,
         rule_set=resolved.snapshot,
         skipped_degraded=resolved.skipped_degraded,

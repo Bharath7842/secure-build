@@ -174,6 +174,7 @@ export default function DastDiscoveryPanel({ discovery, onClose }: { discovery: 
                   <span className={`shrink-0 rounded border px-1.5 py-0.5 ${entry.source === "both" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : entry.source === "schema" ? "border-blue-200 bg-blue-50 text-blue-700" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
                     {SOURCE_LABEL[entry.source]}
                   </span>
+                  {entry.user_supplied && <span className="shrink-0 rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-violet-700">you added</span>}
                   {entry.state_changing && <span className="shrink-0 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-amber-800">changes state</span>}
                   {entry.status_code != null && <span className="shrink-0 text-[var(--muted)]">{entry.status_code}</span>}
                   {entry.identities.length > 0 && <span className="shrink-0 text-[var(--muted)]">{entry.identities.map((id) => labelById.get(id) ?? id).join(", ")}</span>}

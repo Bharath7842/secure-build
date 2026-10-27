@@ -1052,6 +1052,8 @@ export interface DastScanOptions {
   /** Per-task model for this scan; omitted = the configured routing. */
   model_routing?: Partial<Record<DastModelTask, DastModelChoice>>;
   schema_url?: string;
+  /** APIs pasted by the operator (METHOD /path lines, URLs, curl, OpenAPI). Read at scan start; the text is not stored. */
+  extra_endpoints?: string;
 }
 
 export interface DastSignal {
@@ -1283,6 +1285,8 @@ export interface DastInventoryEntry {
   identities: string[];
   parameters: { name: string; location: string; values: string[]; required: boolean; type: string }[];
   note: string;
+  /** Added from the operator's pasted API list (it may also have been found by the crawl). */
+  user_supplied?: boolean;
 }
 
 export interface DastInventoryDiff {
@@ -1520,6 +1524,7 @@ export type DastModelTask =
   | "fingerprint"
   | "crawl_plan"
   | "login_selectors"
+  | "normalize_endpoints"
   | "plan"
   | "construct"
   | "rule"

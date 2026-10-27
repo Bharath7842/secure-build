@@ -14,6 +14,7 @@ DAST_MODEL_TASKS: tuple[str, ...] = (
     "fingerprint",
     "crawl_plan",
     "login_selectors",
+    "normalize_endpoints",
     "plan",
     "construct",
     "rule",
@@ -156,6 +157,8 @@ class Settings(BaseSettings):
     dast_model_crawl_plan_model: str = ""
     dast_model_login_selectors_provider: DastModelProvider = "ollama"
     dast_model_login_selectors_model: str = ""
+    dast_model_normalize_endpoints_provider: DastModelProvider = "ollama"
+    dast_model_normalize_endpoints_model: str = ""
     dast_model_plan_provider: DastModelProvider = "ollama"
     dast_model_plan_model: str = ""
     dast_model_construct_provider: DastModelProvider = "ollama"

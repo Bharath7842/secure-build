@@ -63,7 +63,7 @@ def test_settings_read_the_environment_until_edited_and_say_they_apply_to_new_sc
     body = client.get("/dast/settings", headers=HDR).json()
     assert body["max_pages"] == settings.dast_max_pages and body["safe_mode_default"] is True and body["overridden"] == []
     assert body["oast_configured"] is False and body["applies_to"] == "new scans only"
-    assert [r["task"] for r in body["model_routing"]] == ["fingerprint", "crawl_plan", "login_selectors", "plan", "construct", "rule", "narrate"]
+    assert [r["task"] for r in body["model_routing"]] == ["fingerprint", "crawl_plan", "login_selectors", "normalize_endpoints", "plan", "construct", "rule", "narrate"]
     assert body["limits"]["max_pages"] == {"min": 1, "max": 1000, "label": "Maximum pages crawled"}
 
 
@@ -165,7 +165,7 @@ def test_settings_need_the_bearer_token(client):
 
 def test_routing_lists_all_tasks_and_a_change_reaches_the_next_scans_snapshot_only(client, project_id):
     routes = client.get("/dast/model-routing", headers=HDR).json()
-    assert {r["task"] for r in routes} == {"fingerprint", "crawl_plan", "login_selectors", "plan", "construct", "rule", "narrate"} and all(r["provider"] == "ollama" for r in routes)
+    assert {r["task"] for r in routes} == {"fingerprint", "crawl_plan", "login_selectors", "normalize_endpoints", "plan", "construct", "rule", "narrate"} and all(r["provider"] == "ollama" for r in routes)
     before = scan(client, project_id)
     put = client.put("/dast/model-routing", json=[{"task": "rule", "provider": "anthropic", "model": "claude-x"}], headers=HDR)
     assert put.status_code == 200

@@ -85,6 +85,7 @@ export function stepLabel(step: string): string {
     fingerprint: "Fingerprint & login classification",
     crawl_plan: "Crawl planning",
     login_selectors: "Login steps",
+    normalize_endpoints: "API list cleanup",
     plan: "Adaptive test planning",
     construct: "Test construction",
     rule: "Check rulings",

@@ -16,12 +16,15 @@ from typing import Any
 import yaml
 
 from ..domain.fingerprint import GRAPHQL_PATHS, classify_schema_document
+from ..domain.endpoint_input import MAX_UNPARSED, UserEndpoint, build_endpoint, to_inventory_endpoint
 from ..domain.entities import Location
 from ..domain.graphql import batch_accepted, batch_payload, endpoints_from_introspection, introspection_was_enabled
 from ..stage_findings import enabled_checks, one_row, publish
 from ..domain.introspection import INTROSPECTION_BODY
 from ..domain.openapi import endpoints_from_openapi
-from ..domain.policy import INTROSPECTION_INTENT
+from ..domain.policy import INTROSPECTION_INTENT, Scope
+from ..domain.redaction import redact_text
+from ..llm_utils import ask_json
 from ..sessions import SessionStore
 from ..state import GraphState
 from .fingerprint import SCHEMA_MAX_BYTES, origin_of
@@ -86,6 +89,76 @@ def ingest_openapi(state: GraphState) -> int:
         inventory.add(endpoint)
     print(f"    Ingested {len(result.endpoints)} operation(s) from the OpenAPI/Swagger description (version {result.version or 'unknown'}).")
     return len(result.endpoints)
+
+
+NORMALIZE_SCHEMA = {"type": "object", "required": ["endpoints"], "properties": {"endpoints": {"type": "array", "items": {"type": "object"}}}}
+MAX_KNOWN_PATHS = 100
+
+
+def _repair_lines(state: GraphState, lines: list[str]) -> list[UserEndpoint]:
+    """One model call that reformats pasted lines the parser could not read. The reply is only a
+    suggestion: every item passes `build_endpoint` (scope, method, credential and shape checks) like
+    pasted text, so the model cannot add an off-host URL, an unknown method or a credential."""
+    runtime, gateway = state["runtime"], state.get("gateway")
+    if gateway is None or runtime.cancelled():
+        return []
+    try:
+        scope = Scope.for_target(state["url"], "exact")
+    except ValueError:
+        return []
+    known = [f"{e.method} {e.path_template}" for e in state["inventory"].endpoints()][:MAX_KNOWN_PATHS]
+    facts = {"target_origin": origin_of(state["url"]), "lines": lines[:MAX_UNPARSED], "known_endpoints": known}
+    secrets = tuple(runtime.credentials.secrets()) if runtime.credentials is not None else ()
+    try:
+        reply = ask_json(gateway, "normalize_endpoints", redact_text(json.dumps(facts), secrets), NORMALIZE_SCHEMA, temperature=0)
+    except Exception as exc:  # noqa: BLE001 - the cleanup is optional; the scan carries on without it
+        print(f"    API list cleanup unavailable ({type(exc).__name__}); {len(lines)} line(s) were not used.")
+        return []
+    items = reply.get("endpoints") if isinstance(reply, dict) else None
+    if not isinstance(items, list):
+        print(f"    API list cleanup returned nothing usable; {len(lines)} line(s) were not used.")
+        return []
+    repaired: list[UserEndpoint] = []
+    for item in items[:MAX_UNPARSED]:
+        if not isinstance(item, dict):
+            continue
+        query = item.get("query")
+        pairs = [(str(k), str(v)) for k, v in query.items()] if isinstance(query, dict) else []
+        body = item.get("body")
+        body = json.dumps(body) if isinstance(body, (dict, list)) else (str(body) if body else None)
+        endpoint, _why = build_endpoint(str(item.get("method") or "GET"), str(item.get("path") or ""), body=body, query=pairs, scope=scope, origin="model")
+        if endpoint is not None:
+            repaired.append(endpoint)
+    return repaired
+
+
+def ingest_user_endpoints(state: GraphState) -> int:
+    """Add the endpoints the operator pasted. They go through `Inventory.add`, which merges by
+    method and path template, so one the crawl already found is enriched, not duplicated. Returns
+    the number of inventory entries that were new."""
+    runtime = state["runtime"]
+    block = runtime.effective.get("user_endpoints") or {}
+    entries = [u for u in (UserEndpoint.from_dict(d) for d in block.get("endpoints") or []) if u is not None]
+    unparsed = [str(line)[:300] for line in (block.get("unparsed") or [])][:MAX_UNPARSED]
+    if not entries and not unparsed:
+        return 0
+    repaired: list[UserEndpoint] = _repair_lines(state, unparsed) if unparsed else []
+    inventory, base = state["inventory"], origin_of(state["url"])
+    added = merged = 0
+    for user in [*entries, *repaired]:
+        endpoint = to_inventory_endpoint(user, base)
+        if inventory.get(endpoint.method, endpoint.path_template) is None:
+            added += 1
+        else:
+            merged += 1
+        inventory.add(endpoint)
+    print(
+        f"    Your API list: {added} new endpoint(s), {merged} already found by the scan"
+        + (f", {len(repaired)} recovered from {len(unparsed)} unreadable line(s)" if unparsed else "")
+        + (f", {block.get('dropped_off_scope')} off the target host skipped" if block.get("dropped_off_scope") else "")
+        + "."
+    )
+    return added
 
 
 def graphql_candidates(state: GraphState) -> list[str]:

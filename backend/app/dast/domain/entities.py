@@ -136,6 +136,9 @@ class Endpoint:
     # keeps the schema side's value when an observed and a schema sighting of the same endpoint
     # are merged.
     security_declared: bool | None = None
+    # The operator pasted this endpoint into the scan form (the crawler may not have found it).
+    # OR-merged when a crawled sighting of the same endpoint is folded in.
+    user_supplied: bool = False
 
     @property
     def label(self) -> str:
