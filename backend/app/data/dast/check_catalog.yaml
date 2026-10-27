@@ -1081,3 +1081,40 @@
   severity: MEDIUM
   mode: automated
   remediation_ref: rem-postmessage
+
+- id: dast-jwt-alg-none
+  title: JWT unsigned algorithm accepted
+  description: An unsigned JWT is accepted on an observed authenticated read while the anonymous control is denied.
+  owasp: ["A02:2021", "A07:2021"]
+  apisec: ["API2:2023"]
+  wstg: [WSTG-SESS-10]
+  cwe: [CWE-347]
+  location: header
+  signal: [jwt_alg_none_accepted]
+  severity: CRITICAL
+  mode: automated
+  remediation_ref: rem-jwt-alg-none
+- id: dast-jwt-weak-secret
+  title: JWT signed with a public tutorial secret
+  description: A signature matches one of five public documentation secrets and a modified signed token is accepted.
+  owasp: ["A02:2021", "A07:2021"]
+  apisec: ["API2:2023"]
+  wstg: [WSTG-SESS-10]
+  cwe: [CWE-326, CWE-347]
+  location: header
+  signal: [jwt_weak_secret_accepted]
+  severity: CRITICAL
+  mode: opt-in
+  remediation_ref: rem-jwt-weak-secret
+- id: dast-jwt-missing-claims
+  title: JWT accepted without required claims
+  description: A modified JWT without exp, iss or aud is accepted on an authenticated read; structural absence alone is not proof.
+  owasp: ["A07:2021"]
+  apisec: ["API2:2023"]
+  wstg: [WSTG-SESS-10]
+  cwe: [CWE-345]
+  location: header
+  signal: [jwt_missing_claims_accepted]
+  severity: MEDIUM
+  mode: automated
+  remediation_ref: rem-jwt-missing-claims

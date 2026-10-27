@@ -16,18 +16,19 @@ pairs run in a fixed order and cancellation is honoured between replays.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from .domain.active import Exchange, build_request, target_label
 from .domain.catalog import standards_for
+from .domain.agent import target_key
 from .domain.detectors import run_detectors
 from .domain.entities import CheckVerdict, Confidence, DetectorSignal, Endpoint, Evidence, Finding, FindingVerdict, Location, Severity
 from .domain.guardrail import apply_guardrail
 from .domain.identities import IdentitySpec
 from .domain.mapping import finding_to_row
 from .domain.authz import (
-    AUTHN, BFLA, BOLA, Boundary, ReplaySummary, RolePair, alternate_object_value, classify_crossing,
+    AUTHN, BFLA, BOLA, Boundary, ReplaySummary, RolePair, alternate_object_values, classify_crossing,
     endpoint_with_object_value, owner_candidates, role_pairs,
 )
 from .domain.redaction import redact_text
@@ -95,6 +96,8 @@ def run_replays(
     log: Callable[[str], None] = print,
     on_rows: Callable[[list[dict[str, Any]]], None] | None = None,
     spa: bool = False,
+    priority: Sequence[str] | None = None,
+    numeric_neighbors: bool = False,
 ) -> ReplayResult:
     result = ReplayResult(cap=max_replays)
     by_label = {s.label: s for s in specs}
@@ -117,11 +120,24 @@ def run_replays(
             return Exchange(error=f"request failed: {decision.error or 'no response'}", audit_seq=decision.audit_seq)
         return Exchange(response.status, response.length, response.body_excerpt or "", dict(response.headers or {}), response.elapsed_ms, audit_seq=decision.audit_seq)
 
-    for owner_label in owners:
+    candidates_by_owner = {
+        label: owner_candidates(endpoints, by_label[label].identity_id, allow_state_changing=allow_state_changing,
+                                anonymous_id=anonymous.identity_id if anonymous else None, spa=spa)
+        for label in owners
+    }
+    # No plan preserves the old owner/discovery order exactly. With a plan, schedule across owners
+    # as well: an early owner's low-priority tail must not consume a later owner's high-priority slot.
+    schedule = [(label, candidates_by_owner[label]) for label in owners]
+    if priority:
+        ranks = {key: index for index, key in reversed(list(enumerate(priority)))}
+        schedule = [(label, [endpoint]) for label in owners for endpoint in candidates_by_owner[label]]
+        schedule.sort(key=lambda work: ranks.get(target_key(work[1][0]), len(priority)))
+        schedule.extend((label, []) for label in owners if not candidates_by_owner[label])
+    all_stats = {}
+    for owner_label, candidates in schedule:
         owner = by_label[owner_label]
         actors = [p for p in pairs if p.owner == owner_label]
-        stats = {p.actor: {"replays": 0, "denied": 0, "crossed": 0, "owned": 0, "truncated": False, "session_lost": False} for p in actors}
-        candidates = owner_candidates(endpoints, owner.identity_id, allow_state_changing=allow_state_changing, anonymous_id=anonymous.identity_id if anonymous else None, spa=spa)
+        stats = all_stats.setdefault(owner_label, {p.actor: {"replays": 0, "denied": 0, "crossed": 0, "owned": 0, "truncated": False, "session_lost": False} for p in actors})
         log(f"    {owner_label!r}: {len(candidates)} request(s) to replay as {', '.join(repr(p.actor) for p in actors)}.")
         for endpoint in candidates:
             if cancelled():
@@ -173,14 +189,20 @@ def run_replays(
                 signals = run_detectors(owner_response.snapshot(), actor_response.snapshot(), None, ["auth_boundary_crossed"])
                 classified_endpoint = endpoint
                 if not signals or _looks_like_login_wall(owner_response, actor_response):
+                    before_swap = result.replays
                     swapped = _object_swap(
                         endpoint, endpoints, actor, store, executor, result, max_replays, actor_cache, cancelled,
+                        numeric_neighbors=numeric_neighbors, owner=owner,
                     )
+                    if numeric_neighbors:
+                        s["replays"] += result.replays - before_swap
+                        s["truncated"] = s["truncated"] or result.cap_reached
                     if swapped is None:
                         s["denied"] += 1
                         continue
                     signals, actor_response, classified_endpoint = swapped
-                    s["replays"] += 1
+                    if not numeric_neighbors:
+                        s["replays"] += 1
                 s["crossed"] += 1
                 boundary = classify_crossing(pair, owner, actor, classified_endpoint, privilege=privilege)
                 if boundary is None:
@@ -192,49 +214,61 @@ def run_replays(
                 result.rows.append(row)
                 if on_rows:
                     on_rows([row])
-        for pair in actors:
-            s = stats[pair.actor]
-            result.summaries.append(
-                ReplaySummary(pair.owner, pair.actor, s["replays"], s["denied"], s["crossed"], s["owned"], s["truncated"], s["session_lost"])
-            )
         if result.cap_reached:
             log(f"    The replay cap ({max_replays}) truncated the pairs for {owner_label!r}.")
         if result.cancelled:
             break
+    for pair in pairs:
+        if pair.owner in all_stats:
+            s = all_stats[pair.owner][pair.actor]
+            result.summaries.append(
+                ReplaySummary(pair.owner, pair.actor, s["replays"], s["denied"], s["crossed"], s["owned"], s["truncated"], s["session_lost"])
+            )
     # a pair that never ran (cancelled before its owner started) simply has no summary: its cell is untested
     return result
 
 
-def _object_swap(endpoint, pool, actor, store, executor, result: ReplayResult, max_replays: int, cache: dict, cancelled: Callable[[], bool]):
-    """One extra replay with another observed object id substituted. None when there is nothing to swap
-    or the swapped request was not accepted."""
-    if result.replays >= max_replays or cancelled():
-        return None
-    alternate = alternate_object_value(endpoint, pool)
-    if alternate is None:
-        return None
-    name, location, value = alternate
-    mutated = endpoint_with_object_value(endpoint, name, location, value)
-    request = build_request(mutated)
-    key = _key(actor.identity_id, request)
-    response = cache.get(key)
-    if response is None:
-        decision = store.send(
-            executor, actor.identity_id, request.method, request.url,
-            body=request.body, headers=dict(request.headers), check_id=AUTHZ_AUDIT_CHECK,
-        )
-        result.replays += 1
-        if not decision.allowed or decision.response is None:
-            response = Exchange(error="request not sent" if not decision.allowed else "request failed", audit_seq=decision.audit_seq)
-        else:
-            snap = decision.response
-            response = Exchange(snap.status, snap.length, snap.body_excerpt or "", dict(snap.headers or {}), snap.elapsed_ms, audit_seq=decision.audit_seq)
-        cache[key] = response
-    if not response.usable or not (200 <= (response.status or 0) < 300) or response.length == 0:
-        return None
-    if value not in (response.body or "") and response.length <= TRIVIAL_BODY_BYTES:
-        return None
-    return [DetectorSignal("auth_boundary_crossed", f"a different object id ({name}) was accepted")], response, mutated
+def _object_swap(endpoint, pool, actor, store, executor, result: ReplayResult, max_replays: int, cache: dict, cancelled: Callable[[], bool], *, numeric_neighbors=False, owner=None):
+    """Observed ids first; opt-in numeric neighbors are leads until ownership is corroborated."""
+    observed = alternate_object_values(endpoint, pool, numeric_neighbors=False)
+    for alternate in alternate_object_values(endpoint, pool, numeric_neighbors=numeric_neighbors):
+        if result.replays >= max_replays or cancelled():
+            result.cap_reached = result.cap_reached or (numeric_neighbors and result.replays >= max_replays)
+            return None
+        name, location, value = alternate
+        mutated = endpoint_with_object_value(endpoint, name, location, value)
+        request = build_request(mutated)
+        key = _key(actor.identity_id, request)
+        response = cache.get(key)
+        if response is None:
+            decision = store.send(
+                executor, actor.identity_id, request.method, request.url,
+                body=request.body, headers=dict(request.headers), check_id=AUTHZ_AUDIT_CHECK,
+            )
+            result.replays += 1
+            if not decision.allowed or decision.response is None:
+                response = Exchange(error="request not sent" if not decision.allowed else "request failed", audit_seq=decision.audit_seq)
+            else:
+                snap = decision.response
+                response = Exchange(snap.status, snap.length, snap.body_excerpt or "", dict(snap.headers or {}), snap.elapsed_ms, audit_seq=decision.audit_seq)
+            cache[key] = response
+        if not response.usable or not (200 <= (response.status or 0) < 300) or response.length == 0:
+            continue
+        if value not in (response.body or "") and response.length <= TRIVIAL_BODY_BYTES:
+            continue
+        if alternate not in observed:
+            if owner is None or cancelled():
+                continue
+            baseline = store.send(executor, owner.identity_id, request.method, request.url,
+                                  body=request.body, headers=dict(request.headers), check_id=AUTHZ_AUDIT_CHECK)
+            if not baseline.allowed or baseline.response is None or not run_detectors(baseline.response, response.snapshot(), None, ["auth_boundary_crossed"]):
+                continue
+            # An adjacent id was never observed as belonging to the owner. Authentication in a
+            # schema does not establish object ownership: preserve a lead, never auto-confirm it.
+            if mutated.security_declared is not False:
+                mutated = replace(mutated, security_declared=None)
+        return [DetectorSignal("auth_boundary_crossed", f"a different object id ({name}) was accepted")], response, mutated
+    return None
 
 
 def _row(endpoint, pair: RolePair, boundary: Boundary, owner_response: Exchange, actor_response: Exchange, signals, checks, secrets) -> dict[str, Any] | None:

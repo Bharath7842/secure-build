@@ -180,11 +180,11 @@ def test_a_hosted_model_is_accepted_when_its_key_is_configured(client, project_i
     assert "sk-ant" not in json.dumps(stored(r.json()["scan_id"]))
     with app_db.SessionLocal() as db:
         scan = db.get(Scan, r.json()["scan_id"])
-        assert scan.llm_provider == "ollama"  # five of six tasks still use the default local model
+        assert scan.llm_provider == "ollama"  # six of seven tasks still use the default local model
 
 
 def test_dast_scan_row_records_bedrock_when_every_task_uses_it(client, project_id):
-    routing = {task: {"provider": "bedrock", "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0"} for task in ("fingerprint", "crawl_plan", "login_selectors", "construct", "rule", "narrate")}
+    routing = {task: {"provider": "bedrock", "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0"} for task in ("fingerprint", "crawl_plan", "login_selectors", "plan", "construct", "rule", "narrate")}
     r = post(client, project_id, model_routing=routing)
     assert r.status_code == 202, r.text
     with app_db.SessionLocal() as db:
@@ -240,7 +240,7 @@ def test_the_snapshot_holds_what_the_scan_ran_with_and_no_secret(client, project
     assert eff["safe_mode"] is False and eff["method_policy"] == "opt_in_mutating" and eff["allow_state_changing"] is True
     assert eff["second_identity"] is True and eff["rule_packs"] == ["owasp-api-top10-2023", "owasp-web-top10"]
     assert eff["rule_checks_enabled"] > 0 and eff["catalog_version"] and set(eff["model_routing"]) == {
-        "fingerprint", "crawl_plan", "login_selectors", "construct", "rule", "narrate"}
+        "fingerprint", "crawl_plan", "login_selectors", "plan", "construct", "rule", "narrate"}
     blob = json.dumps(eff)
     assert not any(secret in blob for secret in (PASSWORD, TOKEN, COOKIE)) and "password" not in blob.lower()
     safe = stored(post(client, project_id).json()["scan_id"])["dast_effective"]

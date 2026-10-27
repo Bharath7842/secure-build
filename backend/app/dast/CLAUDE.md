@@ -86,11 +86,12 @@ The pipeline is a LangGraph state machine over a per-scan `ScanRuntime` (`runtim
 
 ```
 check_connection -> fingerprint -> authenticate -> discover -> passive_analysis
-                                        ^              |            |
-                                        +--- one re-login per       +-- route_after_passive:
-                                             identity if the            analyze_apis (when there is
-                                             session is lost            active work) or straight on
-                                                                     -> browser_probe -> check_authorization -> END
+                                  ^                 |              |
+                                  +-- one re-login -+              +-- passive-only/cancelled -> END
+                                                                   +-- agent mode -> plan_tests --+
+                                                                   +-- otherwise ----------------+-> analyze_apis
+                                                                                                     -> browser_probe
+                                                                                                     -> check_authorization -> END
 ```
 
 Every collaborator arrives through the runtime, built by `app/services/dast_runtime.py` (the composition
@@ -127,6 +128,25 @@ including "only `app/services/model_gateway/` imports a model SDK".
   counters. The loop excludes authorization, OAST, passive, opt-in, assist-only and browser-only checks
   (`dast-xss-dom`, `dast-xss-stored`): those signals are in the detector registry so a check may name them,
   and excluded from the HTTP loop because a response pair cannot raise them.
+- **`nodes/plan_tests.py`** + **`domain/agent.py`** — optional `plan` task between passive and active
+  analysis. Agent mode defaults off (`agent_mode`, `max_agent_turns=60`,
+  `max_turns_per_hypothesis=4`, per scan and global settings). Only known endpoint keys and enabled
+  loop check ids survive parsing; unknown, malformed and duplicate hypotheses are counted and dropped.
+  Empty/failed plans use the ordinary loop. `run_target_agentic` keeps the first pass's ordinary check
+  coverage and adds one guarded probe per follow-up turn. A thread-safe budget bounds planned turns;
+  targets without a usable hypothesis/budget still receive their ordinary pass. Small or unsized Ollama
+  construct models use at most 20 turns / 2 per hypothesis. History retains only status, byte delta,
+  duration and signal names, never bodies or tokens. Proof, an empty model answer, cancellation and caps
+  stop iteration. Planning has its own model route and usage bucket (`plan`); follow-ups use `construct`.
+- **`jwt_probe.py`** + **`domain/jwt_check.py`** — deterministic JWT sub-stage after HTTP/OAST tests,
+  with no model call. For each authenticated identity, chooses one observed successful GET and isolates
+  its JWT header or cookie from all other credentials. Requires a successful real-token baseline and
+  an anonymous 401/403 control. Sends at most one modified token per enabled weakness: `alg=none`,
+  missing `exp`/`iss`/`aud`, and (explicit opt-in only) a signature matching one of five fixed public
+  tutorial HMAC secrets. Only a matching accepted response raises a proving signal through the guardrail.
+  Generated tokens are registered for redaction before sending; findings contain only response metadata.
+  Without a known signing key, signature rejection may mask missing claim validation: the coverage
+  matrix records this limitation. TLS remains the separate `tls_probe.py` sub-stage.
 - **`nodes/browser_probe.py`** + **`browser_probe.py`** + **`domain/browser_probe.py`** — after the HTTP tests,
   types an inert marker into crawled query parameters and visible inputs (including a search box with no
   form) and reloads each reflected-XSS failure with the same marker. A finding is a true positive only when
@@ -138,9 +158,14 @@ including "only `app/services/model_gateway/` imports a model SDK".
   successful requests as lower-privileged and anonymous identities and classifies the boundary; the role-pair
   matrix is derived from the findings (`services/dast_authz.py`). Needs two identities; says so when it ran
   degraded.
+  With a usable agent plan, A01 endpoints replay first across owners and observed-id substitution
+  can try at most two adjacent numeric ids. No ids are generated without an observed numeric value.
+  Unobserved neighbors remain unverified leads because schema authentication does not prove ownership.
+  Without a plan the replay order and observed-only substitution stay unchanged.
 - **Reporting**: `services/dast_report.py` (report data), `dast_diff.py` + `domain/diff.py` (new / unchanged /
   fixed against the previous scan, keyed by `item_key`), `dast_export.py` (PDF/XLSX, formula-guarded),
   `dast_summary.py` (live counters). Endpoints: `/scans/{id}/summary|report|diff|authz-matrix`.
+- **Model providers** (`services/model_gateway/`): `ollama` (default), `bedrock`, `openai`, `anthropic` and `claude_cli`, routed per task. `claude_cli` (`ClaudeCliAdapter`) runs the local `claude -p` with the same login SAST's `claude_cli` uses (`CLAUDE_CLI_PATH`, `CLAUDE_CLI_REQUEST_TIMEOUT`), but **ephemeral per call**, not one session per scan: DAST tasks are independent and a session would carry one page's text into another task's prompt. No tools/settings/MCP, empty cwd (`<claude_cli_dir>/dast`); cost is notional (Sonnet/Haiku rates in `domain/usage.py`). Empty model = `DAST_CLAUDE_CLI_MODEL` (`claude-sonnet-5-5`).
 - **Settings**: `services/dast_settings.py` + `routers/dast_settings.py`. Overrides live in `dast_global_config`
   (key `settings`) on top of env defaults and apply to *new* scans only. Provider keys are env-only (the API
   shows set/not-set). The OAST address is write-only.
@@ -201,3 +226,16 @@ the API tests send through the guarded executor; browser traffic goes through `b
   rather than attempting it.
 - Every `print()` "Executing: ..." / `[thinking]` / HTML-snippet line is intentional operator-facing
   tracing (`llm_utils.print_snippet`, gated by `state["verbose"]`), not debug scaffolding to clean up.
+
+## Model task registry and agent limits
+
+The seven routed tasks are `fingerprint`, `crawl_plan`, `login_selectors`, `plan`, `construct`,
+`rule` and `narrate`. Every task needs its prompt under `app/data/dast/prompts/`; the gateway loads
+all seven on startup. `DAST_MODEL_PLAN_PROVIDER` / `DAST_MODEL_PLAN_MODEL` configure the planner.
+`DAST_AGENT_MODE_DEFAULT`, `DAST_MAX_AGENT_TURNS` and `DAST_MAX_TURNS_PER_HYPOTHESIS` supply global
+baselines; the settings API and scan request can override them for new scans.
+
+The ordinary target/test caps and request guard still apply. Planned turns are model-call budgets,
+not HTTP-request budgets: baseline and boolean/timing controls still use the existing guarded steps.
+A first planned turn keeps the ordinary per-target test cap; subsequent turns select one probe.
+Multi-step finding chains, independent self-verification and SAST endpoint linking are deferred.

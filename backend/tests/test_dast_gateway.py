@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -12,16 +13,16 @@ from app.dast.domain import schema as S
 from app.dast.domain import usage as U
 from app.dast.domain.interfaces import AdapterResponse
 from app.dast.domain.model_errors import (
-    ModelAuthError, ModelConfigurationError, ModelTimeout, ModelUnavailable, UnknownTaskError,
+    ModelAuthError, ModelConfigurationError, ModelError, ModelTimeout, ModelUnavailable, UnknownTaskError,
 )
 from app.dast.domain.redaction import redact_text
 from app.services.model_gateway import PromptError, PromptLibrary, adapter_for, build_gateway, default_library
-from app.services.model_gateway.adapters import OLLAMA_REASONING_HEADROOM, AnthropicAdapter, BedrockAdapter, OllamaAdapter, OpenAIAdapter
+from app.services.model_gateway.adapters import OLLAMA_REASONING_HEADROOM, AnthropicAdapter, BedrockAdapter, ClaudeCliAdapter, OllamaAdapter, OpenAIAdapter
 from app.services.model_gateway.gateway import ModelGatewayImpl
 
 pytestmark = pytest.mark.unit
 
-ROUTING = {t: ("ollama", "gpt-oss:20b") for t in ("fingerprint", "crawl_plan", "login_selectors", "construct", "rule", "narrate")}
+ROUTING = {t: ("ollama", "gpt-oss:20b") for t in ("fingerprint", "crawl_plan", "login_selectors", "plan", "construct", "rule", "narrate")}
 SCHEMA = {"type": "object", "required": ["verdict"], "properties": {"verdict": {"type": "string", "enum": ["PASS", "FAIL", "INCONCLUSIVE"]}}}
 
 
@@ -452,7 +453,7 @@ def test_redact_text_covers_values_and_key_shapes():
 
 # ---- prompts (DAST-02-060) --------------------------------------------------------------------
 
-TASKS = ("fingerprint", "crawl_plan", "login_selectors", "construct", "rule", "narrate")
+TASKS = ("fingerprint", "crawl_plan", "login_selectors", "plan", "construct", "rule", "narrate")
 
 
 def test_every_task_loads_and_carries_the_shared_preamble():
@@ -569,3 +570,79 @@ def test_ollama_adapter_passes_the_reasoning_flag_to_the_client():
     FakeChat.instances.clear()
     OllamaAdapter("http://x", "gemma4:12b", chat_factory=FakeChat, emit=lambda _: None, reasoning=False).call("s", "p", None, 50, None)
     assert FakeChat.instances[0].kwargs["reasoning"] is False
+
+
+# ---- claude CLI provider --------------------------------------------------------------------
+
+
+def _cli_proc(payload=None, *, returncode=0, stderr=""):
+    return SimpleNamespace(returncode=returncode, stdout=json.dumps(payload) if payload is not None else "", stderr=stderr)
+
+
+class FakeRunner:
+    def __init__(self, proc=None, error=None):
+        self.proc, self.error, self.calls = proc, error, []
+
+    def __call__(self, cmd, **kwargs):
+        self.calls.append((cmd, kwargs))
+        if self.error:
+            raise self.error
+        return self.proc
+
+
+def test_claude_cli_sends_an_ephemeral_toolless_call_and_reads_usage(tmp_path):
+    runner = FakeRunner(_cli_proc({"result": '{"verdict": "PASS"}', "usage": {"input_tokens": 10, "cache_read_input_tokens": 5, "cache_creation_input_tokens": 2, "output_tokens": 7}}))
+    adapter = ClaudeCliAdapter("/bin/claude", "sonnet", workdir=str(tmp_path / "dast"), runner=runner)
+    response = adapter.call("SYS", "PROMPT", SCHEMA, 100, 0.5)
+    cmd, kwargs = runner.calls[0]
+    assert cmd[0] == "/bin/claude" and cmd[cmd.index("--model") + 1] == "claude-sonnet-5-5"  # alias pinned
+    assert "--no-session-persistence" in cmd and "--resume" not in cmd and "--session-id" not in cmd
+    assert cmd[cmd.index("--tools") + 1] == "" and "--strict-mcp-config" in cmd
+    assert "<instructions>\nSYS\n</instructions>" in kwargs["input"] and "PROMPT" in kwargs["input"] and "single JSON" in kwargs["input"]
+    assert kwargs["cwd"] == str(tmp_path / "dast") and (tmp_path / "dast").is_dir()
+    assert (response.text, response.input_tokens, response.output_tokens, response.estimated) == ('{"verdict": "PASS"}', 17, 7, False)
+
+
+def test_claude_cli_without_a_schema_does_not_ask_for_json():
+    runner = FakeRunner(_cli_proc({"result": "plain narration"}))
+    response = ClaudeCliAdapter("/bin/claude", "claude-haiku-5-5", runner=runner).call("", "P", None, None, None)
+    assert "single JSON" not in runner.calls[0][1]["input"] and response.estimated and response.text == "plain narration"
+
+
+@pytest.mark.parametrize(
+    "proc, error, expected",
+    [
+        (_cli_proc({"is_error": True, "result": "Not logged in · Please run /login"}, returncode=1), None, ModelAuthError),
+        (_cli_proc({"is_error": True, "result": "usage limit reached"}, returncode=1), None, ModelUnavailable),
+        (_cli_proc(None, returncode=2, stderr="boom"), None, ModelError),
+        (_cli_proc({"result": ""}), None, ModelUnavailable),
+        (None, subprocess.TimeoutExpired("claude", 5), ModelTimeout),
+        (None, FileNotFoundError(2, "no such file", "/bin/claude"), ModelConfigurationError),
+    ],
+)
+def test_claude_cli_failures_map_onto_gateway_errors(proc, error, expected):
+    adapter = ClaudeCliAdapter("/bin/claude", "claude-sonnet-5-5", runner=FakeRunner(proc, error))
+    with pytest.raises(expected):
+        adapter.call("s", "p", SCHEMA, None, None)
+
+
+def test_claude_cli_missing_binary_is_a_configuration_error(monkeypatch):
+    monkeypatch.setattr("app.services.model_gateway.adapters.shutil.which", lambda name: None)
+    adapter = ClaudeCliAdapter("", "claude-sonnet-5-5", runner=FakeRunner(_cli_proc({"result": "x"})))
+    with pytest.raises(ModelConfigurationError, match="CLAUDE_CLI_PATH"):
+        adapter.check_configuration()
+
+
+def test_claude_cli_is_routable_through_the_gateway_and_priced_notionally():
+    adapter = ClaudeCliAdapter("/bin/claude", "claude-sonnet-5-5", runner=FakeRunner(_cli_proc({"result": '{"verdict": "FAIL"}', "usage": {"input_tokens": 1_000_000, "output_tokens": 1_000_000}})))
+    gateway = ModelGatewayImpl({**ROUTING, "rule": ("claude_cli", "claude-sonnet-5-5")}, lambda p, m: adapter, log=lambda _: None)
+    reply = gateway.complete("rule", "s", "p", SCHEMA)
+    assert reply.data == {"verdict": "FAIL"} and not reply.fallback_used and reply.cost_usd == pytest.approx(18.0)
+
+
+def test_adapter_for_claude_cli_uses_settings_and_defaults_the_model():
+    from app.config import settings
+
+    adapter = adapter_for("claude_cli", "")
+    assert isinstance(adapter, ClaudeCliAdapter) and adapter.model == settings.dast_claude_cli_model
+    assert adapter.workdir.endswith("dast")

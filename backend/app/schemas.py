@@ -154,7 +154,7 @@ class ProjectDeleteOut(BaseModel):
     git_disconnected: bool
 
 
-_DAST_PROVIDERS = ("ollama", "bedrock", "openai", "anthropic")
+_DAST_PROVIDERS = ("ollama", "bedrock", "openai", "anthropic", "claude_cli")
 
 
 class DastModelRoute(BaseModel):
@@ -275,6 +275,9 @@ class DastInput(BaseModel):
     method_policy: str | None = None
     target_disposable: bool = False
     # None = the configured default. Marker posts submit a stored-XSS probe and need a disposable target.
+    agent_mode: bool | None = None
+    max_agent_turns: int | None = Field(default=None, ge=1, le=1000)
+    max_turns_per_hypothesis: int | None = Field(default=None, ge=1, le=20)
     browser_probe_enabled: bool | None = None
     browser_marker_posts: bool | None = None
     rate_limit_per_sec: float | None = Field(default=None, gt=0, le=100)

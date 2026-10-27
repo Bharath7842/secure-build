@@ -227,7 +227,7 @@ def _path_shape(path: str) -> str:
     return _ID_SEGMENT.sub("{}", path or "")
 
 
-def alternate_object_value(endpoint: Endpoint, pool: Sequence[Endpoint]) -> tuple[str, Location, str] | None:
+def _observed_alternate(endpoint: Endpoint, pool: Sequence[Endpoint]) -> tuple[str, Location, str] | None:
     """An object id seen on the same method and path shape, different from the one this request uses."""
     own: dict[tuple[Location, str], str] = {}
     for param in endpoint.parameters:
@@ -247,6 +247,31 @@ def alternate_object_value(endpoint: Endpoint, pool: Sequence[Endpoint]) -> tupl
             if value and value != own[key]:
                 return param.name, param.location, value
     return None
+
+
+def alternate_object_values(endpoint: Endpoint, pool: Sequence[Endpoint], *, numeric_neighbors: bool = True) -> list[tuple[str, Location, str]]:
+    """One observed alternative first, then at most two adjacent numeric ids from an observed id."""
+    observed = _observed_alternate(endpoint, pool)
+    out = [observed] if observed else []
+    if numeric_neighbors:
+        for param in endpoint.parameters:
+            if (param.location not in (Location.PATH, Location.QUERY, Location.BODY)
+                    or not _OBJECT_ID_PARAM.search(param.name) or not param.observed_values):
+                continue
+            value = str(param.observed_values[0])
+            if not re.fullmatch(r"[0-9]{1,18}", value):
+                continue
+            for number in (int(value) + 1, int(value) - 1):
+                candidate = (param.name, param.location, str(number))
+                if number >= 0 and candidate not in out:
+                    out.append(candidate)
+            break
+    return out[:3]
+
+
+def alternate_object_value(endpoint: Endpoint, pool: Sequence[Endpoint]) -> tuple[str, Location, str] | None:
+    values = alternate_object_values(endpoint, pool)
+    return values[0] if values else None
 
 
 def endpoint_with_object_value(endpoint: Endpoint, name: str, location: Location, value: str) -> Endpoint:

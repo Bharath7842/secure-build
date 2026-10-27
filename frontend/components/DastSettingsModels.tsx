@@ -11,11 +11,12 @@ const TASK_LABEL: Record<DastModelTask, string> = {
   fingerprint: "Fingerprinting the target",
   crawl_plan: "Planning the crawl",
   login_selectors: "Finding login fields",
+  plan: "Planning adaptive tests",
   construct: "Constructing tests",
   rule: "Ruling on test results",
   narrate: "Narrating the scan",
 };
-const PROVIDERS: DastModelProvider[] = ["ollama", "bedrock", "openai", "anthropic"];
+const PROVIDERS: DastModelProvider[] = ["ollama", "bedrock", "openai", "anthropic", "claude_cli"];
 
 const field = "agent-focus-ring w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-[var(--ink)]";
 
@@ -87,7 +88,7 @@ export default function DastSettingsModels({ routes, providers, onSaved }: Props
       <ul className="mt-4 flex flex-wrap gap-2" aria-label="Provider credentials">
         {(providers?.providers ?? []).map((p) => (
           <li key={p.provider} className={`rounded-full border px-2.5 py-1 text-xs ${p.configured ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-slate-200 bg-slate-50 text-slate-600"}`} title={p.detail}>
-            <span className="font-medium">{p.provider}</span>: {p.configured ? "key set" : "not set"}
+            <span className="font-medium">{p.provider}</span>: {p.provider === "claude_cli" ? (p.configured ? "found" : "not found") : p.configured ? "key set" : "not set"}
           </li>
         ))}
       </ul>
@@ -117,7 +118,7 @@ export default function DastSettingsModels({ routes, providers, onSaved }: Props
                     <select aria-label={`Provider for ${TASK_LABEL[route.task]}`} className={field} value={route.provider} onChange={(e) => edit(route.task, { provider: e.target.value as DastModelProvider })}>
                       {dastProviders(PROVIDERS, route.provider).map((p) => <option key={p} value={p}>{p}</option>)}
                     </select>
-                    {missing && <p className="mt-1 text-xs text-amber-800">No key set for this provider.</p>}
+                    {missing && <p className="mt-1 text-xs text-amber-800">{route.provider === "claude_cli" ? "The claude CLI was not found on the server." : "No key set for this provider."}</p>}
                   </td>
                   <td className="py-2 pr-3">
                     <select

@@ -21,6 +21,10 @@ export const DAST_MODEL_OPTIONS: Record<DastModelProvider, { id: string; label: 
     { id: "gemma4:12b", label: "gemma4:12b" },
     { id: "phi4-mini:3.8b", label: "phi4-mini:3.8b" },
   ],
+  claude_cli: [
+    { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
+    { id: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
+  ],
   openai: [{ id: "gpt-4o-mini", label: "gpt-4o-mini" }],
   anthropic: [{ id: "claude-haiku-4-5", label: "Claude Haiku 4.5" }],
 };
@@ -30,6 +34,7 @@ const PROVIDER_NAMES: Record<string, string> = {
   ollama: "Ollama",
   openai: "OpenAI",
   anthropic: "Anthropic",
+  claude_cli: "Claude",
 };
 
 /** Short label for a provider/model pair, e.g. "Claude Haiku 4.5 (Bedrock)". */

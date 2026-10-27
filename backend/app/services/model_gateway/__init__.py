@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from app.config import settings as app_settings
@@ -13,7 +14,7 @@ from app.dast.domain.interfaces import ModelAdapter
 from app.dast.domain.model_errors import ModelConfigurationError
 from app.dast.domain.usage import UsageRecorder
 
-from .adapters import AnthropicAdapter, BedrockAdapter, OllamaAdapter, OpenAIAdapter
+from .adapters import AnthropicAdapter, BedrockAdapter, ClaudeCliAdapter, OllamaAdapter, OpenAIAdapter
 from .gateway import ModelGatewayImpl
 from .prompts import PromptError, PromptLibrary, default_library
 
@@ -57,6 +58,13 @@ def adapter_for(provider: str, model: str, cfg: Any = None) -> ModelAdapter:
         return OpenAIAdapter(cfg.openai_api_key, model, timeout_s=timeout)
     if provider == "bedrock":
         return BedrockAdapter(model or cfg.bedrock_model_id, cfg.aws_region, timeout_s=timeout)
+    if provider == "claude_cli":
+        return ClaudeCliAdapter(
+            cfg.claude_cli_path,
+            model or cfg.dast_claude_cli_model,
+            timeout_s=cfg.claude_cli_request_timeout,
+            workdir=str(Path(cfg.claude_cli_dir) / "dast"),
+        )
     raise ModelConfigurationError(f"unknown model provider {provider!r}", setting="dast_model_<task>_provider")
 
 

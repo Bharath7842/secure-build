@@ -71,6 +71,9 @@ export default function DastScanForm({ project, onSubmit }: DastScanFormProps) {
 
   const [intensity, setIntensity] = useState<DastIntensity>("light");
   const [headless, setHeadless] = useState(true);
+  const [agentMode, setAgentMode] = useState<boolean | null>(null);
+  const [agentTurns, setAgentTurns] = useState("");
+  const [hypothesisTurns, setHypothesisTurns] = useState("");
 
   const [identities, setIdentities] = useState<IdentityDraft[]>(() => [newIdentity(PRACTICE_IDENTITY)]);
   const [rulePacks, setRulePacks] = useState<string[] | null>(null);
@@ -109,6 +112,11 @@ export default function DastScanForm({ project, onSubmit }: DastScanFormProps) {
     if (identityIssues.some((p) => Object.keys(p).length > 0)) return setError("Fix the highlighted identity fields.");
     if (!authorized) return setError("Confirm that you are authorized to test this target.");
 
+    for (const [value, limit, label] of [[agentTurns, 1000, "Adaptive turns per scan"], [hypothesisTurns, 20, "Turns per hypothesis"]] as const) {
+      if (value && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > limit)) {
+        return setError(`${label} must be a whole number between 1 and ${limit}.`);
+      }
+    }
     setError(null);
     setSubmitting(true);
     try {
@@ -124,6 +132,9 @@ export default function DastScanForm({ project, onSubmit }: DastScanFormProps) {
           method_policy: "opt_in_mutating",
           target_disposable: true,
           browser_marker_posts: true,
+          agent_mode: agentMode ?? settings?.agent_mode ?? false,
+          ...(agentTurns ? { max_agent_turns: Number(agentTurns) } : {}),
+          ...(hypothesisTurns ? { max_turns_per_hypothesis: Number(hypothesisTurns) } : {}),
           headless,
           ...(identities.length > 0 ? { identities: identities.map(toIdentityInput) } : {}),
           ...(rulePacks ? { rule_packs: rulePacks } : {}),
@@ -234,6 +245,24 @@ export default function DastScanForm({ project, onSubmit }: DastScanFormProps) {
           />
           Run the browser headless
         </label>
+
+        <div className="space-y-3">
+          <label className="flex items-start gap-2 text-sm text-[var(--ink)]">
+            <input type="checkbox" className="agent-focus-ring mt-0.5" checked={agentMode ?? settings?.agent_mode ?? false} onChange={(e) => setAgentMode(e.target.checked)} />
+            <span>Agent mode<span className="block text-xs text-[var(--muted)]">Plan tests by OWASP category and adapt follow-up probes to the results. Adds bounded model calls.</span></span>
+          </label>
+          {(agentMode ?? settings?.agent_mode ?? false) && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-sm text-[var(--ink)]">Adaptive turns per scan
+                <input type="number" min={1} max={1000} step={1} className={inputClass} placeholder={String(settings?.max_agent_turns ?? 60)} value={agentTurns} onChange={(e) => setAgentTurns(e.target.value)} />
+              </label>
+              <label className="text-sm text-[var(--ink)]">Turns per hypothesis
+                <input type="number" min={1} max={20} step={1} className={inputClass} placeholder={String(settings?.max_turns_per_hypothesis ?? 4)} value={hypothesisTurns} onChange={(e) => setHypothesisTurns(e.target.value)} />
+              </label>
+              <p className="text-xs text-[var(--muted)] sm:col-span-2">Leave blank to use the global defaults. Small local models use lower limits.</p>
+            </div>
+          )}
+        </div>
 
         <p className="text-xs text-[var(--muted)]">
           Stored-XSS form markers are submitted automatically for the approved disposable practice target, then checked again on crawled pages.

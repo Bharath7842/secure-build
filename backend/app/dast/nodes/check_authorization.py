@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from ..authorization import authz_checks, run_replays
 from ..domain.authz import matrix_notes
+from ..domain.agent import Plan
 from ..state import GraphState
 
 DEFAULT_MAX_REPLAYS = 180
@@ -58,9 +59,12 @@ def check_authorization(state: GraphState) -> GraphState:
 
     live = [s for s in specs if s.is_anonymous or store.get(s.identity_id).status == "authenticated"]
     spa = state.get("fingerprint", {}).get("shape") == "spa"
+    plan = state.get("test_plan") if state.get("agent_mode") else None
     result = run_replays(
         inventory.endpoints(), live, store, runtime.executor, checks, allow_state_changing=bool(effective.get("allow_state_changing")),
         max_replays=max_replays, privilege=privilege, secrets=secrets, cancelled=runtime.cancelled, log=print, on_rows=on_rows, spa=spa,
+        priority=plan.authorization_priority() if isinstance(plan, Plan) else None,
+        numeric_neighbors=isinstance(plan, Plan) and bool(plan.hypotheses),
     )
     authorization.update(
         ran=True, replays=[s.to_dict() for s in result.summaries], total_replays=result.replays, findings=len(result.rows),

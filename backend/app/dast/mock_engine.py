@@ -381,6 +381,8 @@ def mock_discovery(dast_input: dict[str, Any]) -> dict[str, Any]:
     passive_rows = _mock_passive_rows(base)
     print("### DAST: passive analysis")
     print(f"  passive analysis: {len(passive_rows)} finding(s)")
+    if dast_input.get("agent_mode"):
+        print("### DAST: planning tests")
     print("### DAST: testing apis")
     analysis = _mock_api_analysis(base)
     for api in analysis:

@@ -22,6 +22,8 @@ DAST_MODEL_OPTIONS: dict[str, tuple[tuple[str, str], ...]] = {
         ("gemma4:12b", "gemma4:12b"),
         ("phi4-mini:3.8b", "phi4-mini:3.8b"),
     ),
+    # The local `claude` CLI; the same two models SAST offers for it.
+    "claude_cli": tuple((p.model, p.label) for p in LLM_PRESETS if p.provider == "claude_cli"),
     "openai": (("gpt-4o-mini", "gpt-4o-mini"),),
     "anthropic": (("claude-haiku-4-5", "Claude Haiku 4.5"),),
 }

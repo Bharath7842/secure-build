@@ -9,6 +9,7 @@ from app.config import DAST_MODEL_TASKS, Settings
 _DAST_ENV = [
     "DAST_MAX_RUNTIME_MINUTES", "DAST_MAX_DEPTH", "DAST_MAX_PAGES", "DAST_MAX_PER_PATTERN",
     "DAST_SAME_DOMAIN_MODE", "DAST_SAFE_MODE_DEFAULT", "DAST_RATE_LIMIT_PER_SEC",
+    "DAST_AGENT_MODE_DEFAULT", "DAST_MAX_AGENT_TURNS", "DAST_MAX_TURNS_PER_HYPOTHESIS",
     "DAST_MAX_TARGETS", "DAST_MAX_TESTS_PER_TARGET", "DAST_OAST_CALLBACK_URL",
     "DAST_BROWSER_PROBE_ENABLED", "DAST_BROWSER_MARKER_POSTS", "DAST_BROWSER_PROBE_MAX_INPUTS",
     "DAST_OLLAMA_BASE_URL", "DAST_OLLAMA_MODEL", "OLLAMA_BASE_URL", "BEDROCK_MODEL_ID",
@@ -38,6 +39,8 @@ def test_defaults_match_the_tech_stack_document(clean_env):
     assert s.dast_max_per_pattern == 3
     assert s.dast_same_domain_mode == "exact"
     assert s.dast_safe_mode_default is True
+    assert s.dast_agent_mode_default is False
+    assert s.dast_max_agent_turns == 60 and s.dast_max_turns_per_hypothesis == 4
     assert s.dast_browser_probe_enabled is True
     assert s.dast_browser_marker_posts is False
     assert s.dast_browser_probe_max_inputs == 4
@@ -121,10 +124,10 @@ def test_existing_dast_and_bedrock_settings_keep_working(clean_env):
     assert s.bedrock_model_id == "my-bedrock-model"
 
 
-def test_routing_covers_all_six_tasks(clean_env):
+def test_routing_covers_all_seven_tasks(clean_env):
     routing = make_settings().dast_model_routing
     assert set(routing) == set(DAST_MODEL_TASKS) == {
-        "fingerprint", "crawl_plan", "login_selectors", "construct", "rule", "narrate",
+        "fingerprint", "crawl_plan", "login_selectors", "plan", "construct", "rule", "narrate",
     }
     # Plain structure EPIC-15 can persist: task -> (provider, model).
     assert all(provider == "ollama" and model == "gpt-oss:20b" for provider, model in routing.values())

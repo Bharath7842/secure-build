@@ -423,3 +423,65 @@ def test_the_matrix_is_available_before_the_stage_has_run_and_only_for_dast_scan
     sast = client.post("/scans", json={"project_id": project_id}, headers=HDR)
     assert sast.status_code == 202
     assert client.get(f"/scans/{sast.json()['scan_id']}/authz-matrix", headers=HDR).status_code == 400
+
+
+def test_numeric_neighbors_are_bounded_observed_first_and_never_guessed_from_nothing():
+    endpoint = observed("GET", BASE + "/api/orders/10", kind="api", parameters=[Parameter("id", Location.PATH, observed_values=("10",))])
+    other = observed("GET", BASE + "/api/orders/50", kind="api", parameters=[Parameter("id", Location.PATH, observed_values=("50",))])
+    assert Z.alternate_object_values(endpoint, [endpoint, other]) == [("id", Location.PATH, "50"), ("id", Location.PATH, "11"), ("id", Location.PATH, "9")]
+    assert Z.alternate_object_value(endpoint, [endpoint]) == ("id", Location.PATH, "11")
+    assert Z.alternate_object_values(endpoint, [endpoint], numeric_neighbors=False) == []
+    assert Z.alternate_object_values(from_schema("GET", "/api/orders/{id}", base_url=BASE), []) == []
+    uuid = observed("GET", BASE + "/api/orders", parameters=[Parameter("id", Location.QUERY, observed_values=("some-uuid",))])
+    assert Z.alternate_object_values(uuid, []) == []
+
+
+def test_plan_priority_changes_which_replay_fits_the_cap_but_none_preserves_order():
+    def run(priority):
+        target = FakeTarget()
+        target.add_json("/api/a", {"private": "first endpoint data"})
+        target.add_json("/api/z", {"private": "highest priority endpoint data"})
+        identities = specs(spec("Owner", "User"))
+        harness = Harness(target, identities, {"Owner": {"token": "owner-token"}})
+        store = SessionStore(identities)
+        store.mark_authenticated(identities[0].identity_id)
+        store.set_token(identities[0].identity_id, "Authorization", "Bearer", "owner-token")
+        endpoints = [from_schema("GET", "/api/a", base_url=BASE, security_declared=True), from_schema("GET", "/api/z", base_url=BASE, security_declared=True)]
+        try:
+            result = authz_engine.run_replays(endpoints, identities, store, harness.runtime.executor,
+                authz_engine.authz_checks(resolve_effective_rule_set(CATALOG)), allow_state_changing=False,
+                max_replays=1, priority=priority, log=lambda *_: None)
+            actors = [r for r in target.requests if "authorization" not in r.headers]
+            return actors[0].url.path, result
+        finally:
+            harness.runtime.close()
+    assert run(None)[0] == "/api/a"
+    path, result = run(["GET /api/z"])
+    assert path == "/api/z" and result.replays == 1 and result.cap_reached
+
+
+def test_numeric_neighbor_replay_stays_unverified_without_observed_ownership():
+    target = FakeTarget()
+    def read(request):
+        owner = bool(request.headers.get("authorization"))
+        if request.url.path.endswith("/10") and not owner:
+            return httpx.Response(403, text="denied")
+        return httpx.Response(200, json={"id": request.url.path.rsplit("/", 1)[-1], "private_data": "long protected response data"})
+    target.route("GET", "/api/orders/10", read)
+    target.route("GET", "/api/orders/11", read)
+    identities = specs(spec("Owner", "User"))
+    harness = Harness(target, identities, {"Owner": {"token": "owner-token"}})
+    store = SessionStore(identities)
+    store.mark_authenticated(identities[0].identity_id)
+    store.set_token(identities[0].identity_id, "Authorization", "Bearer", "owner-token")
+    endpoint = observed("GET", BASE + "/api/orders/10", kind="api", identity_id=identities[0].identity_id,
+                        parameters=[Parameter("id", Location.PATH, observed_values=("10",))])
+    try:
+        result = authz_engine.run_replays([endpoint], identities, store, harness.runtime.executor,
+            authz_engine.authz_checks(resolve_effective_rule_set(CATALOG)), allow_state_changing=False,
+            max_replays=3, numeric_neighbors=True, log=lambda *_: None)
+        assert result.replays == 2 and len(result.rows) == 1
+        assert result.rows[0]["verdict"] == "unverified"
+        assert "/11" in result.rows[0]["file_path"]
+    finally:
+        harness.runtime.close()

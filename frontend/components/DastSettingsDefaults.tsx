@@ -12,8 +12,8 @@ function SourceTag({ edited }: { edited: boolean }) {
   return <span className={`ml-1.5 rounded px-1.5 py-0.5 text-[10px] ${edited ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-500"}`}>{edited ? "edited" : "environment default"}</span>;
 }
 
-type NumericKey = "max_runtime_minutes" | "max_depth" | "max_pages" | "max_per_pattern" | "rate_limit_per_sec" | "max_targets" | "max_tests_per_target" | "browser_probe_max_inputs";
-const NUMERIC: NumericKey[] = ["max_runtime_minutes", "max_depth", "max_pages", "max_per_pattern", "rate_limit_per_sec", "max_targets", "max_tests_per_target", "browser_probe_max_inputs"];
+type NumericKey = "max_runtime_minutes" | "max_depth" | "max_pages" | "max_per_pattern" | "rate_limit_per_sec" | "max_targets" | "max_tests_per_target" | "browser_probe_max_inputs" | "max_agent_turns" | "max_turns_per_hypothesis";
+const NUMERIC: NumericKey[] = ["max_runtime_minutes", "max_depth", "max_pages", "max_per_pattern", "rate_limit_per_sec", "max_targets", "max_tests_per_target", "browser_probe_max_inputs", "max_agent_turns", "max_turns_per_hypothesis"];
 
 /** Scan defaults (DAST-15-020): limits, scope mode, rate, the safe-mode default and the OAST
  *  callback address. Every value shows whether an edit or the environment decides it. */
@@ -21,6 +21,7 @@ export default function DastSettingsDefaults({ settings, onSaved }: { settings: 
   const [values, setValues] = useState<Record<NumericKey, string>>(() => Object.fromEntries(NUMERIC.map((k) => [k, String(settings[k])])) as Record<NumericKey, string>);
   const [mode, setMode] = useState(settings.same_domain_mode);
   const [safe, setSafe] = useState(settings.safe_mode_default);
+  const [agentMode, setAgentMode] = useState(settings.agent_mode);
   const [probe, setProbe] = useState(settings.browser_probe_enabled);
   const [markerPosts, setMarkerPosts] = useState(settings.browser_marker_posts);
   const [oast, setOast] = useState("");
@@ -49,6 +50,7 @@ export default function DastSettingsDefaults({ settings, onSaved }: { settings: 
       return;
     }
     if (mode !== settings.same_domain_mode) patch.same_domain_mode = mode;
+    if (agentMode !== settings.agent_mode) patch.agent_mode = agentMode;
     if (probe !== settings.browser_probe_enabled) patch.browser_probe_enabled = probe;
     if (markerPosts !== settings.browser_marker_posts) {
       patch.browser_marker_posts = markerPosts;
@@ -136,6 +138,13 @@ export default function DastSettingsDefaults({ settings, onSaved }: { settings: 
       </div>
 
       <div className="mt-3 rounded-md border border-slate-200 p-3 space-y-3">
+        <label className="flex items-start gap-2.5 text-sm">
+          <input type="checkbox" className="agent-focus-ring mt-0.5" checked={agentMode} onChange={(e) => setAgentMode(e.target.checked)} />
+          <span>
+            <span className="font-medium text-[var(--ink)]">Agent mode by default<SourceTag edited={overridden.has("agent_mode")} /></span>
+            <span className="block text-xs text-[var(--muted)]">Prioritize endpoints and adapt follow-up probes to observed results. Adds model calls within the turn limits above. Off by default.</span>
+          </span>
+        </label>
         <label className="flex items-start gap-2.5 text-sm">
           <input type="checkbox" className="agent-focus-ring mt-0.5" checked={probe} onChange={(e) => setProbe(e.target.checked)} />
           <span>

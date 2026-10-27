@@ -30,6 +30,9 @@ class SettingsPatch(BaseModel):
     max_per_pattern: StrictInt | None = None
     same_domain_mode: str | None = None
     safe_mode_default: bool | None = None
+    agent_mode: bool | None = None
+    max_agent_turns: StrictInt | None = None
+    max_turns_per_hypothesis: StrictInt | None = None
     browser_probe_enabled: bool | None = None
     browser_marker_posts: bool | None = None
     browser_probe_max_inputs: StrictInt | None = None

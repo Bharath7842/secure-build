@@ -63,7 +63,7 @@ def test_settings_read_the_environment_until_edited_and_say_they_apply_to_new_sc
     body = client.get("/dast/settings", headers=HDR).json()
     assert body["max_pages"] == settings.dast_max_pages and body["safe_mode_default"] is True and body["overridden"] == []
     assert body["oast_configured"] is False and body["applies_to"] == "new scans only"
-    assert [r["task"] for r in body["model_routing"]] == ["fingerprint", "crawl_plan", "login_selectors", "construct", "rule", "narrate"]
+    assert [r["task"] for r in body["model_routing"]] == ["fingerprint", "crawl_plan", "login_selectors", "plan", "construct", "rule", "narrate"]
     assert body["limits"]["max_pages"] == {"min": 1, "max": 1000, "label": "Maximum pages crawled"}
 
 
@@ -165,7 +165,7 @@ def test_settings_need_the_bearer_token(client):
 
 def test_routing_lists_all_tasks_and_a_change_reaches_the_next_scans_snapshot_only(client, project_id):
     routes = client.get("/dast/model-routing", headers=HDR).json()
-    assert {r["task"] for r in routes} == {"fingerprint", "crawl_plan", "login_selectors", "construct", "rule", "narrate"} and all(r["provider"] == "ollama" for r in routes)
+    assert {r["task"] for r in routes} == {"fingerprint", "crawl_plan", "login_selectors", "plan", "construct", "rule", "narrate"} and all(r["provider"] == "ollama" for r in routes)
     before = scan(client, project_id)
     put = client.put("/dast/model-routing", json=[{"task": "rule", "provider": "anthropic", "model": "claude-x"}], headers=HDR)
     assert put.status_code == 200
@@ -327,3 +327,36 @@ def test_bad_yaml_and_a_rule_that_can_only_be_assist_only_say_so(client):
     assert broken["valid"] is False and broken["errors"][0]["field"] == "rule" and "YAML" in broken["errors"][0]["message"]
     review = validate(client, id="dast-custom-review", signal=[])
     assert review["valid"] is True and any("assist-only" in n for n in review["notes"])
+
+
+def test_claude_cli_is_a_known_routing_provider(client):
+    """The local claude CLI can be routed per task; an empty model means its default."""
+    from app.config import settings
+
+    resp = client.put("/dast/model-routing", json=[{"task": "narrate", "provider": "claude_cli", "model": ""}], headers=HDR)
+    assert resp.status_code == 200, resp.text
+    row = next(r for r in resp.json() if r["task"] == "narrate")
+    assert (row["provider"], row["model"]) == ("claude_cli", settings.dast_claude_cli_model)
+    providers = client.get("/dast/providers", headers=HDR).json()
+    assert any(p["provider"] == "claude_cli" for p in providers["providers"])
+    assert providers["default_models"]["claude_cli"] == settings.dast_claude_cli_model
+
+
+def test_agent_defaults_are_snapshotted_and_scan_overrides_win(client, project_id):
+    before = scan(client, project_id)
+    response = patch(client, agent_mode=True, max_agent_turns=17, max_turns_per_hypothesis=3)
+    assert response.status_code == 200, response.text
+    assert response.json()["agent_mode"] is True
+    after = scan(client, project_id)
+    overridden = scan(client, project_id, agent_mode=False, max_agent_turns=5, max_turns_per_hypothesis=2)
+    assert snapshot(before)["dast_effective"]["agent_mode"] is False
+    assert snapshot(after)["dast_effective"]["max_agent_turns"] == 17
+    assert snapshot(after)["dast_effective"]["max_turns_per_hypothesis"] == 3
+    eff = snapshot(overridden)["dast_effective"]
+    assert eff["agent_mode"] is False and eff["max_agent_turns"] == 5 and eff["max_turns_per_hypothesis"] == 2
+    assert snapshot(overridden)["dast_input"]["max_agent_turns"] == 5
+
+
+@pytest.mark.parametrize("field,value", [("max_agent_turns", 0), ("max_agent_turns", 1001), ("max_turns_per_hypothesis", 21), ("max_turns_per_hypothesis", 1.5)])
+def test_agent_budget_settings_reject_invalid_values(client, field, value):
+    assert patch(client, **{field: value}).status_code == 422

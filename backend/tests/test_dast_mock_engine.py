@@ -48,6 +48,14 @@ def test_identical_input_yields_byte_identical_output():
     assert first[2] == second[2]
 
 
+def test_mock_agent_mode_adds_only_the_planning_banner():
+    original = _run()
+    agent = _run({**TARGET, "agent_mode": True})
+    assert agent[:2] == original[:2]
+    assert "### DAST: planning tests" in agent[2]
+    assert agent[2].index("### DAST: passive analysis") < agent[2].index("### DAST: planning tests") < agent[2].index("### DAST: testing apis")
+
+
 def test_different_targets_change_the_output():
     other = _run({"target_url": "http://localhost:3001", "authorized": True})
     assert other[0] != _run()[0]

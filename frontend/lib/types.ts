@@ -1032,6 +1032,10 @@ export interface DastScanOptions {
   intensity?: DastIntensity;
   method_policy?: DastMethodPolicy;
   target_disposable?: boolean;
+  /** Plan and adapt tests within bounded model turns. Omit to use the global default. */
+  agent_mode?: boolean;
+  max_agent_turns?: number;
+  max_turns_per_hypothesis?: number;
   /** Type inert markers into crawled inputs. Omit to use the configured default. */
   browser_probe_enabled?: boolean;
   /** Submit a stored-XSS marker (POST). Requires a disposable target. */
@@ -1516,11 +1520,12 @@ export type DastModelTask =
   | "fingerprint"
   | "crawl_plan"
   | "login_selectors"
+  | "plan"
   | "construct"
   | "rule"
   | "narrate";
 
-export type DastModelProvider = "ollama" | "bedrock" | "openai" | "anthropic";
+export type DastModelProvider = "ollama" | "bedrock" | "openai" | "anthropic" | "claude_cli";
 
 export interface DastModelRoute {
   task: DastModelTask;
@@ -1561,6 +1566,9 @@ export interface DastSettings {
   max_per_pattern: number;
   same_domain_mode: "exact" | "root-domain";
   safe_mode_default: boolean;
+  agent_mode: boolean;
+  max_agent_turns: number;
+  max_turns_per_hypothesis: number;
   browser_probe_enabled: boolean;
   browser_marker_posts: boolean;
   browser_probe_max_inputs: number;
@@ -1587,6 +1595,9 @@ export type DastSettingsUpdate = Partial<
     | "max_per_pattern"
     | "same_domain_mode"
     | "safe_mode_default"
+    | "agent_mode"
+    | "max_agent_turns"
+    | "max_turns_per_hypothesis"
     | "browser_probe_enabled"
     | "browser_marker_posts"
     | "browser_probe_max_inputs"

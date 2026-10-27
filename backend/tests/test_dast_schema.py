@@ -269,6 +269,6 @@ def test_dast_scan_snapshots_effective_settings_in_metadata(tmp_path, monkeypatc
     assert snapshot["max_pages"] == settings.dast_max_pages
     assert snapshot["rate_limit_per_sec"] == settings.dast_rate_limit_per_sec
     assert set(snapshot["model_routing"]) == {
-        "fingerprint", "crawl_plan", "login_selectors", "construct", "rule", "narrate"
+        "fingerprint", "crawl_plan", "login_selectors", "plan", "construct", "rule", "narrate"
     }
     assert "password" not in str(snapshot).lower()

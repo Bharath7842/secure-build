@@ -27,7 +27,7 @@ from app.config import settings as env_settings
 from app.models import DastGlobalConfig
 
 KEY = "settings"
-PROVIDERS = ("ollama", "bedrock", "openai", "anthropic")
+PROVIDERS = ("ollama", "bedrock", "openai", "anthropic", "claude_cli")
 
 
 @dataclass(frozen=True)
@@ -48,6 +48,8 @@ FIELDS: tuple[Field, ...] = (
     Field("rate_limit_per_sec", "dast_rate_limit_per_sec", float, 0.1, 100, "Request rate limit (per second)"),
     Field("max_targets", "dast_max_targets", int, 1, 500, "Endpoints tested per scan"),
     Field("max_tests_per_target", "dast_max_tests_per_target", int, 1, 100, "Tests per endpoint"),
+    Field("max_agent_turns", "dast_max_agent_turns", int, 1, 1000, "Adaptive turns per scan"),
+    Field("max_turns_per_hypothesis", "dast_max_turns_per_hypothesis", int, 1, 20, "Adaptive turns per hypothesis"),
     Field("browser_probe_max_inputs", "dast_browser_probe_max_inputs", int, 1, 20, "Inputs probed per page"),
 )
 _BY_NAME = {f.name: f for f in FIELDS}
@@ -120,7 +122,7 @@ def update_settings(db: Session, patch: Mapping[str, Any], *, confirm_unsafe: bo
                 errors.append({"field": name, "message": "turning safe mode off by default needs explicit confirmation (confirm_unsafe)"})
             else:
                 updated[name] = raw
-        elif name in ("browser_probe_enabled", "browser_marker_posts"):
+        elif name in ("browser_probe_enabled", "browser_marker_posts", "agent_mode"):
             if not isinstance(raw, bool):
                 errors.append({"field": name, "message": "must be true or false"})
             elif name == "browser_marker_posts" and raw is True and not confirm_unsafe:
@@ -189,6 +191,8 @@ def effective_settings(db: Session, base: Settings | None = None) -> Settings:
         update["dast_same_domain_mode"] = stored["same_domain_mode"]
     if "safe_mode_default" in stored:
         update["dast_safe_mode_default"] = bool(stored["safe_mode_default"])
+    if "agent_mode" in stored:
+        update["dast_agent_mode_default"] = bool(stored["agent_mode"])
     if "browser_probe_enabled" in stored:
         update["dast_browser_probe_enabled"] = bool(stored["browser_probe_enabled"])
     if "browser_marker_posts" in stored:
@@ -220,6 +224,9 @@ def settings_view(db: Session) -> dict[str, Any]:
         "max_per_pattern": cfg.dast_max_per_pattern,
         "same_domain_mode": cfg.dast_same_domain_mode,
         "safe_mode_default": cfg.dast_safe_mode_default,
+        "agent_mode": cfg.dast_agent_mode_default,
+        "max_agent_turns": cfg.dast_max_agent_turns,
+        "max_turns_per_hypothesis": cfg.dast_max_turns_per_hypothesis,
         "browser_probe_enabled": cfg.dast_browser_probe_enabled,
         "browser_marker_posts": cfg.dast_browser_marker_posts,
         "browser_probe_max_inputs": cfg.dast_browser_probe_max_inputs,
@@ -252,6 +259,13 @@ def _aws_credentials_present() -> bool:
     return (Path.home() / ".aws" / "credentials").is_file()
 
 
+def _claude_cli_present(cfg: Settings) -> bool:
+    """Whether the `claude` binary can be found. It does not check the sign-in: Test does."""
+    import shutil
+
+    return bool((cfg.claude_cli_path or "").strip() or shutil.which("claude"))
+
+
 def provider_status(cfg: Settings | None = None) -> list[dict[str, Any]]:
     """Read-only "set / not set" per provider, from the environment. Never a value."""
     cfg = cfg or env_settings
@@ -264,6 +278,7 @@ def provider_status(cfg: Settings | None = None) -> list[dict[str, Any]]:
         {"provider": "bedrock", "configured": _aws_credentials_present(), "source": "environment", "detail": "AWS credentials (environment, profile or role)"},
         {"provider": "openai", "configured": set_(cfg.openai_api_key), "source": "environment", "detail": "OPENAI_API_KEY"},
         {"provider": "anthropic", "configured": set_(cfg.anthropic_api_key), "source": "environment", "detail": "ANTHROPIC_API_KEY"},
+        {"provider": "claude_cli", "configured": _claude_cli_present(cfg), "source": "local", "detail": "the `claude` CLI on this machine, signed in (CLAUDE_CLI_PATH or PATH)"},
     ]
 
 
@@ -275,6 +290,7 @@ def default_models(cfg: Settings | None = None) -> dict[str, str]:
         "bedrock": cfg.bedrock_model_id,
         "openai": "",
         "anthropic": "",
+        "claude_cli": cfg.dast_claude_cli_model,
     }
 
 
@@ -293,7 +309,7 @@ def test_route(db: Session, route: Mapping[str, Any], *, gateway_factory: Callab
         return result
     cfg = effective_settings(db)
     if not model:
-        model = {"ollama": cfg.dast_ollama_model, "bedrock": cfg.bedrock_model_id}.get(provider, "")
+        model = {"ollama": cfg.dast_ollama_model, "bedrock": cfg.bedrock_model_id, "claude_cli": cfg.dast_claude_cli_model}.get(provider, "")
     if not model:
         result["error"] = f"{provider} needs an explicit model name"
         return result

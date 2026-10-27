@@ -27,7 +27,7 @@ HDR = ADMIN_HEADERS
 
 # ---- banners and markers (DAST-12-010) ----------------------------------------------------------------------
 
-LABELS = ["checking connection", "fingerprinting", "logging in", "crawling", "importing schemas", "passive analysis", "testing apis", "probing browser inputs", "checking authorization", "finishing"]
+LABELS = ["checking connection", "fingerprinting", "logging in", "crawling", "importing schemas", "passive analysis", "planning tests", "testing apis", "probing browser inputs", "checking authorization", "finishing"]
 
 
 def progress_of(label: str) -> int:

@@ -95,6 +95,9 @@ def build_effective_settings(
         "oast_configured": oast_configured,
         "headless": bool(request.get("headless", True)),
         "schema_url": request.get("schema_url") or "",
+        "agent_mode": bool(request["agent_mode"]) if request.get("agent_mode") is not None else bool(base.get("agent_mode", False)),
+        "max_agent_turns": int(request.get("max_agent_turns") or base.get("max_agent_turns") or 60),
+        "max_turns_per_hypothesis": int(request.get("max_turns_per_hypothesis") or base.get("max_turns_per_hypothesis") or 4),
         "browser_probe_enabled": bool(request["browser_probe_enabled"]) if request.get("browser_probe_enabled") is not None else bool(base.get("browser_probe_enabled", True)),
         # A marker POST is a write. It stays off for a target that is not disposable, whatever the request says.
         "browser_marker_posts": bool(request["browser_marker_posts"] if request.get("browser_marker_posts") is not None else base.get("browser_marker_posts", False)) and disposable,

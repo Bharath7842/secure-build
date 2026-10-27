@@ -22,6 +22,11 @@ from typing import Any, Iterable, Mapping
 DEFAULT_PRICES: Mapping[str, tuple[float, float]] = {
     "ollama": (0.0, 0.0),
     "bedrock": (1.00, 5.00),  # Claude Haiku 4.5 class; the SAST engine uses the same figures
+    # The local claude CLI bills against a login, so this is notional (Sonnet/Haiku rates, as SAST reports it).
+    "claude_cli/claude-sonnet-5-5": (3.00, 15.00),
+    "claude_cli/sonnet": (3.00, 15.00),
+    "claude_cli/claude-haiku-5-5": (1.00, 5.00),
+    "claude_cli/haiku": (1.00, 5.00),
 }
 
 

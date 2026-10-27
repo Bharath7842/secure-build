@@ -9,12 +9,14 @@ executor as one identity; the model only proposes inputs and advises on verdicts
 
 from __future__ import annotations
 
-from ..active import DefaultSteps, analysis_record, finding_rows, loop_checks, run_stage, summarize
+from ..active import DefaultSteps, analysis_record, finding_rows, loop_checks, run_stage, run_target, run_target_agentic, summarize
 from ..assist import review_rows
 from ..domain.entities import Endpoint
+from ..domain.agent import Plan
 from ..domain.inventory import observed
 from ..domain.session import DenialTracker, may_relogin
 from ..input_gate import InputGate
+from ..jwt_probe import jwt_checks, run_jwt
 from ..ssrf import run_ssrf, ssrf_check
 from ..state import GraphState
 from .authenticate import authenticate_identity
@@ -128,10 +130,20 @@ def analyze_apis(state: GraphState) -> GraphState:
 
     # Up to `workers` endpoints at once (from `model_parallelism`); `on_outcome` still runs only
     # on the calling thread, in target order, regardless of how many workers are running.
+    plan = state.get("test_plan") if state.get("agent_mode") else None
+    budget = state.get("agent_budget")
+
+    def runner(target, active_steps, **kwargs):
+        hypotheses = plan.for_target(target) if isinstance(plan, Plan) else ()
+        if hypotheses and budget is not None:
+            return run_target_agentic(target, active_steps, hypotheses, budget, **kwargs)
+        return run_target(target, active_steps, **kwargs)
+
     def run_once(target_endpoints):
         return run_stage(
             target_endpoints, steps, max_targets=max_targets, max_tests=max_tests, cancelled=runtime.cancelled, log=print,
-            workers=workers, task_log=runtime.task_log, on_outcome=on_outcome, session_lost=session_lost,
+            workers=workers, task_log=runtime.task_log, on_outcome=on_outcome, session_lost=session_lost, runner=runner if plan else None,
+            priority=[h.target_key for h in plan.hypotheses] if isinstance(plan, Plan) else None,
         )
 
     result = run_once(endpoints)
@@ -160,6 +172,8 @@ def analyze_apis(state: GraphState) -> GraphState:
                     result.outcomes.extend(resumed.outcomes)
                     result.session_lost_reason = resumed.session_lost_reason
     summary = summarize(result, records)
+    if budget is not None and isinstance(plan, Plan):
+        summary["agent"] = {"hypotheses": len(plan.hypotheses), "turns": budget.max_turns - budget.remaining(), "max_turns": budget.max_turns}
     state["active_testing"] = summary
 
     items = review_rows(endpoints, runtime.rule_set, runtime.skipped_degraded)
@@ -189,6 +203,19 @@ def analyze_apis(state: GraphState) -> GraphState:
         result.cancelled = result.cancelled or run.cancelled
     elif getattr(runtime, "oast", None) is None and runtime.rule_set is not None and (ec := runtime.rule_set.get("dast-ssrf")) is not None and ec.enabled:
         summary["ssrf"] = {"tests": 0, "confirmed": 0, "reason": "no OAST address is configured; SSRF is assist-only"}
+    enabled_jwt = jwt_checks(runtime.rule_set, runtime.skipped_degraded)
+    if enabled_jwt and not result.cancelled:
+        jwt = run_jwt(endpoints, store=store, executor=runtime.executor, credentials=runtime.credentials,
+                      checks=enabled_jwt, cancelled=runtime.cancelled, log=print)
+        summary["jwt"] = {"tests": jwt.tests, "confirmed": jwt.confirmed}
+        summary["tests_sent"] += jwt.tests
+        runtime.counters.add("tests", jwt.tests)
+        if jwt.rows and writer:
+            try:
+                writer("jwt", jwt.rows)
+            except Exception as exc:  # storage failure must not stop later stages
+                print(f"    Could not persist JWT findings: {type(exc).__name__}")
+        result.cancelled = result.cancelled or jwt.cancelled
     if result.cancelled:
         state["stop_reason"] = "cancelled"
     total_fail = sum(r["counts"]["fail"] for r in records)

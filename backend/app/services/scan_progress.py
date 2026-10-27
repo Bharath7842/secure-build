@@ -47,6 +47,7 @@ PROGRESS_MARKERS: list[tuple[str, int]] = [
     ("### DAST: importing schemas", 65),
     ("### DAST: ingesting schemas", 65),  # the label before it was renamed; kept for persisted logs
     ("### DAST: passive analysis", 70),
+    ("### DAST: planning tests", 73),
     ("### DAST: testing apis", 75),
     ("### DAST: probing browser inputs", 82),
     ("### DAST: checking authorization", 88),

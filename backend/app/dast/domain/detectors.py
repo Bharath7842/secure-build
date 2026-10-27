@@ -28,6 +28,7 @@ from typing import Any, Callable, Mapping, Sequence
 from . import detector_patterns as P
 from .entities import DetectorSignal, ResponseSnapshot
 from .tls import TLS_SIGNAL_NAMES
+from .jwt_check import JWT_SIGNAL_NAMES
 
 
 @dataclass(frozen=True)
@@ -496,7 +497,7 @@ RECON_SIGNALS: frozenset[str] = frozenset(
 
 def signal_names() -> frozenset[str]:
     """Every signal name a check may legitimately name as proof."""
-    return frozenset(DETECTORS) | PASSIVE_SIGNALS | OUT_OF_BAND_SIGNALS | TLS_SIGNAL_NAMES | RECON_SIGNALS
+    return frozenset(DETECTORS) | PASSIVE_SIGNALS | OUT_OF_BAND_SIGNALS | TLS_SIGNAL_NAMES | JWT_SIGNAL_NAMES | RECON_SIGNALS
 
 
 def run_detectors(

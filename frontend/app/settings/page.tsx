@@ -12,6 +12,7 @@ const DAST_PROVIDER_LABELS: Record<string, string> = {
   bedrock: "Amazon Bedrock",
   openai: "OpenAI",
   anthropic: "Anthropic",
+  claude_cli: "Claude (local CLI)",
 };
 
 interface Group {

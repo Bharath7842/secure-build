@@ -66,4 +66,4 @@ def route_after_passive(state: GraphState) -> str:
     if not has_active_work(runtime.rule_set, runtime.skipped_degraded):
         print("[passive] Only passive checks are enabled; the scan ends after this stage.")
         return "end"
-    return "analyze_apis"
+    return "plan_tests" if state.get("agent_mode") else "analyze_apis"

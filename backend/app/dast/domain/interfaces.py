@@ -87,7 +87,7 @@ class BrowserDriver(Protocol):
 @runtime_checkable
 class ModelGateway(Protocol):
     """The only component that calls a model. Tasks: fingerprint, crawl_plan,
-    login_selectors, construct, rule, narrate."""
+    login_selectors, plan, construct, rule, narrate."""
 
     def complete(
         self,

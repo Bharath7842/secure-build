@@ -1,6 +1,6 @@
 """Builds the LangGraph pipeline from the node modules.
 
-    check_connection -> fingerprint -> authenticate -> discover -> passive_analysis -> analyze_apis -> browser_probe -> check_authorization -> END
+    check_connection -> fingerprint -> authenticate -> discover -> passive_analysis -> [plan_tests] -> analyze_apis -> browser_probe -> check_authorization -> END
 
 * `check_connection` (the preflight) ends the run if the target is unreachable.
 * `fingerprint` decides the target's shape, how it is authenticated and whether it publishes an
@@ -13,6 +13,7 @@
   resumes where it stopped.
 * `passive_analysis` reads the recorded traffic (no requests, no model); with only passive checks
   enabled the scan ends there (`route_after_passive`).
+* `plan_tests` optionally ranks existing endpoints/checks for bounded adaptive follow-ups; failures keep the flat loop.
 * `analyze_apis` runs the active tests (the construct/validate/baseline/test/detect/rule loop).
 * `browser_probe` types inert markers into crawled inputs and confirms reflected XSS in the browser.
 * `check_authorization` replays what each identity reached as every other identity and Anonymous.
@@ -28,6 +29,7 @@ from .nodes.check_connection import check_connection
 from .nodes.discover import discover, route_after_discover
 from .nodes.fingerprint import fingerprint
 from .nodes.passive_analysis import passive_analysis, route_after_passive
+from .nodes.plan_tests import plan_tests
 from .domain.session import MAX_RELOGIN_ATTEMPTS  # noqa: F401  (the per-identity bound; see discover)
 from .state import GraphState
 
@@ -81,6 +83,7 @@ def build_graph():
     graph.add_node("authenticate", _with_banner("logging in", authenticate))
     graph.add_node("discover", _with_banner(None, discover))
     graph.add_node("passive_analysis", _with_banner("passive analysis", passive_analysis))
+    graph.add_node("plan_tests", _with_banner("planning tests", plan_tests))
     graph.add_node("analyze_apis", _with_banner("testing apis", analyze_apis))
     graph.add_node("browser_probe", _with_banner("probing browser inputs", browser_probe))
     graph.add_node("check_authorization", _with_banner("checking authorization", check_authorization))
@@ -92,7 +95,8 @@ def build_graph():
     graph.add_conditional_edges(
         "discover", route_after_discover, {"authenticate": "authenticate", "passive_analysis": "passive_analysis", "end": END}
     )
-    graph.add_conditional_edges("passive_analysis", route_after_passive, {"analyze_apis": "analyze_apis", "end": END})
+    graph.add_conditional_edges("passive_analysis", route_after_passive, {"analyze_apis": "analyze_apis", "plan_tests": "plan_tests", "end": END})
+    graph.add_edge("plan_tests", "analyze_apis")
     graph.add_conditional_edges("analyze_apis", route_after_active, {"browser_probe": "browser_probe", "end": END})
     graph.add_conditional_edges("browser_probe", route_after_browser, {"check_authorization": "check_authorization", "end": END})
     graph.add_edge("check_authorization", END)

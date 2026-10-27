@@ -90,6 +90,11 @@ class GraphState(TypedDict):
     relogin_count: int
 
     # node 5 (analyze_apis) config + output
+    agent_mode: bool
+    max_agent_turns: int
+    max_turns_per_hypothesis: int
+    test_plan: Any
+    agent_budget: Any
     run_analysis: bool
     dast_max_apis: Optional[int]
     dast_max_tests_per_api: Optional[int]
@@ -108,6 +113,7 @@ class GraphState(TypedDict):
 
 
 def make_initial_state(args: argparse.Namespace, gateway: Any, noise_params: list) -> GraphState:
+    effective = getattr(getattr(args, "runtime", None), "effective", {})
     return GraphState(
         url=args.url,
         login_url=args.login_url or "",
@@ -168,6 +174,11 @@ def make_initial_state(args: argparse.Namespace, gateway: Any, noise_params: lis
         crawl_start_time=0.0,
         consecutive_low_value_visits=0,
         relogin_count=0,
+        agent_mode=bool(getattr(args, "agent_mode", effective.get("agent_mode", False))),
+        max_agent_turns=int(getattr(args, "max_agent_turns", effective.get("max_agent_turns", 60))),
+        max_turns_per_hypothesis=int(getattr(args, "max_turns_per_hypothesis", effective.get("max_turns_per_hypothesis", 4))),
+        test_plan=None,
+        agent_budget=None,
         run_analysis=getattr(args, "run_analysis", True),
         dast_max_apis=getattr(args, "dast_max_apis", None),
         dast_max_tests_per_api=getattr(args, "dast_max_tests_per_api", None),

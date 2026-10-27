@@ -14,11 +14,12 @@ DAST_MODEL_TASKS: tuple[str, ...] = (
     "fingerprint",
     "crawl_plan",
     "login_selectors",
+    "plan",
     "construct",
     "rule",
     "narrate",
 )
-DastModelProvider = Literal["ollama", "bedrock", "openai", "anthropic"]
+DastModelProvider = Literal["ollama", "bedrock", "openai", "anthropic", "claude_cli"]
 
 
 class Settings(BaseSettings):
@@ -62,6 +63,8 @@ class Settings(BaseSettings):
     claude_cli_path: str = ""
     claude_cli_request_timeout: int = 600  # seconds per `claude -p` call
     claude_cli_dir: str = str(DATA_DIR / "claude_cli")
+    # DAST routes to `claude_cli` use this model when a task leaves its model empty.
+    dast_claude_cli_model: str = "claude-sonnet-5-5"
     # Local OpenAI-model CLI for projects with llm_provider == "openai_cli". Empty
     # path means "find `codex` on PATH". Each scan gets one persisted thread whose
     # working directory lives under openai_cli_dir.
@@ -122,6 +125,10 @@ class Settings(BaseSettings):
     # Requests a load-generating (opt-in) check may cause in one scan, baselines included.
     # Also the cap on browser marker submits (stored XSS) in one scan.
     dast_opt_in_request_ceiling: int = 30
+    # Optional planner and adaptive model-call limits (ordinary target coverage remains).
+    dast_agent_mode_default: bool = False
+    dast_max_agent_turns: int = 60
+    dast_max_turns_per_hypothesis: int = 4
     # Browser input probes: type inert markers into crawled pages. On by default; sends GETs only
     # unless marker posts are also on.
     dast_browser_probe_enabled: bool = True
@@ -142,13 +149,15 @@ class Settings(BaseSettings):
 
     # --- DAST per-task model routing: provider + model for each gateway task ---
     # An empty model means "the provider's default": `dast_ollama_model` for ollama,
-    # `bedrock_model_id` for bedrock. openai/anthropic need an explicit model.
+    # `bedrock_model_id` for bedrock, `dast_claude_cli_model` for claude_cli. openai/anthropic need an explicit model.
     dast_model_fingerprint_provider: DastModelProvider = "ollama"
     dast_model_fingerprint_model: str = ""
     dast_model_crawl_plan_provider: DastModelProvider = "ollama"
     dast_model_crawl_plan_model: str = ""
     dast_model_login_selectors_provider: DastModelProvider = "ollama"
     dast_model_login_selectors_model: str = ""
+    dast_model_plan_provider: DastModelProvider = "ollama"
+    dast_model_plan_model: str = ""
     dast_model_construct_provider: DastModelProvider = "ollama"
     dast_model_construct_model: str = ""
     dast_model_rule_provider: DastModelProvider = "ollama"
@@ -240,6 +249,8 @@ class Settings(BaseSettings):
         "dast_max_response_body_bytes",
         "dast_model_parallelism",
         "dast_browser_probe_max_inputs",
+        "dast_max_agent_turns",
+        "dast_max_turns_per_hypothesis",
     )
     @classmethod
     def dast_limit_is_positive(cls, value: int) -> int:
@@ -288,6 +299,9 @@ class Settings(BaseSettings):
             "oast_configured": self.dast_oast_callback_url is not None,
             "opt_in_request_ceiling": self.dast_opt_in_request_ceiling,
             "oast_wait_s": self.dast_oast_wait_s,
+            "agent_mode": self.dast_agent_mode_default,
+            "max_agent_turns": self.dast_max_agent_turns,
+            "max_turns_per_hypothesis": self.dast_max_turns_per_hypothesis,
             "browser_probe_enabled": self.dast_browser_probe_enabled,
             "browser_marker_posts": self.dast_browser_marker_posts,
             "browser_probe_max_inputs": self.dast_browser_probe_max_inputs,
@@ -328,7 +342,7 @@ class Settings(BaseSettings):
             provider = getattr(self, f"dast_model_{task}_provider")
             model = getattr(self, f"dast_model_{task}_model").strip()
             if not model:
-                model = {"ollama": self.dast_ollama_model, "bedrock": self.bedrock_model_id}.get(provider, "")
+                model = {"ollama": self.dast_ollama_model, "bedrock": self.bedrock_model_id, "claude_cli": self.dast_claude_cli_model}.get(provider, "")
             routing[task] = (provider, model)
         return routing
 

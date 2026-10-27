@@ -8,6 +8,7 @@ import type { DastModelChoice, DastModelProvider, DastModelTask, DastProviders, 
 import { useModelCatalog } from "@/lib/useModelCatalog";
 
 const TASKS: { task: DastModelTask; label: string }[] = [
+  { task: "plan", label: "Adaptive test planning" },
   { task: "construct", label: "Test construction" },
   { task: "rule", label: "Verdict advice" },
   { task: "narrate", label: "Narration" },
@@ -21,6 +22,7 @@ export const PROVIDER_LABELS: Record<DastModelProvider, string> = {
   bedrock: "Amazon Bedrock",
   openai: "OpenAI",
   anthropic: "Anthropic",
+  claude_cli: "Claude (local CLI)",
 };
 
 const PROVIDERS = Object.keys(PROVIDER_LABELS) as DastModelProvider[];

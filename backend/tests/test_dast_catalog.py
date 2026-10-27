@@ -227,8 +227,10 @@ def test_api_pack_covers_all_ten_risks_with_the_specified_modes():
     def modes(risk):
         return {c.mode for c in by_risk[risk]}
 
-    for risk in ("API1", "API2", "API5", "API8", "API9"):
+    for risk in ("API1", "API5", "API8", "API9"):
         assert modes(risk) == {CheckMode.AUTOMATED}, risk
+    assert modes("API2") == {CheckMode.AUTOMATED, CheckMode.OPT_IN}
+    assert {c.check_id for c in by_risk["API2"] if c.mode is CheckMode.OPT_IN} == {"dast-jwt-weak-secret"}
     assert CheckMode.AUTOMATED in modes("API3") and CheckMode.AUTOMATED in modes("API7")
     assert modes("API4") == {CheckMode.OPT_IN}
     assert modes("API6") == {CheckMode.ASSIST_ONLY} and modes("API10") == {CheckMode.ASSIST_ONLY}
