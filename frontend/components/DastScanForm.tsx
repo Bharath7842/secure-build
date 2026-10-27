@@ -12,6 +12,7 @@ import type {
   DastModelChoice,
   DastModelTask,
   DastProviders,
+  DastScanPrefill,
   DastSettings,
   Project,
   ScanCreateInput,
@@ -37,6 +38,33 @@ interface DastScanFormProps {
   /** The active project. DAST needs no repository: the target address is entered per scan. */
   project: Project;
   onSubmit: (input: ScanCreateInput) => Promise<void>;
+  /** An earlier DAST scan whose saved settings fill the form (never its passwords or tokens). */
+  fromScanId?: string;
+}
+
+type DastInputSaved = DastScanPrefill["dast_input"];
+interface Prefill {
+  version?: number | null;
+  input: DastInputSaved;
+}
+
+/** Identities as the form holds them, from a scan's saved request. Secrets are not stored, so they stay empty. */
+function identitiesFromSaved(saved: DastInputSaved): IdentityDraft[] {
+  return (saved.identities ?? [])
+    .filter((i) => !i.implicit && i.auth_method !== "none" && i.role !== "anonymous")
+    .map((i) => {
+      const role = (["admin", "user", "viewer", "custom"] as const).find((r) => r === i.role) ?? "user";
+      return newIdentity({
+        label: i.label,
+        role,
+        customRole: role === "custom" ? (i.role_label ?? "") : "",
+        method: i.auth_method as IdentityDraft["method"],
+        loginUrl: i.login_url ?? "",
+        username: i.username ?? "",
+        ...(i.header_name ? { headerName: i.header_name } : {}),
+        ...(i.scheme ? { scheme: i.scheme } : {}),
+      });
+    });
 }
 
 /** The address must be an absolute http(s) URL: checked as the user types, not only on submit. */
@@ -64,23 +92,53 @@ function describePreset(preset: Record<string, number> | undefined): string {
   return `up to ${preset.max_targets} endpoints, ${preset.max_tests_per_target} tests each, ${preset.max_pages} pages, depth ${preset.max_depth}`;
 }
 
-/** Inputs for a DAST scan: the target and authorization, scope and safety, identities, rule packs and model. */
-export default function DastScanForm({ project, onSubmit }: DastScanFormProps) {
+/** Inputs for a DAST scan: the target and authorization, scope and safety, identities, rule packs and model.
+ *  With `fromScanId` the form starts from that scan's saved settings instead of the defaults. */
+export default function DastScanForm({ project, onSubmit, fromScanId }: DastScanFormProps) {
+  const [prefill, setPrefill] = useState<Prefill | null>(null);
+  const [loadingPrefill, setLoadingPrefill] = useState(Boolean(fromScanId));
+  const [prefillError, setPrefillError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!fromScanId) return;
+    let active = true;
+    api.scans
+      .dastInput(fromScanId)
+      .then((saved) => active && setPrefill({ version: saved.version, input: saved.dast_input }))
+      .catch((err) => active && setPrefillError(err instanceof ApiError ? err.message : "Could not load that scan's settings."))
+      .finally(() => active && setLoadingPrefill(false));
+    return () => {
+      active = false;
+    };
+  }, [fromScanId]);
+
+  // The form's state is seeded once, so it mounts only after the saved settings have arrived.
+  if (loadingPrefill) return <p className="text-sm text-[var(--muted)]">Loading the previous scan&apos;s settings…</p>;
+  return <DastScanFormBody project={project} onSubmit={onSubmit} prefill={prefill} prefillError={prefillError} />;
+}
+
+function DastScanFormBody({
+  project,
+  onSubmit,
+  prefill,
+  prefillError,
+}: Pick<DastScanFormProps, "project" | "onSubmit"> & { prefill: Prefill | null; prefillError: string | null }) {
   const uid = useId();
-  const [targetUrl, setTargetUrl] = useState(PRACTICE_TARGET_URL);
+  const saved = prefill?.input;
+  const [targetUrl, setTargetUrl] = useState(saved?.target_url || PRACTICE_TARGET_URL);
   const [targetTouched, setTargetTouched] = useState(false);
   const [authorized, setAuthorized] = useState(true);
 
-  const [intensity, setIntensity] = useState<DastIntensity>("light");
-  const [headless, setHeadless] = useState(true);
-  const [agentMode, setAgentMode] = useState<boolean | null>(null);
-  const [agentTurns, setAgentTurns] = useState("");
-  const [hypothesisTurns, setHypothesisTurns] = useState("");
+  const [intensity, setIntensity] = useState<DastIntensity>(saved?.intensity ?? "light");
+  const [headless, setHeadless] = useState(saved?.headless ?? true);
+  const [agentMode, setAgentMode] = useState<boolean | null>(saved?.agent_mode ?? null);
+  const [agentTurns, setAgentTurns] = useState(saved?.max_agent_turns ? String(saved.max_agent_turns) : "");
+  const [hypothesisTurns, setHypothesisTurns] = useState(saved?.max_turns_per_hypothesis ? String(saved.max_turns_per_hypothesis) : "");
   const [extraEndpoints, setExtraEndpoints] = useState("");
 
-  const [identities, setIdentities] = useState<IdentityDraft[]>(() => [newIdentity(PRACTICE_IDENTITY)]);
-  const [rulePacks, setRulePacks] = useState<string[] | null>(null);
-  const [modelRouting, setModelRouting] = useState<Partial<Record<DastModelTask, DastModelChoice>>>({});
+  const [identities, setIdentities] = useState<IdentityDraft[]>(() => (saved ? identitiesFromSaved(saved) : [newIdentity(PRACTICE_IDENTITY)]));
+  const [rulePacks, setRulePacks] = useState<string[] | null>(saved?.rule_packs ?? null);
+  const [modelRouting, setModelRouting] = useState<Partial<Record<DastModelTask, DastModelChoice>>>(saved?.model_routing ?? {});
 
   const [settings, setSettings] = useState<DastSettings | null>(null);
   const [providers, setProviders] = useState<DastProviders | null>(null);
@@ -165,6 +223,18 @@ export default function DastScanForm({ project, onSubmit }: DastScanFormProps) {
       {error && (
         <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
+        </div>
+      )}
+
+      {prefill && (
+        <div role="status" className="rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-[var(--ink)]">
+          Filled in from the settings of scan v{prefill.version ?? "?"}. Passwords, tokens and saved sessions are never stored, so enter them
+          again under Identities.
+        </div>
+      )}
+      {prefillError && (
+        <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          {prefillError} Starting from the defaults instead.
         </div>
       )}
 
@@ -313,6 +383,7 @@ export default function DastScanForm({ project, onSubmit }: DastScanFormProps) {
         projectId={project.id}
         hasSecondIdentity={authenticated >= 2}
         oastConfigured={Boolean(settings?.oast_configured)}
+        initialPacks={saved?.rule_packs ?? null}
         onChange={setRulePacks}
       />
 

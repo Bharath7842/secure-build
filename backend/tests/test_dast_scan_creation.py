@@ -428,3 +428,24 @@ def test_the_pasted_list_has_a_size_limit(client, project_id):
 
 
 # ---- scan again: the saved, secret-free request ---------------------------------------------------
+
+
+def test_the_saved_request_can_be_read_back_without_any_secret(client, project_id):
+    r = post(client, project_id, identities=IDENTITIES, intensity="deep", rule_packs=["owasp-api-top10-2023"],
+             model_routing={"narrate": {"provider": "ollama", "model": "llama3"}})
+    scan_id = r.json()["scan_id"]
+    out = client.get(f"/scans/{scan_id}/dast-input", headers=HDR)
+    assert out.status_code == 200, out.text
+    body = out.json()["dast_input"]
+    assert body["target_url"] == URL and body["intensity"] == "deep" and body["rule_packs"] == ["owasp-api-top10-2023"]
+    assert body["model_routing"] == {"narrate": {"provider": "ollama", "model": "llama3"}}
+    assert next(i for i in body["identities"] if i["label"] == "Admin A")["username"] == "admin"
+    for secret in (PASSWORD, TOKEN, COOKIE):
+        assert secret not in out.text
+
+
+def test_the_saved_request_is_a_404_for_a_scan_without_one(client, project_id):
+    assert client.get("/scans/nope/dast-input", headers=HDR).status_code == 404
+    sast = client.post("/scans", json={"project_id": project_id, "git_url": "https://example.test/r.git", "branch": "main"}, headers=HDR)
+    if sast.status_code in (200, 202):
+        assert client.get(f"/scans/{sast.json()['scan_id']}/dast-input", headers=HDR).status_code == 404

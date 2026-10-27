@@ -684,6 +684,35 @@ export interface UsageSummary {
   result_cache_saved_tokens?: number;
 }
 
+/** The secret-free request a DAST scan was started with (`GET /scans/{id}/dast-input`). Passwords, tokens
+ *  and saved sessions are never stored, so an identity has only `has_secret`. */
+export interface DastScanPrefill {
+  scan_id: string;
+  version?: number | null;
+  dast_input: {
+    target_url?: string;
+    headless?: boolean;
+    intensity?: DastIntensity;
+    agent_mode?: boolean | null;
+    max_agent_turns?: number | null;
+    max_turns_per_hypothesis?: number | null;
+    rule_packs?: string[] | null;
+    model_routing?: Partial<Record<DastModelTask, DastModelChoice>> | null;
+    identities?: {
+      label: string;
+      /** "admin" | "user" | "viewer" | "custom" | "anonymous". */
+      role: string;
+      role_label?: string;
+      auth_method: string;
+      implicit?: boolean;
+      login_url?: string;
+      username?: string;
+      header_name?: string;
+      scheme?: string;
+    }[];
+  };
+}
+
 export interface ScanResults {
   scan_id: string;
   status: string;

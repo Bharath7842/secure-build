@@ -12,6 +12,8 @@ import type { Project, ScanCreateInput } from "@/lib/types";
 
 interface NewScanFormProps {
   scanType?: "sast" | "sca" | "sbom" | "dast";
+  /** DAST only: an earlier scan whose saved settings fill the form. */
+  fromScanId?: string;
 }
 
 /** Why `project` can't run this scan type yet, or null. DAST needs no repository. */
@@ -33,7 +35,7 @@ function Notice({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function NewScanForm({ scanType = "sast" }: NewScanFormProps) {
+export default function NewScanForm({ scanType = "sast", fromScanId }: NewScanFormProps) {
   const router = useRouter();
   const me = useAuth();
   const { activeProject, loading } = useActiveProject();
@@ -84,6 +86,6 @@ export default function NewScanForm({ scanType = "sast" }: NewScanFormProps) {
     );
   }
 
-  if (scanType === "dast") return <DastScanForm project={activeProject} onSubmit={handleSubmit} />;
+  if (scanType === "dast") return <DastScanForm project={activeProject} onSubmit={handleSubmit} fromScanId={fromScanId} />;
   return <ScanForm project={activeProject} scanType={scanType} onSubmit={handleSubmit} />;
 }

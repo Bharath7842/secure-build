@@ -48,6 +48,7 @@ import type {
   DastNarration,
   ScanLogs,
   ScanResults,
+  DastScanPrefill,
   ScanStatus,
   ScanTrigger,
   TokenRepo,
@@ -259,6 +260,8 @@ export const api = {
       request("/api/scans", { method: "POST", body: JSON.stringify(input) }),
     status: (id: string): Promise<ScanStatus> => request(`/api/scans/${id}/status`),
     results: (id: string): Promise<ScanResults> => request(`/api/scans/${id}/results`),
+    /** A DAST scan's saved settings, without secrets, to start a new scan from. */
+    dastInput: (id: string): Promise<DastScanPrefill> => request(`/api/scans/${id}/dast-input`),
     findings: (
       id: string,
       verdict?: "true_positive" | "false_positive" | "unverified",

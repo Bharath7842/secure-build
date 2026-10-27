@@ -272,6 +272,16 @@ export default function DastDashboardPage() {
                           <Link href={`/scans/${scan.id}`} className="font-medium text-[var(--accent)]">
                             View →
                           </Link>
+                          {can("scans.create_dast") && (
+                            <Link
+                              href={`/scans/new?type=dast&from=${scan.id}`}
+                              title="Start a new scan with this scan's settings"
+                              aria-label={`Scan again like v${scan.version} of ${projectNames.get(scan.project_id) ?? "project"}`}
+                              className="font-medium text-[var(--accent)] hover:underline"
+                            >
+                              Scan again
+                            </Link>
+                          )}
                           {can("scans.delete") && (
                             <button
                               type="button"

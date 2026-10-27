@@ -470,6 +470,14 @@ class ScanResultsOut(BaseModel):
     dast_skipped_degraded: list[dict] | None = None
 
 
+class DastScanInputOut(BaseModel):
+    """The secret-free request a DAST scan was started with, for prefilling a new scan."""
+
+    scan_id: str
+    version: int | None = None
+    dast_input: dict
+
+
 class ReviewSummaryOut(BaseModel):
     review_id: str
     reviewer_verdict: str | None = None

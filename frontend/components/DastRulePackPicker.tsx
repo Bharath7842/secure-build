@@ -20,6 +20,8 @@ interface DastRulePackPickerProps {
   /** Two authenticated identities were entered: cross-role checks can run in full. */
   hasSecondIdentity: boolean;
   oastConfigured: boolean;
+  /** Packs to start from (a rescan); omitted = the project defaults. */
+  initialPacks?: string[] | null;
   /** `null` = the project/global defaults; a list = exactly these packs for this scan. */
   onChange: (packs: string[] | null) => void;
 }
@@ -159,13 +161,13 @@ function CheckListModal({
 /** Choose which rule packs run (DAST-13-040): the packs and their descriptions come from the backend,
  *  start from the project defaults and can be overridden for this scan, with a live count of the
  *  checks that will run and a note for each one that is off by default or missing a dependency. */
-export default function DastRulePackPicker({ projectId, hasSecondIdentity, oastConfigured, onChange }: DastRulePackPickerProps) {
+export default function DastRulePackPicker({ projectId, hasSecondIdentity, oastConfigured, initialPacks, onChange }: DastRulePackPickerProps) {
   const uid = useId();
   const [packs, setPacks] = useState<DastCatalogPack[]>([]);
   const [catalogChecks, setCatalogChecks] = useState<DastCatalogCheck[]>([]);
   const [defaults, setDefaults] = useState<string[]>([]);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [touched, setTouched] = useState(false);
+  const [selected, setSelected] = useState<string[]>(initialPacks ?? []);
+  const [touched, setTouched] = useState(Boolean(initialPacks));
   const [checks, setChecks] = useState<DastEffectiveCheck[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

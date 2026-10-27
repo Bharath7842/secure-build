@@ -17,6 +17,7 @@ from app.models import UNVERIFIED_VERDICT, DastRequestAudit, Finding, Project, S
 from app.schemas import (
     DastRequestAuditEntryOut,
     DastAuthzMatrixOut,
+    DastScanInputOut,
     DastRequestAuditPageOut,
     DastScanFindingsOut,
     DecisionDiffOut,
@@ -505,6 +506,20 @@ def get_scan_results(
         dast_rule_set=meta.get("dast_rule_set"),
         dast_skipped_degraded=meta.get("dast_skipped_degraded"),
     )
+
+
+@router.get("/{scan_id}/dast-input", response_model=DastScanInputOut)
+def get_dast_scan_input(
+    scan_id: str,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require("scans.view_own")),
+):
+    """What a DAST scan was started with, minus every secret, so the new-scan form can start from it."""
+    scan = _get_scan_or_404(db, scan_id, principal)
+    dast_input = (scan.metadata_json or {}).get("dast_input")
+    if (scan.scan_type or "sast") != "dast" or not dast_input:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This scan has no saved DAST settings.")
+    return DastScanInputOut(scan_id=scan.id, version=scan.version, dast_input=dast_input)
 
 
 @router.get("/{scan_id}/narration")
