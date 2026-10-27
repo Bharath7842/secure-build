@@ -192,6 +192,16 @@ def test_create_project_without_git_url_for_dast_only_use(client):
     assert resp.json()["default_git_url"] == ""
 
 
+def test_project_accepts_claude_cli_provider(client):
+    resp = client.post(
+        "/projects",
+        json=_payload(name="claude-cli", llm_provider="claude_cli", llm_model="sonnet"),
+        headers=AUTH_HEADER,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["llm_provider"] == "claude_cli"
+
+
 def test_llm_api_key_is_write_only(client):
     resp = client.post(
         "/projects",
@@ -251,3 +261,25 @@ def test_old_databases_lose_the_removed_data_policy_column(tmp_path):
     inspector = inspect(engine)
     assert "llm_data_policy" not in {c["name"] for c in inspector.get_columns("projects")}
     assert "llm_data_policy" not in {c["name"] for c in inspector.get_columns("scans")}
+
+
+def test_startup_moves_old_granite_fallback_to_the_instruct_tag(tmp_path):
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
+
+    from app.db import init_db
+    from app.models import Project
+
+    url = f"sqlite:///{(tmp_path / 'old.db').as_posix()}"
+    init_db(url)
+    engine = create_engine(url)
+    with Session(engine) as db:
+        db.add(Project(
+            id="p1", name="old", default_git_url="https://example.com/r.git",
+            fallback_llm_provider="ollama", fallback_llm_model="granite-code:3b",
+        ))
+        db.commit()
+    init_db(url)
+    with engine.begin() as conn:
+        model = conn.execute(text("SELECT fallback_llm_model FROM projects WHERE id='p1'")).scalar()
+    assert model == "granite-code:3b-instruct"

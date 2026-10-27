@@ -160,7 +160,8 @@ def test_sast_responses_are_unchanged(client):
     scan_id = new_scan(client, "sast", scan_type="sast")
     body = get(client, scan_id)
     assert set(body) == {
-        "scan_id", "tp_count", "fp_count", "unverified_count", "files_scanned", "severity_group_counts", "findings",
+        "scan_id", "tp_count", "fp_count", "unverified_count", "files_scanned", "severity_group_counts",
+        "cwe_groups", "hidden_fp_count", "findings",
     }
     for finding in body["findings"]:
         assert "evidence" not in finding and "remediation" not in finding

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-LlmProvider = Literal["bedrock", "openai_compat", "ollama"]
+LlmProvider = Literal["bedrock", "openai_compat", "ollama", "claude_cli"]
 OllamaSizeClass = Literal["small", "large"]
 
 
@@ -30,6 +30,20 @@ LLM_PRESETS: tuple[LlmPreset, ...] = (
         label="AWS Bedrock — Claude Sonnet 4.5",
         provider="bedrock",
         model="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    ),
+    # The local `claude` CLI (one Claude session per scan), using whatever
+    # login Claude Code has on this machine. `model` is a CLI alias or id.
+    LlmPreset(
+        id="claude-cli-sonnet",
+        label="Claude Sonnet 5.5",
+        provider="claude_cli",
+        model="claude-sonnet-5-5",
+    ),
+    LlmPreset(
+        id="claude-cli-haiku",
+        label="Claude Haiku 5.5",
+        provider="claude_cli",
+        model="claude-haiku-5-5",
     ),
     # Any OpenAI-compatible /chat/completions server (vLLM, LM Studio,
     # llama.cpp server, SGLang, a hosted gateway, ...). The model id is

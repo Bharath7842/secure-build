@@ -374,6 +374,32 @@
         }
       ]
     },
+    "jwt-issuer-audience-missing": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/config/SecurityConfig.java",
+          "issue_class": "security",
+          "line": 13,
+          "occurrence_id": "b90fd87ffa8e3700d2a8c253cc63d112be80ee9261eeb48093d83c6960b0d597",
+          "rule_id": "llm-extra",
+          "unresolved_reason": null,
+          "verdict": "true_positive"
+        }
+      ]
+    },
+    "jwt-issuer-audience-validated": {
+      "findings": [
+        {
+          "file_path": "src/main/java/com/acme/config/SecurityConfig.java",
+          "issue_class": "security",
+          "line": 23,
+          "occurrence_id": "2e21fad47c0ca8b363dcd96e5b8bb181a337d94bfd2b67bd6a088fc063cc2313",
+          "rule_id": "llm-extra",
+          "unresolved_reason": null,
+          "verdict": "false_positive"
+        }
+      ]
+    },
     "log-banner-then-soap-tostring": {
       "findings": [
         {

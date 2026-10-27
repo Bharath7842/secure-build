@@ -25,6 +25,17 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPresetInfo> = {
     provider: "bedrock",
     model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
   },
+  // The local `claude` CLI, one Claude session per scan; `model` is a CLI alias.
+  "claude-cli-sonnet": {
+    label: "Claude Sonnet 5.5",
+    provider: "claude_cli",
+    model: "claude-sonnet-5-5",
+  },
+  "claude-cli-haiku": {
+    label: "Claude Haiku 5.5",
+    provider: "claude_cli",
+    model: "claude-haiku-5-5",
+  },
   // Any OpenAI-compatible /chat/completions server; the model id and base URL
   // are entered on the project form.
   "openai-compat-qwen-coder-32b": {
@@ -97,6 +108,10 @@ export function llmPresetForProviderModel(
   if (provider === "ollama" && model) {
     const match = entries.find(([, p]) => p.provider === "ollama" && p.model === model);
     return match ? match[0] : "ollama-granite-3b-instruct";
+  }
+  if (provider === "claude_cli") {
+    const match = entries.find(([, p]) => p.provider === "claude_cli" && p.model === model);
+    return match ? match[0] : "claude-cli-sonnet";
   }
   if (provider === "openai_compat") {
     return entries.find(([, p]) => p.provider === "openai_compat")?.[0] ?? "openai-compat-qwen-coder-32b";

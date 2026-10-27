@@ -30,6 +30,7 @@ _MAX_MANIFESTS = 300
 # declared" — such libraries are not *frameworks*, so they never appear under
 # `frameworks` and would otherwise be invisible to the rule catalog.
 _MAX_DECLARED_DEPENDENCIES = 600
+_MAX_UNRECOGNIZED_DEPENDENCIES = 100
 
 # Follow-up config-file checks, keyed to a matched signature's label/category/
 # ecosystem — corroborates frameworks that are config-driven rather than
@@ -79,6 +80,22 @@ def _corroborating_files(scan: Dict[str, Any], patterns: tuple = (), suffixes: t
             hits.append(f["path"])
     return hits
 
+
+
+def _unrecognized_list(unrecognized: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Deduped, sorted, capped copy of the dependencies no signature matched.
+    Kept (unlike the old count + 20 samples) so a later step can classify them;
+    sorted so a prompt built from it is byte-stable across runs."""
+    seen = set()
+    out: List[Dict[str, Any]] = []
+    for dep in unrecognized:
+        key = (dep["ecosystem"], dep["name"], dep.get("version"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"ecosystem": dep["ecosystem"], "name": dep["name"], "version": dep.get("version")})
+    out.sort(key=lambda d: (d["ecosystem"], d["name"].lower(), d["version"] or ""))
+    return out[:_MAX_UNRECOGNIZED_DEPENDENCIES]
 
 def analyze_dependencies(scan: Dict[str, Any], repo_root: Path) -> Optional[Dict[str, Any]]:
     """Runs the full dependency-manifest evidence pass.
@@ -185,5 +202,6 @@ def analyze_dependencies(scan: Dict[str, Any], repo_root: Path) -> Optional[Dict
         "declared_dependencies_truncated": len(seen_declared) > len(declared),
         "unrecognized_count": len(unrecognized),
         "unrecognized_sample": [f"{d['ecosystem']}:{d['name']}" for d in unrecognized[:20]],
+        "unrecognized_dependencies": _unrecognized_list(unrecognized),
         "config_evidence": config_evidence,
     }

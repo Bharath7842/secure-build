@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5866,
+  "key": "26cd31d729ffb1120b56eef07c9a888689e7f6ca5e79341aa79243123af7f304",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 156,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 11, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-jdbc-prepare-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"values (method parameter)\", \"sink\": \"connection.prepareStatement(InsertSql.forTable(...))\", \"data_flow\": \"\", \"snippet\": \"PreparedStatement ps = connection.prepareStatement(InsertSql.forTable(\\\"ORDERS\\\", COLUMNS));\", \"verdict_reason\": \"The INSERT text is built by a helper, so it may include caller data.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
+}

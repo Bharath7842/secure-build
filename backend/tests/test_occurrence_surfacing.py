@@ -46,7 +46,7 @@ def test_a_mock_scan_records_every_version_key(client):
     with db_module.SessionLocal() as db:
         versions = db.get(Scan, scan_id).metadata_json["versions"]
     assert set(versions) == {
-        "engine_commit", "rule_catalog_sha256", "result_cache_version",
+        "engine_commit", "rule_catalog_sha256", "result_cache_version", "severity_scheme",
         "system_prompt_sha256", "llm_provider", "llm_model",
     }
     assert versions["engine_commit"] == "mock"

@@ -1,8 +1,0 @@
-{
-  "input_tokens": 1117,
-  "key": "0916ed7d9aa2b4acddc4ac248a5dcc334c388feeeeec80dd58d5f322d4ad8b70",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 118,
-  "step": "group_confirm_triage_findings",
-  "text": "{\"decisions\": [{\"group_index\": 0, \"member\": \"m1\", \"verdict\": \"true_positive\", \"confidence\": 0.85, \"verdict_reason\": \"The name is formatted into the query text as a quoted string.\", \"ai_fix\": \"Bind the name with a PreparedStatement parameter.\"}, {\"group_index\": 1, \"member\": \"m1\", \"verdict\": \"true_positive\", \"confidence\": 0.85, \"verdict_reason\": \"The name is formatted into the query text as a quoted string.\", \"ai_fix\": \"Bind the name with a PreparedStatement parameter.\"}]}"
-}

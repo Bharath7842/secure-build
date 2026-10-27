@@ -15,6 +15,11 @@ def test_friendly_llm_label_ollama_keeps_raw_tag():
     assert label == "Ollama (granite-code:3b)"
 
 
+def test_friendly_llm_label_claude_cli_keeps_alias():
+    assert _friendly_llm_label("claude_cli", "claude-sonnet-5-5", True) == "Claude Sonnet 5.5"
+    assert _friendly_llm_label("claude_cli", "claude-haiku-5-5", True) == "Claude Haiku 5.5"
+
+
 def test_friendly_llm_label_no_llm():
     assert _friendly_llm_label(None, None, False) == "heuristics only (no LLM)"
 

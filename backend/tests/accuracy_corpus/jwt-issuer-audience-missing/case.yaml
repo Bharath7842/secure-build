@@ -1,0 +1,39 @@
+id: jwt-issuer-audience-missing
+area: token-validation
+polarity: positive
+seed_findings: []
+adjudication: dev_label_only
+# A resource-server JwtDecoder built from a JWK set URI alone checks the signature
+# (and expiry). For an identity provider that signs every tenant's tokens with the
+# same keys (Firebase, Google), a token minted for another project is accepted.
+# The deep-scan prompt now names this check (token validation: iss AND aud).
+#
+# The scripted answer is what a reviewer expects a model to say, so this case pins
+# the pipeline (the finding is published as a true positive and survives the
+# filters and validators), not a model's recall. Whether a model actually raises it
+# needs a recorded `live` or local-model run.
+expected:
+  - rule_id: llm-extra
+    cwe: CWE-345
+    file: src/main/java/com/acme/config/SecurityConfig.java
+    sink_line: 13
+    verdict: true_positive
+scripted:
+  - step: scan_deep_files
+    when_user_contains: ["SecurityConfig.java"]
+    response:
+      findings:
+        - line: 13
+          verdict: true_positive
+          confidence: 0.85
+          rule_id: llm-extra
+          severity: HIGH
+          cwe: CWE-345
+          title: JWT validated for signature only, issuer and audience not checked
+          owasp_category: "A07:2021-Identification-and-Authentication-Failures"
+          source: bearer token in the Authorization header
+          sink: NimbusJwtDecoder.withJwkSetUri(...).build()
+          data_flow: the decoder is built from the JWK set URI with no issuer or audience validator
+          snippet: NimbusJwtDecoder.withJwkSetUri(
+          verdict_reason: Only the signature is verified, so a token for a different project signed by the same provider keys is accepted; neither iss nor aud is checked.
+          ai_fix: Set a validator with JwtValidators.createDefaultWithIssuer(issuer) plus an audience claim validator via setJwtValidator.

@@ -86,7 +86,7 @@ def occurrence_parts(f: Mapping[str, Any], file_path: str) -> dict[str, Any]:
     return {
         "file_path": f.get("file_path") or file_path or "",
         "rule_id": f.get("rule_id") or "",
-        "cwe": (f.get("cwe") or "").upper(),
+        "cwe": str(f.get("cwe") or "").upper(),
         "sink_expression": _sink_expression(f),
         "enclosing_method": method or "",
         "sink_ordinal": int(f.get("sink_ordinal") or 0),

@@ -1414,6 +1414,9 @@ def test_untouched_project_runs_every_sast_toggle_at_its_catalog_default(monkeyp
     assert state["inter_file_flow"] and state["joern_dataflow"] and state["derive_runtime_rules"]
     assert state["triage_mode"] == real_agent.llm_file_scan.TRIAGE_MODE_REGEX_ONLY
     assert state["deep_scan_critical_only"] is False
+    # the two additive pre-scan LLM passes have no project setting: on whenever use_llm is
+    assert state.get("classify_unrecognized_deps", True) is True
+    assert state.get("rerank_leftover_files", True) is True
 
 
 # --- risk routing: test code, content-based risk, attack-surface ranking ------
@@ -1504,3 +1507,25 @@ def test_deep_scan_set_is_reranked_by_entry_points_then_sinks(agent):
     assert plan["deep_scan_paths"] == ["C2.java", "C1.java", "C0.java", "H2.java"]
     assert swapped_in == 1
     assert plan["triage_scan_paths"] == ["H1.java", "H0.java", "M0.java"]
+
+
+def test_llm_usage_options_gives_each_scan_one_stable_claude_session(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.config import settings
+    from app.models import Project
+    from app.services import agent_bridge
+
+    monkeypatch.setattr(settings, "claude_cli_dir", str(tmp_path))
+    project = Project(name="p", default_git_url="https://example.com/r.git")
+    scan_a = SimpleNamespace(id="scan-a", llm_base_url=None)
+    scan_b = SimpleNamespace(id="scan-b", llm_base_url=None)
+
+    first = agent_bridge.llm_usage_options(project, scan_a)["provider_options"]["claude_cli"]
+    again = agent_bridge.llm_usage_options(project, scan_a)["provider_options"]["claude_cli"]
+    other = agent_bridge.llm_usage_options(project, scan_b)["provider_options"]["claude_cli"]
+
+    assert first == again
+    assert first["session_id"] != other["session_id"]
+    assert first["workdir"] == str(tmp_path / "scan-a")
+    assert "claude_cli" not in agent_bridge.llm_usage_options(project, None)["provider_options"]

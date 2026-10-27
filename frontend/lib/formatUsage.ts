@@ -19,9 +19,37 @@ export function providerLabel(provider: string | undefined): string {
   if (key === "bedrock") return "Bedrock";
   if (key === "ollama") return "Ollama";
   if (key === "openai_compat") return "OpenAI-compatible";
+  if (key === "claude_cli") return "Claude";
   if (key === "anthropic") return "Anthropic";
   if (key === "openai") return "OpenAI";
   return provider || "Unknown";
+}
+
+/** "claude-sonnet-5-5" -> "Claude Sonnet 5.5" (a short alias like "sonnet" -> "Claude Sonnet"). */
+export function claudeModelName(model: string | undefined | null): string {
+  const words = (model || "")
+    .replace(/-\d{8}$/, "")
+    .replace(/(?<=\d)-(?=\d)/g, ".")
+    .split("-")
+    .filter(Boolean)
+    .map((w) => (/^\d/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)));
+  if (words.length === 0) return "Claude";
+  return words[0] === "Claude" ? words.join(" ") : `Claude ${words.join(" ")}`;
+}
+
+/**
+ * Provider + model as shown in usage panels. The Claude CLI is just a way of running Claude, so
+ * it reads "Claude Sonnet 5.5"; other providers keep "Provider · model" (or "Provider (model)").
+ */
+export function llmLabel(
+  provider: string | undefined,
+  model: string | undefined,
+  style: "dot" | "paren" = "dot",
+): string {
+  if ((provider || "").trim().toLowerCase() === "claude_cli") return claudeModelName(model);
+  return style === "paren"
+    ? `${providerLabel(provider)} (${model})`
+    : `${providerLabel(provider)} · ${model}`;
 }
 
 export function stepLabel(step: string): string {
@@ -29,6 +57,8 @@ export function stepLabel(step: string): string {
     scan_deep_files: "Deep file scan",
     verify_flow_slices: "Inter-file flow slices",
     derive_runtime_rules: "Runtime-derived regex",
+    classify_dependencies: "Dependency classification",
+    rerank_leftover_files: "Unclassified file re-rank",
     scan_triage_files: "Regex triage",
     group_confirm_triage_findings: "Grouped triage confirmation",
     // The agentic hunt was removed; kept for usage summaries on older scans.

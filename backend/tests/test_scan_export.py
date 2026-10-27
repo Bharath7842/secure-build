@@ -333,6 +333,8 @@ def test_excel_findings_use_expected_columns():
         "OWASP Category",
         "CWE",
         "CVSS",
+        "CVSS Vector",
+        "Severity Basis",
         "Confidence",
         "Files",
         "Issue",

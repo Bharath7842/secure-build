@@ -150,6 +150,14 @@ def build_dependency_index(
     return index
 
 
+def normalize_cwe(value: Any) -> str:
+    """A rule's CWE as a 'CWE-<n>' string. LLM-derived rules often give the
+    bare number (`"cwe": 89`), which every consumer that `.upper()`s or
+    compares against 'CWE-…' strings would otherwise trip on."""
+    text = "" if value is None else str(value).strip()
+    return f"CWE-{text}" if text.isdigit() else text
+
+
 class RegexRule:
     __slots__ = (
         "id", "title", "description", "cwe", "severity", "category", "owasp",
@@ -162,7 +170,7 @@ class RegexRule:
         self.id = raw["id"]
         self.title = raw.get("title", self.id)
         self.description = raw.get("description", "")
-        self.cwe = raw.get("cwe", "")
+        self.cwe = normalize_cwe(raw.get("cwe"))
         self.severity = raw.get("severity", "MEDIUM")
         self.category = raw.get("category", "code")
         self.owasp = raw.get("owasp", "")
@@ -228,7 +236,9 @@ class RegexRule:
         actually know what the project declares.
         """
         if self.languages and file_lang not in self.languages:
-            return False
+            # A workflow is still YAML: rules written for "yaml" keep running on it.
+            if not (file_lang == "github-actions" and "yaml" in self.languages):
+                return False
         if self.frameworks and not (set(self.frameworks) & (active_frameworks or set())):
             return False
         if self.requires_dependency and dependency_index is not None:
@@ -293,6 +303,7 @@ _LINE_COMMENT_PREFIXES: Dict[str, tuple] = {
     "python": ("#",), "shell": ("#",), "yaml": ("#",),
     "properties": ("#", "!"), "env": ("#",), "terraform": ("#",),
     "ruby": ("#",), "sql": ("--",),
+    "dockerfile": ("#",), "github-actions": ("#",),
 }
 _BLOCK_COMMENT_DELIMS: Dict[str, tuple] = {
     "java": ("/*", "*/"), "typescript": ("/*", "*/"), "javascript": ("/*", "*/"),

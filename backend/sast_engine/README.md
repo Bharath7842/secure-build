@@ -341,6 +341,14 @@ python sast_scan_agent.py --path /path/to/project --llm-provider openai_compat \
   `response_format`, dropped (and remembered per endpoint) when a server
   rejects it; a leading `<think>` block is stripped. Priced at
   `OPENAI_COMPAT_INPUT/OUTPUT_PRICE_PER_MTOK` (default 0 — local).
+- **claude_cli** — the local `claude` CLI, one `claude -p` subprocess per call
+  and one persisted Claude session per scan (`provider_options["claude_cli"]` =
+  `{session_id, workdir}`; first call `--session-id`, later calls `--resume`,
+  serialized by a per-session lock). Runs with no tools/settings/MCP in an empty
+  workdir; the stage's system text rides on the stdin message. Model is a CLI
+  id (`claude-sonnet-5-5`, `claude-haiku-5-5`; the short aliases `sonnet`/`haiku` are pinned to those). `CLAUDE_CLI_PATH`, `CLAUDE_CLI_MODEL`,
+  `CLAUDE_CLI_REQUEST_TIMEOUT`. Cost is notional (Sonnet/Haiku rates). Without a
+  session id (`--llm-provider claude_cli` from the engine CLI) calls are ephemeral.
 - **ollama** — local models at `OLLAMA_BASE_URL` (optional; nothing requires it)
 
 All are reached through the shared `llm_client.call_llm`; an unknown provider

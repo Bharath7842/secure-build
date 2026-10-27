@@ -149,6 +149,10 @@ def test_analyze_dependencies_unrecognized_not_silently_dropped(agent, dependenc
     assert summary["frameworks"] == []
     assert summary["unrecognized_count"] == 1
     assert "maven:com.example:totally-unknown-widget" in summary["unrecognized_sample"]
+    # the full list is kept (not just count + 20 samples) so it can be classified
+    assert summary["unrecognized_dependencies"] == [
+        {"ecosystem": "maven", "name": "com.example:totally-unknown-widget", "version": "1.0"}
+    ]
 
 
 def test_analyze_dependencies_multi_module_property_resolution(agent, dependency_scan, tmp_path):

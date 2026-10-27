@@ -70,9 +70,9 @@ class Project(Base):
     llm_api_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # After spend hits the soft cutoff, continue on this provider/model;
     # "none" stops LLM work and leaves the rest unverified. Ignored when
-    # llm_provider is ollama.
-    fallback_llm_provider: Mapped[str] = mapped_column(String(20), default="ollama")
-    fallback_llm_model: Mapped[str] = mapped_column(String(200), default="granite-code:3b-instruct")
+    # llm_provider is ollama or claude_cli.
+    fallback_llm_provider: Mapped[str] = mapped_column(String(20), default="none")
+    fallback_llm_model: Mapped[str] = mapped_column(String(200), default="")
     owasp_mode: Mapped[str] = mapped_column(String(20), default="top10")  # top10|top15|custom
     owasp_urls: Mapped[list] = mapped_column(JSON, default=list)
     nvd_mode: Mapped[str] = mapped_column(String(20), default="top10")  # top10|top15|custom
@@ -193,7 +193,13 @@ class Finding(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     scan_id: Mapped[str] = mapped_column(ForeignKey("scans.id"), index=True)
     severity: Mapped[str] = mapped_column(String(20))
+    # SAST: the CVSS v3.1 base score severity is derived from, and its vector
+    # (`app/services/severity.py`); SCA: the advisory's score.
     cvss: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cvss_vector: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # Where `severity` came from: {scheme, source: rule|cwe|quality|original, cwe,
+    # baseline_vector, adjustments, original_severity (the rule's or model's), note}.
+    severity_basis: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     cwe: Mapped[str | None] = mapped_column(String(40), nullable=True)
     owasp_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
     rule_id: Mapped[str | None] = mapped_column(String(80), nullable=True)

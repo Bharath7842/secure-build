@@ -1,0 +1,8 @@
+{
+  "input_tokens": 706,
+  "key": "397c8776169760423b408264cd8a9970fcb59a7ea80bff39a474f5236d8e74ed",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 50,
+  "step": "group_confirm_triage_findings",
+  "text": "{\"decisions\": [{\"group_index\": 0, \"member\": \"m1\", \"verdict\": \"true_positive\", \"confidence\": 0.8, \"verdict_reason\": \"The q parameter is written to the page unencoded.\", \"ai_fix\": \"Encode the value.\"}]}"
+}

@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5536,
-  "key": "8d5fe43a3ac56a5a04809bb1989e65c229d7f68d98a9841de624c09c60a72a97",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 132,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 11, \"verdict\": \"true_positive\", \"confidence\": 0.8, \"rule_id\": \"java-sensitive-data-in-logs\", \"severity\": \"MEDIUM\", \"cwe\": \"CWE-532\", \"title\": \"Sensitive data written to output\", \"owasp_category\": \"A03:2021-Injection\", \"verdict_reason\": \"The password is printed in clear text.\", \"source\": \"request.getParameter(\\\"password\\\")\", \"sink\": \"System.out.println\", \"data_flow\": \"password to stdout\", \"snippet\": \"System.out.println(\\\"login attempt password=\\\" + password);\", \"ai_fix\": \"Do not print credentials.\"}]}"
-}

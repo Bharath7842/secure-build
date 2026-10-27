@@ -413,3 +413,213 @@ def test_call_llm_without_fallback_stops_at_cutoff(llm, monkeypatch):
     assert llm.usage_cost_summary(usage)["budget_exhausted"] is True
 
 
+# --- claude_cli: one `claude -p` subprocess per call, one session per scan ----
+
+
+def _cli_proc(result='{"findings": []}', *, returncode=0, stderr="", is_error=False, usage=None):
+    import json as _json
+
+    proc = MagicMock()
+    proc.returncode = returncode
+    proc.stderr = stderr
+    proc.stdout = _json.dumps({
+        "type": "result",
+        "is_error": is_error,
+        "result": result,
+        "usage": usage if usage is not None else {
+            "input_tokens": 20, "output_tokens": 8,
+            "cache_read_input_tokens": 100, "cache_creation_input_tokens": 10,
+        },
+    })
+    return proc
+
+
+@pytest.fixture()
+def cli_llm(llm, monkeypatch, tmp_path):
+    monkeypatch.setattr(llm.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(llm, "CLAUDE_CLI_PATH", "/usr/bin/claude")
+    llm._CLAUDE_SESSIONS.clear()
+    return llm
+
+
+def _cli_usage(llm, tmp_path, session_id="11111111-2222-3333-4444-555555555555"):
+    return llm.init_usage(
+        "claude_cli", "claude-sonnet-5-5",
+        provider_options={"claude_cli": {"session_id": session_id, "workdir": str(tmp_path / "wd")}},
+    )
+
+
+def test_claude_cli_is_a_known_provider_with_sonnet_default(llm):
+    assert "claude_cli" in llm.KNOWN_PROVIDERS
+    usage = llm.init_usage("claude_cli", None)
+    assert usage["model"] == llm.CLAUDE_CLI_MODEL == "claude-sonnet-5-5"
+    # Like Ollama, nothing is billed per call, so there is no cutoff (the
+    # notional cost is still reported).
+    assert usage["cost_cutoff_usd"] is None
+    assert llm._price_per_mtok("claude_cli", "claude-sonnet-5-5") == (
+        llm.BEDROCK_SONNET_INPUT_PRICE_PER_MTOK, llm.BEDROCK_SONNET_OUTPUT_PRICE_PER_MTOK,
+    )
+    assert llm._price_per_mtok("claude_cli", "claude-haiku-5-5") == (
+        llm.BEDROCK_INPUT_PRICE_PER_MTOK, llm.BEDROCK_OUTPUT_PRICE_PER_MTOK,
+    )
+
+
+def test_claude_cli_first_call_creates_session_then_resumes(cli_llm, monkeypatch, tmp_path):
+    llm = cli_llm
+    run = MagicMock(return_value=_cli_proc())
+    monkeypatch.setattr(llm.subprocess, "run", run)
+    usage = _cli_usage(llm, tmp_path)
+    sid = "11111111-2222-3333-4444-555555555555"
+
+    out = llm.call_llm("SYS", "USER", usage=usage, step="unit", json_mode=True)
+
+    assert out == '{"findings": []}'
+    first, second_cmd = run.call_args_list[0].args[0], None
+    assert first[:2] == ["/usr/bin/claude", "-p"]
+    assert first[first.index("--session-id") + 1] == sid
+    assert "--resume" not in first and "--no-session-persistence" not in first
+    assert first[first.index("--tools") + 1] == ""
+    assert first[first.index("--setting-sources") + 1] == ""
+    assert first[first.index("--model") + 1] == "claude-sonnet-5-5"
+    # The stage's system text rides on stdin; the CLI-level prompt is the fixed one.
+    sent = run.call_args_list[0].kwargs["input"]
+    assert "SYS" in sent and "USER" in sent and "JSON object only" in sent
+    assert "SYS" not in first[first.index("--system-prompt") + 1]
+    assert run.call_args_list[0].kwargs["cwd"] == str(tmp_path / "wd")
+    assert (tmp_path / "wd").is_dir()
+
+    llm.call_llm("SYS2", "USER2", usage=usage, step="unit", json_mode=True)
+    second_cmd = run.call_args_list[1].args[0]
+    assert second_cmd[second_cmd.index("--resume") + 1] == sid
+    assert "--session-id" not in second_cmd
+
+
+def test_claude_cli_records_usage_with_cache_tokens(cli_llm, monkeypatch, tmp_path):
+    llm = cli_llm
+    monkeypatch.setattr(llm.subprocess, "run", MagicMock(return_value=_cli_proc()))
+    usage = _cli_usage(llm, tmp_path)
+    meta = {}
+
+    llm.call_llm("s", "u", usage=usage, step="unit", json_mode=True, meta_out=meta)
+
+    assert usage["input_tokens"] == 130  # logical prompt: uncached + cache read + cache write
+    assert usage["output_tokens"] == 8
+    assert usage["calls"][-1]["provider"] == "claude_cli"
+    assert usage["cost_usd"] > 0
+    assert meta["input_tokens"] == 130
+
+
+def test_claude_cli_failed_first_call_keeps_creating_the_session(cli_llm, monkeypatch, tmp_path):
+    llm = cli_llm
+    run = MagicMock(side_effect=[
+        _cli_proc(returncode=1, stderr="boom"),
+        _cli_proc(),
+    ])
+    monkeypatch.setattr(llm.subprocess, "run", run)
+    usage = _cli_usage(llm, tmp_path)
+
+    assert llm.call_llm("s", "u", usage=usage, step="unit", json_mode=True) == '{"findings": []}'
+    assert all("--session-id" in c.args[0] and "--resume" not in c.args[0] for c in run.call_args_list)
+
+
+def test_claude_cli_existing_session_after_restart_is_resumed(cli_llm, monkeypatch, tmp_path):
+    llm = cli_llm
+    run = MagicMock(side_effect=[
+        _cli_proc(returncode=1, stderr="Error: Session ID is already in use"),
+        _cli_proc(),
+    ])
+    monkeypatch.setattr(llm.subprocess, "run", run)
+
+    llm.call_llm("s", "u", usage=_cli_usage(llm, tmp_path), step="unit", json_mode=True)
+
+    assert "--session-id" in run.call_args_list[0].args[0]
+    assert "--resume" in run.call_args_list[1].args[0]
+
+
+def test_claude_cli_is_error_result_is_retried_then_raised(cli_llm, monkeypatch, tmp_path):
+    llm = cli_llm
+    run = MagicMock(return_value=_cli_proc(result="model unavailable", is_error=True))
+    monkeypatch.setattr(llm.subprocess, "run", run)
+
+    with pytest.raises(RuntimeError, match="claude CLI failed"):
+        llm.call_llm("s", "u", usage=_cli_usage(llm, tmp_path), step="unit", retries=2)
+    assert run.call_count == 2
+
+
+def test_claude_cli_rate_limit_backs_off_without_using_retries(cli_llm, monkeypatch, tmp_path):
+    llm = cli_llm
+    run = MagicMock(side_effect=[
+        _cli_proc(returncode=1, stderr="rate limit reached"),
+        _cli_proc(returncode=1, stderr="rate limit reached"),
+        _cli_proc(),
+    ])
+    monkeypatch.setattr(llm.subprocess, "run", run)
+
+    llm.call_llm("s", "u", usage=_cli_usage(llm, tmp_path), step="unit", retries=1)
+    assert run.call_count == 3
+
+
+def test_claude_cli_timeout_is_retried(cli_llm, monkeypatch, tmp_path):
+    llm = cli_llm
+    run = MagicMock(side_effect=[llm.subprocess.TimeoutExpired("claude", 1), _cli_proc()])
+    monkeypatch.setattr(llm.subprocess, "run", run)
+
+    assert llm.call_llm("s", "u", usage=_cli_usage(llm, tmp_path), step="unit") == '{"findings": []}'
+
+
+def test_claude_cli_missing_binary_is_not_retried(cli_llm, monkeypatch, tmp_path):
+    llm = cli_llm
+    monkeypatch.setattr(llm, "CLAUDE_CLI_PATH", "")
+    monkeypatch.delenv("CLAUDE_CLI_PATH", raising=False)
+    monkeypatch.setattr(llm.shutil, "which", lambda _n: None)
+    run = MagicMock()
+    monkeypatch.setattr(llm.subprocess, "run", run)
+
+    with pytest.raises(RuntimeError, match="claude CLI not found"):
+        llm.call_llm("s", "u", usage=_cli_usage(llm, tmp_path), step="unit")
+    run.assert_not_called()
+
+
+def test_claude_cli_without_a_session_is_ephemeral(cli_llm, monkeypatch):
+    llm = cli_llm
+    run = MagicMock(return_value=_cli_proc())
+    monkeypatch.setattr(llm.subprocess, "run", run)
+
+    llm.call_llm("s", "u", usage=llm.init_usage("claude_cli", "haiku"), step="unit")
+
+    cmd = run.call_args.args[0]
+    assert "--no-session-persistence" in cmd
+    assert "--session-id" not in cmd and "--resume" not in cmd
+    # A short alias is pinned to the exact model, never left for the CLI to resolve.
+    assert cmd[cmd.index("--model") + 1] == "claude-haiku-5-5"
+
+
+def test_claude_cli_calls_of_one_session_never_overlap(cli_llm, monkeypatch, tmp_path):
+    import threading
+    import time as real_time
+
+    llm = cli_llm
+    active, peak = [0], [0]
+    guard = threading.Lock()
+
+    def slow_run(*_a, **_k):
+        with guard:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        real_time.sleep(0.02)
+        with guard:
+            active[0] -= 1
+        return _cli_proc()
+
+    monkeypatch.setattr(llm.subprocess, "run", slow_run)
+    usage = _cli_usage(llm, tmp_path)
+    threads = [
+        threading.Thread(target=llm.call_llm, args=("s", f"u{i}"), kwargs={"usage": usage, "step": "unit"})
+        for i in range(5)
+    ]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+
+    assert peak[0] == 1

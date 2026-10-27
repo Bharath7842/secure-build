@@ -290,6 +290,7 @@ def run_case(case: Case, *, record: str | None = None, check_consistency: bool =
                     llm_client._call_bedrock = provider
                     llm_client._call_openai_compat = _refusing_provider(unrecorded)
                     llm_client._call_ollama = _refusing_provider(unrecorded)
+                    llm_client._call_claude_cli = _refusing_provider(unrecorded)
 
                 with db_module.SessionLocal() as db:
                     project = Project(
@@ -316,7 +317,14 @@ def run_case(case: Case, *, record: str | None = None, check_consistency: bool =
                         findings_writer=scan_runner._make_findings_writer(scan_id),
                         verdict_updates_writer=scan_runner._make_verdict_updates_writer(scan_id),
                         reachability_updates_writer=scan_runner._make_reachability_updates_writer(scan_id),
-                        result_cache=cache, state_overrides=dict(case.state_overrides),
+                        result_cache=cache,
+                        # The recorded cases predate the two always-on pre-scan LLM
+                        # passes; a case that records them opts back in here.
+                        state_overrides={
+                            "classify_unrecognized_deps": False,
+                            "rerank_leftover_files": False,
+                            **dict(case.state_overrides),
+                        },
                     )
                 with db_module.SessionLocal() as db:
                     rows = db.query(Finding).filter(Finding.scan_id == scan_id).all()

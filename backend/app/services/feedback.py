@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
 
 from app.models import Finding, FindingReview, FindingReviewEvent, Scan
+from app.services.fp_visibility import hide_confident_false_positives
 from app.services.scan_export import _finding_group_key, group_findings_by_issue, issue_groups
 
 # --- vocabulary -------------------------------------------------------------------------
@@ -71,6 +72,12 @@ def _fingerprint(project_id: str | None, finding: Finding) -> str:
 
 def _members_of(db: Session, scan_id: str, finding: Finding) -> list[Finding]:
     rows = db.query(Finding).filter(Finding.scan_id == scan_id).all()
+    scan = db.get(Scan, scan_id)
+    if scan is not None:
+        # The group as the findings list shows it: a review never reaches a hidden member.
+        rows, _hidden = hide_confident_false_positives(
+            db, scan, rows, reviewed_ids=_reviews_by_member(db, scan_id).keys()
+        )
     for members in issue_groups(rows):
         if any(row.id == finding.id for row in members):
             return members
@@ -493,8 +500,12 @@ def effective_verdicts_by_id(db: Session, scan_id: str, rows: list[Finding]) -> 
 
 
 def effective_scan_findings(db: Session, scan: Scan) -> list[Finding]:
-    """The scan's findings with reviewer verdicts applied: what exports and gates should read."""
-    return apply_effective_verdicts(db, scan, list(scan.findings or []))
+    """The scan's findings with reviewer verdicts applied and confident false positives
+    left out (`fp_visibility`): what exports, gates and review grouping read."""
+    visible, _hidden = hide_confident_false_positives(
+        db, scan, apply_effective_verdicts(db, scan, list(scan.findings or []))
+    )
+    return visible
 
 
 # --- listing ----------------------------------------------------------------------------
@@ -587,7 +598,10 @@ def list_feedback(
             raise ReviewError("Scan not found", 404)
         with db.no_autoflush:  # grouping stamps affected_files on the ORM instances
             by_member = _reviews_by_member(db, scan_id)
-            findings = db.query(Finding).filter(Finding.scan_id == scan_id).all()
+            findings, _hidden = hide_confident_false_positives(
+                db, scan, db.query(Finding).filter(Finding.scan_id == scan_id).all(),
+                reviewed_ids=by_member.keys(),
+            )
             for group in group_findings_by_issue(findings):
                 review = by_member.get(group.id)
                 rows.append(_row_from_review(review) if review else _row_from_finding(scan, group))

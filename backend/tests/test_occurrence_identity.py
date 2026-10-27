@@ -10,6 +10,7 @@ pytest.importorskip("langgraph")
 pytest.importorskip("tree_sitter_java")
 
 from app.config import settings  # noqa: E402
+from app.defaults.cwe_cvss import SCHEME as SEVERITY_SCHEME  # noqa: E402
 from app.db import init_db  # noqa: E402
 from app.models import Finding, Project, Scan  # noqa: E402
 from app.services import scan_versions  # noqa: E402
@@ -228,6 +229,7 @@ def test_static_versions_for_the_mock_engine_are_fixed(tmp_path):
     versions = scan_versions.static_versions(scan, mock=True)
     assert versions == {
         "engine_commit": "mock", "rule_catalog_sha256": "mock", "result_cache_version": "mock",
+        "severity_scheme": SEVERITY_SCHEME,
         "system_prompt_sha256": {}, "llm_provider": "bedrock", "llm_model": "m",
     }
 

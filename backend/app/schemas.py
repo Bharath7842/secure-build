@@ -42,9 +42,9 @@ class ProjectBase(BaseModel):
     # openai_compat endpoint (e.g. http://localhost:8000/v1); None = server default.
     llm_base_url: str | None = None
     # After the soft $ cutoff, continue on this provider/model; "none" stops
-    # LLM work instead (ignored if primary is ollama).
-    fallback_llm_provider: str = "ollama"
-    fallback_llm_model: str = "granite-code:3b-instruct"
+    # LLM work instead (ignored if primary is ollama or claude_cli).
+    fallback_llm_provider: str = "none"
+    fallback_llm_model: str = ""
     owasp_mode: str = "top10"  # top10|top15|custom (synced from reference_sources)
     owasp_urls: list[str] = Field(default_factory=list)
     nvd_mode: str = "top10"  # top10|top15|custom (synced from reference_sources)
@@ -484,6 +484,10 @@ class FindingOut(BaseModel):
     scan_id: str
     severity: str
     cvss: float | None = None
+    # SAST: the CVSS v3.1 vector `cvss` and `severity` come from, and where it came
+    # from (`app/services/severity.py`).
+    cvss_vector: str | None = None
+    severity_basis: dict[str, Any] | None = None
     cwe: str | None = None
     owasp_category: str | None = None
     rule_id: str | None = None
@@ -681,6 +685,29 @@ class DecisionDiffOut(BaseModel):
     summary: dict[str, Any]
 
 
+class CweBucketOut(BaseModel):
+    groups: int
+    occurrences: int
+    files: int
+    finding_ids: list[str]
+
+
+class CweGroupOut(BaseModel):
+    """One CWE rolled up over the issue groups (`scan_export.group_by_cwe`)."""
+
+    key: str
+    cwe: str | None = None
+    title: str
+    owasp_category: str | None = None
+    severity: str
+    groups: int
+    occurrences: int
+    file_count: int
+    files: list[str]
+    # true_positive | unverified | false_positive | unknown -> the groups in that bucket.
+    by_bucket: dict[str, CweBucketOut]
+
+
 class ScanFindingsOut(BaseModel):
     scan_id: str
     tp_count: int
@@ -694,6 +721,11 @@ class ScanFindingsOut(BaseModel):
     # by_verdict {bucket: {severity: {groups, occurrences}}}, totals {bucket: cell},
     # by_issue_class, actionable {severity: cell}, dismissed cell, by_owasp [...].
     severity_group_counts: dict[str, Any] | None = None
+    # The same groups rolled up per CWE; `by_bucket[..].finding_ids` name rows of `findings`.
+    cwe_groups: list[CweGroupOut] = []
+    # False positives the scanner was >= 90 % sure of, left out of everything here
+    # (`fp_visibility`).
+    hidden_fp_count: int = 0
     findings: list[FindingOut]
 
 

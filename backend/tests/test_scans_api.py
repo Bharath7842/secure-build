@@ -390,6 +390,12 @@ def test_trigger_refuses_when_fallback_model_missing(client, project_id, monkeyp
     from app.services import ollama_check
     body = json.dumps({"models": [{"name": "phi4-mini:3.8b"}]}).encode()
     monkeypatch.setattr(ollama_check.urllib.request, "urlopen", lambda *a, **k: io.BytesIO(body))
+    # New projects have no fallback; opt this one into an Ollama one.
+    client.patch(
+        f"/projects/{project_id}",
+        headers=HDR,
+        json={"fallback_llm_provider": "ollama", "fallback_llm_model": "granite-code:3b-instruct"},
+    )
     resp = client.post(
         "/scans",
         headers=HDR,

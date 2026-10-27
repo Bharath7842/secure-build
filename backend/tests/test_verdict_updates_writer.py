@@ -55,8 +55,10 @@ def test_verdict_updates_writer_updates_matching_row_in_place(tmp_path):
         assert row.confidence == 0.9
         assert row.ai_fix == "load from env"
         assert "grouped review" in row.verdict_reason
-        # untouched fields survive the update
-        assert row.severity == "MEDIUM"
+        # untouched fields survive the update (severity was scored at insert:
+        # the CWE-798 baseline, with the rule's MEDIUM kept as the original)
+        assert row.severity == "CRITICAL"
+        assert row.severity_basis["original_severity"] == "MEDIUM"
         assert row.matched_text == "password = 'x'"
 
 

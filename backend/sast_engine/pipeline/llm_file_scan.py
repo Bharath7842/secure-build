@@ -379,11 +379,23 @@ _BOUNDARY_PATTERNS: Dict[str, re.Pattern] = {
 }
 
 
+_GITHUB_WORKFLOW_RE = re.compile(r"(^|/)\.github/workflows/[^/]+$")
+
+
 def lang_for_path(path: str) -> Optional[str]:
     """Extension -> rule-catalog language tag (for catalog filtering and
     chunk-boundary heuristics). None for unrecognized extensions — such files
     still get scanned, just with the universal (untagged) rule subset."""
-    return _EXT_TO_LANG.get(Path(path).suffix.lower())
+    posix = path.replace("\\", "/")
+    name = posix.rsplit("/", 1)[-1].lower()
+    # Extension-less / name-keyed files: the rule vocabulary needs a tag for
+    # them or only the untagged rules would ever see them.
+    if name == "dockerfile" or name.startswith("dockerfile.") or name.endswith(".dockerfile"):
+        return "dockerfile"
+    suffix = Path(path).suffix.lower()
+    if suffix in (".yml", ".yaml") and _GITHUB_WORKFLOW_RE.search(posix):
+        return "github-actions"
+    return _EXT_TO_LANG.get(suffix)
 
 
 # --- chunking ---------------------------------------------------------------
@@ -834,6 +846,22 @@ _SYSTEM_HEAD = (
     "escaped; `[innerHTML]` after bypassSecurityTrust*, a native element write or "
     "eval/new Function are the dangerous contexts. A dictionary lookup alone is "
     "never code execution.\n"
+    "- When a file configures how an incoming bearer token (JWT/OIDC/OAuth access or "
+    "ID token) is validated — NimbusJwtDecoder, JwtDecoders, oauth2ResourceServer, a "
+    "jjwt/auth0/nimbus parser, jsonwebtoken.verify, passport-jwt — check that the "
+    "validation covers the signature, the expiry, the issuer (iss) AND the audience "
+    "(aud). A decoder built only from a JWK set URI or a shared secret checks the "
+    "signature (and usually expiry) alone, so a token minted for a different "
+    "tenant, project or client by the same identity provider is accepted. Report "
+    "that as missing token validation (CWE-345, A07) and name which of iss/aud is "
+    "unchecked. An issuer-location helper validates the issuer but not the "
+    "audience. Do not report it when a validator for each is visibly configured.\n"
+    "- For a Dockerfile, CI workflow or cloud template, the findings are often an "
+    "ABSENCE: a Dockerfile with no USER instruction (runs as root); a GitHub Actions "
+    "workflow with no `permissions:` block or with third-party actions pinned to a "
+    "tag instead of a commit SHA; a database or bucket resource with no encryption "
+    "property, no deletion/backup setting, or reachable from 0.0.0.0/0. Read the "
+    "whole file before deciding something is absent.\n"
     "- When checking for a MISSING security feature (an attribute, header, token, "
     "config setting, etc.) on a specific element (a specific input field, endpoint, "
     "class, or config block), re-read that exact element's own declaration/line(s) "
@@ -3208,7 +3236,7 @@ _GROUP_RESPONSE_SCHEMA = """Output format — one JSON object with exactly one d
 {"decisions": [{
   "member": "<the occurrence id, e.g. m1>",
   "verdict": "true_positive" | "false_positive",
-  "confidence": <0.0-1.0>,
+  "confidence": <0.0-1.0, how sure you are of this verdict (1.0 = certain), whichever verdict it is>,
   "verdict_reason": "<why this occurrence is/isn't a real issue — required, at most 2 sentences>",
   "ai_fix": "<at most 2 sentences; only when verdict is true_positive>"
 }, ...]}"""
@@ -3544,7 +3572,7 @@ _GROUP_BATCH_RESPONSE_SCHEMA = """Output format — one JSON object with exactly
   "group_index": <int, matches the pattern's group_index>,
   "member": "<the occurrence id within that pattern, e.g. m1>",
   "verdict": "true_positive" | "false_positive",
-  "confidence": <0.0-1.0>,
+  "confidence": <0.0-1.0, how sure you are of this verdict (1.0 = certain), whichever verdict it is>,
   "verdict_reason": "<why this occurrence is/isn't a real issue — required, at most 2 sentences>",
   "ai_fix": "<at most 2 sentences; only when verdict is true_positive>"
 }, ...]}"""

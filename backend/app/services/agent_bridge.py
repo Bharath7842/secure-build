@@ -22,6 +22,7 @@ import os
 import shutil
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Callable
 
@@ -30,6 +31,9 @@ from app.defaults.scan_limitations import SCAN_LIMITATIONS
 from app.models import Project, Scan
 
 logger = logging.getLogger(__name__)
+
+# Fixed namespace so a scan id always maps to the same Claude session UUID.
+_CLAUDE_SESSION_NAMESPACE = uuid.UUID("6f1c1f0e-5a53-4a52-9d57-2c1d6b0f7a11")
 
 # Toggle defaults come from the catalog, never a second hard-coded copy.
 _LIMITATION_DEFAULTS = {lim.id: lim.enabled_by_default for lim in SCAN_LIMITATIONS}
@@ -58,6 +62,9 @@ def _sync_env_from_settings() -> None:
     os.environ.setdefault("OLLAMA_REQUEST_TIMEOUT", str(settings.ollama_request_timeout))
     os.environ.setdefault("OPENAI_COMPAT_BASE_URL", settings.openai_compat_base_url)
     os.environ.setdefault("OPENAI_COMPAT_REQUEST_TIMEOUT", str(settings.openai_compat_request_timeout))
+    if settings.claude_cli_path:
+        os.environ.setdefault("CLAUDE_CLI_PATH", settings.claude_cli_path)
+    os.environ.setdefault("CLAUDE_CLI_REQUEST_TIMEOUT", str(settings.claude_cli_request_timeout))
     if settings.joern_home:
         os.environ.setdefault("JOERN_HOME", settings.joern_home)
     os.environ.setdefault("JOERN_TIMEOUT_SEC", str(settings.joern_timeout_sec))
@@ -96,8 +103,8 @@ def _load_agent_module():
 
 def llm_usage_options(project: Project, scan: Scan | None = None) -> dict:
     """Keyword arguments for the engine's init_usage carrying this scan's
-    openai_compat endpoint/key. The key comes from the
-    project (never snapshotted); the base URL prefers the scan's
+    openai_compat endpoint/key and its claude_cli session. The key comes from
+    the project (never snapshotted); the base URL prefers the scan's
     snapshot so a re-run matches what the scan originally used."""
     base_url = (
         (getattr(scan, "llm_base_url", None) if scan else None)
@@ -107,8 +114,20 @@ def llm_usage_options(project: Project, scan: Scan | None = None) -> dict:
     api_key = getattr(project, "llm_api_key", None) or (
         settings.openai_compat_api_key.get_secret_value() if settings.openai_compat_api_key else ""
     )
+    options: dict = {"openai_compat": {"base_url": base_url, "api_key": api_key}}
+    if getattr(scan, "id", None):
+        options["claude_cli"] = claude_cli_session(scan)
+    return {"provider_options": options}
+
+
+def claude_cli_session(scan: Scan) -> dict:
+    """The scan's one Claude session: a UUID derived from the scan id (so the
+    reconcile sweep continues the same session) and the empty directory every
+    call of the scan runs in (Claude keys sessions by working directory).
+    Reopen it with `cd <workdir> && claude --resume <session_id>`."""
     return {
-        "provider_options": {"openai_compat": {"base_url": base_url, "api_key": api_key}},
+        "session_id": str(uuid.uuid5(_CLAUDE_SESSION_NAMESPACE, str(scan.id))),
+        "workdir": str(Path(settings.claude_cli_dir) / str(scan.id)),
     }
 
 

@@ -39,21 +39,25 @@ class DiffError(ValueError):
 
 # --- records ------------------------------------------------------------------
 
+def latest_decisions(
+    db: Session, scan_id: str, *, stages: frozenset[str] | None = None
+) -> dict[str, FindingDecision]:
+    """{finding id: its newest `FindingDecision`}, optionally among `stages` only."""
+    query = db.query(FindingDecision).filter(FindingDecision.scan_id == scan_id)
+    if stages is not None:
+        query = query.filter(FindingDecision.stage.in_(stages))
+    latest: dict[str, FindingDecision] = {}
+    for decision in query.order_by(FindingDecision.at.desc(), FindingDecision.id.desc()).all():
+        latest.setdefault(decision.finding_id, decision)
+    return latest
+
+
 def records_for_scan(db: Session, scan: Scan) -> tuple[list[dict[str, Any]], int]:
     """(records, rows without an occurrence id). One record per finding row that has
     an `occurrence_id`, carrying its latest decision's stage and reasoning."""
     rows = db.query(Finding).filter(Finding.scan_id == scan.id).all()
     with_identity = [row for row in rows if row.occurrence_id]
-    latest: dict[str, FindingDecision] = {}
-    if with_identity:
-        decisions = (
-            db.query(FindingDecision)
-            .filter(FindingDecision.scan_id == scan.id)
-            .order_by(FindingDecision.at.desc(), FindingDecision.id.desc())
-            .all()
-        )
-        for decision in decisions:
-            latest.setdefault(decision.finding_id, decision)
+    latest = latest_decisions(db, scan.id) if with_identity else {}
     records = []
     for row in with_identity:
         decision = latest.get(row.id)

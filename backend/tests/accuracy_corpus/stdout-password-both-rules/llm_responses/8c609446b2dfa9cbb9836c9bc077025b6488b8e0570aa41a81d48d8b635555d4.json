@@ -1,0 +1,8 @@
+{
+  "input_tokens": 1011,
+  "key": "8c609446b2dfa9cbb9836c9bc077025b6488b8e0570aa41a81d48d8b635555d4",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 87,
+  "step": "group_confirm_triage_findings",
+  "text": "{\"decisions\": [{\"group_index\": 0, \"member\": \"m1\", \"verdict\": \"true_positive\", \"confidence\": 0.8, \"verdict_reason\": \"A credential is printed.\", \"ai_fix\": \"Do not print credentials.\"}, {\"group_index\": 1, \"member\": \"m1\", \"verdict\": \"true_positive\", \"confidence\": 0.8, \"verdict_reason\": \"A credential is printed.\", \"ai_fix\": \"Do not print credentials.\"}]}"
+}

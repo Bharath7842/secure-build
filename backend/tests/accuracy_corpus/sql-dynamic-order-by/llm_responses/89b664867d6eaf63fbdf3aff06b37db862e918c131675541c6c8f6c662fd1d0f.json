@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5852,
+  "key": "89b664867d6eaf63fbdf3aff06b37db862e918c131675541c6c8f6c662fd1d0f",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 160,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 11, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-jdbc-prepare-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"sortColumn (method parameter)\", \"sink\": \"connection.prepareStatement(...)\", \"data_flow\": \"sortColumn is concatenated into the ORDER BY clause\", \"snippet\": \"PreparedStatement stmt = connection.prepareStatement(\", \"verdict_reason\": \"The ORDER BY column comes from sortColumn and cannot be bound, so it changes the query.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
+}

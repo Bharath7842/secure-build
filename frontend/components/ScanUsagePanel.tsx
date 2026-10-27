@@ -6,7 +6,7 @@ import {
   formatCostUsd,
   formatPricePerMtok,
   formatTokenCount,
-  providerLabel,
+  llmLabel,
   stepLabel,
 } from "@/lib/formatUsage";
 
@@ -68,8 +68,7 @@ export default function ScanUsagePanel({ usage }: ScanUsagePanelProps) {
         {switched && (
           <p className="mt-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
             Bedrock spend reached the configured cutoff — remaining calls used{" "}
-            {providerLabel(usage.fallback_switched ? activeProvider : usage.provider)} (
-            {activeModel}).
+            {llmLabel(usage.fallback_switched ? activeProvider : usage.provider, activeModel, "paren")}.
           </p>
         )}
 
@@ -84,13 +83,13 @@ export default function ScanUsagePanel({ usage }: ScanUsagePanelProps) {
           <div>
             <dt className="text-[var(--muted)]">Primary provider</dt>
             <dd className="font-medium text-[var(--ink)]">
-              {providerLabel(usage.provider)} · {usage.model}
+              {llmLabel(usage.provider, usage.model)}
             </dd>
           </div>
           <div>
             <dt className="text-[var(--muted)]">Active at end</dt>
             <dd className="font-medium text-[var(--ink)]">
-              {providerLabel(activeProvider)} · {activeModel}
+              {llmLabel(activeProvider, activeModel)}
             </dd>
           </div>
           {usage.input_price_per_mtok != null && usage.output_price_per_mtok != null && (

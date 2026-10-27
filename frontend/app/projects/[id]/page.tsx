@@ -9,6 +9,7 @@ import DeleteProjectModal from "@/components/DeleteProjectModal";
 import PageContainer from "@/components/PageContainer";
 import ProjectForm from "@/components/ProjectForm";
 import { ApiError, api } from "@/lib/api";
+import { claudeModelName } from "@/lib/formatUsage";
 import type { Project, ProjectCreateInput, Scan } from "@/lib/types";
 import { useAuth, useCan } from "@/components/auth/AuthProvider";
 
@@ -106,6 +107,8 @@ export default function ProjectDetailPage() {
               {" · LLM: "}
               {project.llm_provider === "ollama"
                 ? `${project.llm_model || "Ollama"} (Ollama)`
+                : project.llm_provider === "claude_cli"
+                ? claudeModelName(project.llm_model)
                 : project.llm_model && /haiku/i.test(project.llm_model)
                   ? "Claude Haiku (Bedrock)"
                   : project.llm_model && /sonnet/i.test(project.llm_model)

@@ -130,6 +130,8 @@ def _run_light_migrations(engine) -> None:
             ("facts", "ALTER TABLE findings ADD COLUMN facts JSON"),
             ("reason_tag", "ALTER TABLE findings ADD COLUMN reason_tag VARCHAR(60)"),
             ("review_coverage", "ALTER TABLE findings ADD COLUMN review_coverage JSON"),
+            ("cvss_vector", "ALTER TABLE findings ADD COLUMN cvss_vector VARCHAR(120)"),
+            ("severity_basis", "ALTER TABLE findings ADD COLUMN severity_basis JSON"),
             # DAST evidence fields (DAST-00-040); the new dast_evidence / dast_request_audit
             # tables are created by Base.metadata.create_all, so only columns need ALTER.
             ("target", "ALTER TABLE findings ADD COLUMN target VARCHAR(300)"),
@@ -219,7 +221,7 @@ def _run_light_migrations(engine) -> None:
                 conn.execute(
                     text(
                         "ALTER TABLE projects ADD COLUMN fallback_llm_provider "
-                        "VARCHAR(20) DEFAULT 'ollama'"
+                        "VARCHAR(20) DEFAULT 'none'"
                     )
                 )
         if "fallback_llm_model" not in existing_cols:
@@ -227,7 +229,18 @@ def _run_light_migrations(engine) -> None:
                 conn.execute(
                     text(
                         "ALTER TABLE projects ADD COLUMN fallback_llm_model "
-                        "VARCHAR(200) DEFAULT 'granite-code:3b-instruct'"
+                        "VARCHAR(200) DEFAULT ''"
+                    )
+                )
+        else:
+            # `granite-code:3b` was an earlier fallback default that a stock Ollama install
+            # doesn't carry (the instruct tag is the one the app pins and documents), so a
+            # row still on it fails the model preflight before every scan.
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "UPDATE projects SET fallback_llm_model = 'granite-code:3b-instruct' "
+                        "WHERE fallback_llm_model = 'granite-code:3b'"
                     )
                 )
         if "llm_base_url" not in existing_cols:

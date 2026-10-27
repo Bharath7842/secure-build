@@ -13,6 +13,7 @@ from typing import Any, Mapping
 
 from app.models import UNVERIFIED_VERDICT, DastEvidence, Finding
 from app.services.occurrence import occurrence_id, occurrence_parts
+from app.services.severity import apply_severity
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def build_finding_row(
             f.get("file_path") or file_path,
         )
         unresolved_reason = "evidence_missing"
-    return Finding(
+    row = Finding(
         scan_id=scan_id,
         severity=f.get("severity") or "MEDIUM",
         cwe=f.get("cwe"),
@@ -90,6 +91,11 @@ def build_finding_row(
         first_seen_scan_id=scan_id if is_dast else None,
         last_seen_scan_id=scan_id if is_dast else None,
     )
+    if not is_dast:
+        # The rule's or model's severity becomes `severity_basis.original_severity`;
+        # the stored one is the CVSS band (`severity.py`).
+        apply_severity(row)
+    return row
 
 
 def build_evidence_row(finding_id: str, evidence: Mapping[str, Any]) -> DastEvidence:

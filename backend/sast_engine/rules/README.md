@@ -12,6 +12,7 @@ directory except `surfaces.json`** and fails loudly on a duplicate rule id.
 | `typescript.json` | TypeScript / JavaScript, Angular and React |
 | `python.json` | Python |
 | `web.json` | HTML and `.properties` / `.yaml` / `.env` |
+| `iac.json` | Dockerfile (`dockerfile`), GitHub Actions workflows (`github-actions`, which also runs `yaml` rules) and CloudFormation templates (`yaml`, matched on CFN-specific keys). Languages come from `lang_for_path`, which tags `Dockerfile*` / `*.dockerfile` and `.github/workflows/*.yml` by name |
 | `frontend-templates.json` | template markup shared by Angular `.html`, Vue `.vue` and JSX (`[innerHTML]`, `v-html`, `target="_blank"`) |
 | `surfaces.json` | the stack → surface → rules map (not a rule file) |
 
@@ -80,6 +81,16 @@ filters, all **empty-means-universal** — an empty list never excludes anything
   signature-matched frameworks, so plain libraries work. `name` matches either
   the full coordinate (`org.apache.struts:struts-core`) or the bare artifact
   (`struts-core`).
+- `severity` is what the rule tells the LLM (`render_catalog`) and what the engine
+  logs; it is **not** the severity a stored finding shows. The app replaces it with
+  the CVSS v3.1 band of the finding's CWE baseline (`backend/app/defaults/cwe_cvss.py`,
+  `backend/app/services/severity.py`) and keeps it as `severity_basis.original_severity`.
+  A rule with a new CWE needs a baseline there (`tests/test_severity.py` checks).
+- `cvss_vector` (optional, e.g. `"CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H"`) —
+  only for a rule whose pattern is clearly narrower than its CWE (an H2 console
+  setting, a localhost URL); it replaces the CWE baseline for this rule's findings.
+  It must hold for *every* match: a rule that also matches the CWE's worst case keeps
+  the baseline.
 - `group_by_rule` (default `false`) — how unverified findings from this rule
   collapse in the report/export and during grouped LLM confirmation. Default
   groups by `(rule_id, matched_text)`, so a hardcoded secret and a test

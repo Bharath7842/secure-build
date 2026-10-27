@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5533,
-  "key": "965981ab8b3a3f65dae4b2c90b7b45f46f1f30367284b97f217d3e7ba79a40ca",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 123,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": [{\"line\": 11, \"verdict\": \"true_positive\", \"confidence\": 0.8, \"rule_id\": \"java-xss-jsp-servlet\", \"severity\": \"HIGH\", \"cwe\": \"CWE-79\", \"title\": \"XSS via servlet output\", \"owasp_category\": \"A03:2021-Injection\", \"verdict_reason\": \"A request value reaches output.\", \"source\": \"request\", \"sink\": \"System.out.println\", \"data_flow\": \"request method length printed\", \"snippet\": \"System.out.println(\\\"handling request \\\" + request.getMethod().length());\", \"ai_fix\": \"Encode the output.\"}]}"
-}

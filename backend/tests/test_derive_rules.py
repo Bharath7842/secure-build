@@ -233,6 +233,39 @@ def test_pass_b_mocked_merges(tmp_path, call_graph, derive_rules, regex_scan):
     assert all(r.derived for r in out)
 
 
+def test_pass_b_numeric_cwe_becomes_a_cwe_string(tmp_path, call_graph, derive_rules, regex_scan):
+    """A model answering `"cwe": 78` used to crash the scan at the first hit
+    (`'int' object has no attribute 'upper'` in occurrence_parts)."""
+    paths = _write_java(tmp_path)
+    graph = call_graph.build_call_graph(tmp_path, paths)
+
+    def fake_llm(*_args, **_kwargs):
+        return (
+            '{"rules": [{"id": "extra-sink", "title": "Custom", "description": "x", '
+            '"cwe": 78, "severity": "HIGH", "owasp": "A03:2021-Injection", '
+            '"languages": ["java"], "frameworks": [], "pattern": "\\\\bcustomSink\\\\s*\\\\("}]}'
+        )
+
+    out = derive_rules.derive_runtime_rules(
+        graph=call_graph.JavaGraphAdapter(graph), static_rules=[], use_llm=True,
+        call_llm_fn=fake_llm, max_rules=20,
+    )
+    (rule,) = [r for r in out if r.id == "runtime-llm-extra-sink"]
+    assert rule.cwe == "CWE-78"
+
+    from app.services.occurrence import occurrence_id
+
+    assert occurrence_id("p1", {"rule_id": rule.id, "cwe": 78, "line": 1}, "A.java")
+
+
+def test_normalize_cwe(regex_scan):
+    assert regex_scan.normalize_cwe(89) == "CWE-89"
+    assert regex_scan.normalize_cwe(" 601 ") == "CWE-601"
+    assert regex_scan.normalize_cwe("CWE-79") == "CWE-79"
+    assert regex_scan.normalize_cwe(None) == ""
+    assert regex_scan.normalize_cwe("") == ""
+
+
 def test_pass_b_failed_json_keeps_pass_a(tmp_path, call_graph, derive_rules, regex_scan):
     paths = _write_java(tmp_path)
     graph = call_graph.build_call_graph(tmp_path, paths)

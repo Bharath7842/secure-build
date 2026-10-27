@@ -1,8 +1,0 @@
-{
-  "input_tokens": 5579,
-  "key": "2ccab5badb196939326cf4a154d9f0410a62ee37ef18840370097013655c7802",
-  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "output_tokens": 4,
-  "step": "scan_deep_files",
-  "text": "{\"findings\": []}"
-}

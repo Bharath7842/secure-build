@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5836,
+  "key": "b6c778031f858c2a4c6f2b93956d0196ef94a67f61fff651237e1f53cda9cfc4",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 174,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 12, \"verdict\": \"true_positive\", \"confidence\": 0.95, \"rule_id\": \"java-jdbc-prepare-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a concatenated JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"orderId (method parameter)\", \"sink\": \"connection.prepareStatement(sql)\", \"data_flow\": \"orderId is concatenated into sql, which is then passed to prepareStatement\", \"snippet\": \"PreparedStatement stmt = connection.prepareStatement(sql);\", \"verdict_reason\": \"The query text is built by concatenating the untrusted orderId, so prepareStatement does not bind it.\", \"ai_fix\": \"Use a \\\"?\\\" placeholder and stmt.setString(1, orderId).\"}]}"
+}

@@ -928,6 +928,7 @@
     "description": "A loopback or file: URL baked into source. Beyond being environment-specific, these leak deployment paths and often mark a spot where an endpoint should have been configurable and allow-listed. Generalized from legacy-audit patterns (regex_data/NPC-*.md, regex_data/NPG-*.md).",
     "cwe": "CWE-1188",
     "severity": "LOW",
+    "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
     "category": "code",
     "owasp": "A10:2021-Server-Side-Request-Forgery",
     "languages": [
@@ -1652,6 +1653,7 @@
     "description": "management.endpoints.web.exposure.include=* publishes every actuator endpoint (env, heapdump, configprops, ...), which leak secrets and internals. Expose only health/info, or secure them.",
     "cwe": "CWE-200",
     "severity": "HIGH",
+    "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
     "category": "code",
     "owasp": "A05:2021-Security-Misconfiguration",
     "languages": [
@@ -1685,6 +1687,7 @@
     "description": "The H2 console gives a SQL shell (and, on older versions, code execution) to anyone who can reach it. Disable it outside local development.",
     "cwe": "CWE-489",
     "severity": "MEDIUM",
+    "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
     "category": "code",
     "owasp": "A05:2021-Security-Misconfiguration",
     "languages": [

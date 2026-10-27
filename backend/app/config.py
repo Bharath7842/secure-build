@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     openai_compat_base_url: str = "http://localhost:8000/v1"
     openai_compat_api_key: SecretStr | None = None
     openai_compat_request_timeout: int = 600
+    # Local `claude` CLI for projects with llm_provider == "claude_cli". Empty
+    # path means "find `claude` on PATH". Each scan gets one persisted Claude
+    # session whose working directory lives under claude_cli_dir.
+    claude_cli_path: str = ""
+    claude_cli_request_timeout: int = 600  # seconds per `claude -p` call
+    claude_cli_dir: str = str(DATA_DIR / "claude_cli")
     nvd_api_key: str | None = None
     database_url: str = DEFAULT_DATABASE_URL
     workspaces_dir: str = str(DATA_DIR / "workspaces")

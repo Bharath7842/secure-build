@@ -34,6 +34,7 @@ from app.services.credential_holder import InMemoryCredentialHolder
 from app.services.dast_findings import DastFindingsWriter
 from app.services.finding_rows import build_evidence_row, build_finding_row
 from app.services.scan_progress import ProgressTracker, infer_progress_from_lines
+from app.services.severity import apply_severity
 
 _cancel_lock = threading.Lock()
 _cancel_requested: set[str] = set()
@@ -41,7 +42,12 @@ _cancel_requested: set[str] = set()
 # paused worker wakes and then sees the cancel flag.
 _pause_events: dict[str, threading.Event] = {}
 
-_PROVIDER_LABELS = {"bedrock": "Bedrock", "ollama": "Ollama", "openai_compat": "OpenAI-compatible"}
+_PROVIDER_LABELS = {
+    "bedrock": "Bedrock",
+    "ollama": "Ollama",
+    "openai_compat": "OpenAI-compatible",
+    "claude_cli": "Claude",
+}
 
 # DAST credentials (passwords, tokens, saved sessions), handed over by the trigger endpoint and
 # popped when the scan starts: identity id -> secret fields, per scan id. Deliberately in-memory
@@ -73,7 +79,7 @@ def _friendly_model_label(provider: str, model: str | None) -> str | None:
     are already short/conventional and left as-is."""
     if not model:
         return None
-    if provider != "bedrock":
+    if provider not in ("bedrock", "claude_cli"):
         return model
     name = re.sub(r"^(us\.|eu\.|apac\.)?anthropic\.", "", model)
     name = re.sub(r"-\d{8}-v\d+:\d+$", "", name)
@@ -89,6 +95,9 @@ def _friendly_llm_label(provider: str | None, model: str | None, use_llm: bool) 
     provider_key = (provider or "").strip().lower()
     provider_label = _PROVIDER_LABELS.get(provider_key, provider or "an LLM")
     model_label = _friendly_model_label(provider_key, model)
+    if provider_key == "claude_cli":
+        # The CLI is only how Claude is reached: "Claude Sonnet 5.5", not "Claude CLI (...)".
+        return model_label or provider_label
     return f"{provider_label} ({model_label})" if model_label else provider_label
 
 
@@ -609,6 +618,9 @@ def _make_reachability_updates_writer(scan_id: str):
                         before_verdict, before_confidence = row.verdict, row.confidence
                         row.reachability = update.get("reachability")
                         row.confidence = update.get("confidence")
+                        # Reachability evidence can adjust the CVSS vector (a sanitizer
+                        # on the path, an authenticated entry point).
+                        apply_severity(row)
                         changed += 1
                         # A path can lift a confirmed finding's confidence to the
                         # reachability floor; that is a decision. Evidence that leaves

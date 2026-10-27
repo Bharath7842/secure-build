@@ -71,7 +71,7 @@ except ImportError:
 import llm_client  # noqa: E402
 from llm_client import RESULT_CACHE_USAGE_KEY, init_usage, usage_cost_summary  # noqa: E402
 import ast_struct  # noqa: E402
-from pipeline import call_graph, call_graph_python, dependency_scan, derive_rules, flow_verify, llm_file_scan, regex_scan, rg_prefilter  # noqa: E402
+from pipeline import call_graph, call_graph_python, dep_classify, dependency_scan, derive_rules, flow_verify, llm_file_scan, regex_scan, rg_prefilter, risk_rerank  # noqa: E402
 from pipeline import joern_findings, joern_flows, joern_runner, occurrence, reachability  # noqa: E402
 from pipeline import sql_semantics  # noqa: E402
 from pipeline.validators import VALIDATOR_CONTEXT_USAGE_KEY, ValidatorContext  # noqa: E402
@@ -101,7 +101,8 @@ EXT_LANG_MAP: Dict[str, str] = {
 # Extension -> rule-catalog "languages" tag vocabulary. Deliberately a
 # Directories that are never worth scanning for source-level SAST findings.
 # Note: any directory starting with "." is skipped regardless of this list
-# (see node_scan_directory) — .git, .settings, .idea, etc. are pruned that way.
+# (see node_scan_directory) — .git, .settings, .idea, etc. are pruned that way —
+# except WALKED_DOT_DIRS (.github).
 DEFAULT_SKIP_DIRS = {
     ".git", ".svn", ".hg",
     "node_modules", "bower_components",
@@ -116,6 +117,9 @@ DEFAULT_SKIP_DIRS = {
     # pruning them hid com/<pkg>/config/SecurityConfig.java from every stage.
 }
 _SKIP_DIRS_LOWER = {d.lower() for d in DEFAULT_SKIP_DIRS}
+# Every other directory starting with "." is skipped. These hold scannable
+# pipeline definitions (.github/workflows/*.yml) rather than tooling state.
+WALKED_DOT_DIRS = frozenset({".github"})
 
 # Purely presentational/binary assets — never security-relevant, excluded
 # from the walk entirely (not counted, not categorized, not risk-mapped).
@@ -198,7 +202,7 @@ STACK_PROFILES: Dict[str, Dict[str, Any]] = {
             (r"(^|/)src/main/java/.*/(security|auth)/",           "CRITICAL", "authentication / authorization logic", "source"),
             (r"(^|/)src/main/java/.*/(util|utils|helper|helpers)/", "MEDIUM",   "utility code",                        "source"),
             (r"(^|/)src/main/java/",                               "MEDIUM",   "application source (unclassified package)", "source"),
-            (r"(^|/)src/main/resources/application[-.].*\.(properties|ya?ml)$", "CRITICAL", "runtime config — possible embedded secrets", "config"),
+            (r"(^|/)src/main/resources/application([-.][^/]*)?\.(properties|ya?ml)$", "CRITICAL", "runtime config — possible embedded secrets", "config"),
             (r"(^|/)src/main/resources/",                          "MEDIUM",   "resources / static config",           "config"),
             (r"(^|/)src/test/",                                    "LOW",      "test code",                           "test"),
         ],
@@ -266,6 +270,17 @@ STACK_PROFILES: Dict[str, Dict[str, Any]] = {
 # unrecognized stacks instead of silently skipping everything.
 GENERIC_FALLBACK_RULES: List[RiskRule] = [
     (r"\.(env|pem|key|pfx|p12)$",                 "CRITICAL", "credential/secret-like file",           "config"),
+    # Pipeline, container and infrastructure definitions: small files, but they
+    # decide what runs with the repo's secrets and what the deployment exposes.
+    # CRITICAL (like web.xml and application.properties) so the deep scan reads
+    # them even under deep-scan-critical-only: their usual findings are absences
+    # (no USER, no encryption property, no permissions block) that a regex cannot
+    # express, and there are only a handful of them per repo.
+    (r"(^|/)\.github/workflows/[^/]+\.ya?ml$",     "CRITICAL", "CI/CD workflow (token permissions, secrets, third-party actions)", "config"),
+    (r"(^|/)(Dockerfile|Dockerfile\.[^/]+|[^/]+\.dockerfile)$", "CRITICAL", "container build definition (base image, user, secrets)", "config"),
+    (r"(^|/)docker-compose[^/]*\.ya?ml$",          "MEDIUM",   "container orchestration config",        "config"),
+    (r"\.(cloudformation|template)\.(ya?ml|json)$|(^|/)(cloudformation|cfn|iac|infra|infrastructure)/[^/]+\.(ya?ml|json|template)$",
+                                                    "CRITICAL", "infrastructure-as-code template (network exposure, encryption, IAM)", "config"),
     (r"(^|/)(config|conf|settings)/",              "HIGH",     "configuration directory",               "config"),
     (r"(^|/)(auth|security)/",                     "CRITICAL", "likely auth/authz code",                "source"),
     (r"(^|/)pom\.xml$|(^|/)build\.gradle(\.kts)?$", "MEDIUM",  "dependency / build manifest",           "dependency"),
@@ -472,6 +487,10 @@ class SastState(TypedDict, total=False):
     # optional LLM pass). Default on; CLI --no-derived-regex / limitations id
     # "runtime-derived-regex". Merged onto the static catalog in _scan_context.
     derive_runtime_rules: bool
+    # Additive LLM passes, default on whenever use_llm is. CLI --no-classify-deps /
+    # --no-rerank-leftovers; no project setting.
+    classify_unrecognized_deps: bool
+    rerank_leftover_files: bool
     max_derived_regex_rules: int
     derived_rules: List[Any]
     # {compiled, failed, failed_by_reason} — how many derive candidates didn't
@@ -814,7 +833,10 @@ def node_scan_directory(state: SastState) -> dict:
     marker_files_found: List[str] = []
 
     for current_root, dirnames, filenames in os.walk(root):
-        pruned = [d for d in dirnames if d.lower() in _SKIP_DIRS_LOWER or d.startswith(".")]
+        pruned = [
+            d for d in dirnames
+            if d.lower() in _SKIP_DIRS_LOWER or (d.startswith(".") and d not in WALKED_DOT_DIRS)
+        ]
         for d in pruned:
             dirnames.remove(d)
 
@@ -1136,12 +1158,14 @@ def node_analyze_tech_stack(state: SastState) -> dict:
     # signature table — generalizes to any ecosystem the marker heuristic
     # recognizes, unlike the AST pass below which only covers Java/Angular.
     dependency_summary = dependency_scan.analyze_dependencies(scan, Path(scan["root"]))
+    usage = state.get("usage") or init_usage(state.get("llm_provider"), state.get("llm_model"))
     if dependency_summary:
+        _classify_unrecognized_dependencies(state, dependency_summary, usage, tracer)
         tracer.log(2, "analyze_tech_stack",
                     f"Dependency scan: {len(dependency_summary['manifests_parsed'])} manifest(s) parsed, "
                     f"{dependency_summary['dependency_count']} dependencies, "
                     f"{len(dependency_summary['frameworks'])} recognized framework(s)",
-                    detail=str(dependency_summary),
+                    detail=str({k: v for k, v in dependency_summary.items() if k != "unrecognized_dependencies"}),
                     narrative=(
                         f"Parsed {len(dependency_summary['manifests_parsed'])} dependency manifest(s): "
                         + (", ".join(f["label"] for f in dependency_summary["frameworks"]) or "no recognized frameworks")
@@ -1201,8 +1225,39 @@ def node_analyze_tech_stack(state: SastState) -> dict:
 
     _log_active_surfaces(state, {**state, "llm_analysis": result}, tracer)
 
-    usage = state.get("usage") or init_usage(state.get("llm_provider"), state.get("llm_model"))
     return {"llm_analysis": result, "usage": usage}
+
+
+def _classify_unrecognized_dependencies(
+    state: SastState, dependency_summary: Dict[str, Any], usage: Dict[str, Any], tracer: "AgentTrace",
+) -> None:
+    """Additive LLM pass over the dependencies no signature matched (default on
+    with LLM scanning; CLI --no-classify-deps / state["classify_unrecognized_deps"]).
+    Writes `dependency_summary["llm_labels"]` only — never `frameworks`, so the
+    stack verdict and the prompts built from it stay as they were. Failure or an
+    exhausted budget leaves the summary untouched."""
+    if not state.get("use_llm") or not state.get("classify_unrecognized_deps", True):
+        return
+    unrecognized = dependency_summary.get("unrecognized_dependencies") or []
+    if not unrecognized:
+        return
+    labels = dep_classify.classify_unrecognized(
+        unrecognized,
+        usage=usage,
+        llm_provider=state.get("llm_provider"),
+        llm_model=state.get("llm_model"),
+    )
+    if not labels:
+        return
+    dependency_summary["llm_labels"] = labels
+    matched = sum(len(entry["matched_dependencies"]) for entry in labels)
+    tracer.log(2, "classify_unrecognized_deps",
+               f"LLM labelled {matched} of {len(unrecognized)} unrecognized dependencies",
+               detail=str(labels),
+               narrative=(
+                   f"Labelled {matched} of {len(unrecognized)} unrecognized dependencies: "
+                   + ", ".join(entry["label"] for entry in labels) + "."
+               ))
 
 
 def _log_active_surfaces(state: SastState, resolved_state: dict, tracer: "AgentTrace") -> None:
@@ -1351,6 +1406,45 @@ def _ts_content_risk(root: Path, rel_path: str, risk: str, reason: str) -> Tuple
     return risk, reason
 
 
+def _rerank_leftover_files(
+    state: SastState, root: Path, leftover_paths: List[str], file_risk: List[Dict[str, Any]],
+    risk_counts: Dict[str, int], tracer: "AgentTrace",
+) -> int:
+    """Additive LLM pass: promote catch-all MEDIUM files that handle auth, input,
+    errors or security config to HIGH — or to CRITICAL when the project deep-scans
+    CRITICAL files only (a HIGH file would then never reach the deep scan, which
+    is the point of promoting it) (default on with LLM scanning; CLI
+    --no-rerank-leftovers / state["rerank_leftover_files"]). Runs before the
+    deep/triage buckets are built so counts, scan_priority and the deep-scan
+    set all see the promotion. Never demotes; any failure promotes nothing.
+    Returns how many files were promoted."""
+    if not state.get("use_llm") or not state.get("rerank_leftover_files", True) or not leftover_paths:
+        return 0
+    usage = state.get("usage") or init_usage(state.get("llm_provider"), state.get("llm_model"))
+    result = risk_rerank.rerank_leftover_files(
+        root, leftover_paths, usage=usage,
+        llm_provider=state.get("llm_provider"), llm_model=state.get("llm_model"),
+    )
+    promoted = result["promoted"]
+    target = "CRITICAL" if state.get("deep_scan_critical_only") else "HIGH"
+    for entry in file_risk:
+        handles = promoted.get(entry["path"])
+        if handles and entry["risk_level"] == "MEDIUM":
+            entry["risk_level"] = target
+            entry["reason"] = f"LLM-promoted: handles {', '.join(handles)} ({entry['reason']})"
+            risk_counts["MEDIUM"] -= 1
+            risk_counts[target] += 1
+    if result["considered"]:
+        tracer.log(4, "rerank_leftover_files",
+                   f"LLM re-ranked {result['considered']} unclassified file(s); promoted {len(promoted)} to {target}",
+                   detail=str(sorted(promoted.items())),
+                   narrative=(
+                       f"Re-ranked {result['considered']} unclassified source file(s) by what they do: "
+                       f"{len(promoted)} promoted to {target}."
+                   ))
+    return len(promoted)
+
+
 def _java_content_risk(root: Path, rel_path: str, risk: str, reason: str) -> Tuple[str, str]:
     """(risk, reason) after looking at a .java file's head; unchanged when
     unreadable or unremarkable."""
@@ -1384,6 +1478,9 @@ def node_map_modules_and_risk(state: SastState) -> dict:
     modules_by_stack: Dict[str, List[str]] = {}
     root = _resolve_scan_root(state)
     content_overrides = {"promoted": 0, "demoted": 0}
+    # Source files that matched only a catch-all path rule (MEDIUM "...
+    # (unclassified ...)"), in walk order — what _rerank_leftover_files may promote.
+    leftover_paths: List[str] = []
 
     for stack in active_profiles:
         mods = _discover_modules(scan, stack)
@@ -1405,6 +1502,7 @@ def node_map_modules_and_risk(state: SastState) -> dict:
             matched_stack = "generic-fallback"
 
         risk, reason, category = matched
+        rule_reason = reason
         content_risk = (
             _java_content_risk if f["path"].endswith(".java")
             else _ts_content_risk if f["path"].endswith(".ts")
@@ -1415,6 +1513,8 @@ def node_map_modules_and_risk(state: SastState) -> dict:
             if new_risk != risk:
                 content_overrides["promoted" if new_risk == "CRITICAL" else "demoted"] += 1
                 risk = new_risk
+        if risk == "MEDIUM" and category == "source" and "(unclassified" in rule_reason and reason == rule_reason:
+            leftover_paths.append(f["path"])
         if risk in risk_counts:
             risk_counts[risk] += 1
 
@@ -1435,6 +1535,8 @@ def node_map_modules_and_risk(state: SastState) -> dict:
             tracer.log(4, "map_modules_and_risk", f"{f['path']} -> {risk}",
                         detail=f"module={module}, category={category}, reason={reason}",
                         narrative=f"  {f['path']} -> {risk} ({reason})")
+
+    llm_promoted = _rerank_leftover_files(state, root, leftover_paths, file_risk, risk_counts, tracer)
 
     # Bucket order: CRITICAL entries first, then HIGH, walk order within each
     # bucket. `files_for_risk_levels` (not the raw file_risk list) is what
@@ -1494,6 +1596,7 @@ def node_map_modules_and_risk(state: SastState) -> dict:
         "triage_scan_paths": triage_scan_paths,
         "files_skipped_test": files_skipped_test,
         "content_risk_overrides": content_overrides,
+        "llm_promoted": llm_promoted,
     }
 
     llm_analysis = state.get("llm_analysis") or {}
@@ -1569,7 +1672,7 @@ def _resolve_active_surfaces(state: SastState, rules_path: Path):
     return regex_scan.active_surfaces(
         regex_scan.load_surfaces(rules_path),
         languages=_repo_languages(state),
-        active_frameworks={f["label"] for f in dependency_summary.get("frameworks", [])},
+        active_frameworks=dep_classify.active_framework_labels(dependency_summary),
         dependency_index=regex_scan.build_dependency_index(dependency_summary),
     )
 
@@ -1613,7 +1716,7 @@ def _scan_context(state: SastState) -> tuple:
     rules = static_rules + derived_rules
     llm_analysis = state.get("llm_analysis") or {}
     dependency_summary = llm_analysis.get("dependency_summary") or {}
-    active_frameworks = {f["label"] for f in dependency_summary.get("frameworks", [])}
+    active_frameworks = dep_classify.active_framework_labels(dependency_summary)
     dependency_index = regex_scan.build_dependency_index(dependency_summary)
     priority_rule_ids = regex_scan.surface_rule_ids(
         _resolve_active_surfaces(state, rules_path)
@@ -2106,7 +2209,7 @@ def node_derive_runtime_rules(state: SastState) -> dict:
         adapter = None
     llm_analysis = state.get("llm_analysis") or {}
     dependency_summary = llm_analysis.get("dependency_summary") or {}
-    frameworks = [f.get("label") or "" for f in dependency_summary.get("frameworks", [])]
+    frameworks = sorted(dep_classify.active_framework_labels(dependency_summary))
     try:
         surfaces = [s.surface for s in _resolve_active_surfaces(state, rules_path)]
     except Exception:  # noqa: BLE001 — surfaces are prompt context only
@@ -3122,6 +3225,10 @@ def main() -> None:
     parser.add_argument("--joern-timeout", type=int, default=None,
                          help=f"Per-Joern-subprocess timeout in seconds (default "
                               f"{joern_runner.DEFAULT_TIMEOUT_SEC}, or JOERN_TIMEOUT_SEC)")
+    parser.add_argument("--no-classify-deps", action="store_true",
+                         help="Skip the LLM pass that labels dependencies no framework signature matched")
+    parser.add_argument("--no-rerank-leftovers", action="store_true",
+                         help="Skip the LLM pass that promotes unclassified source files to HIGH")
     parser.add_argument("--no-derived-regex", action="store_true",
                          help="Skip runtime regex derive (call-graph wrappers + LLM pass); "
                               "use the static catalog only")
@@ -3171,6 +3278,8 @@ def main() -> None:
         "deep_scan_critical_only": args.critical_only_deep_scan,
         "inter_file_flow": use_llm and not args.no_inter_file_flow,
         "derive_runtime_rules": not args.no_derived_regex,
+        "classify_unrecognized_deps": not args.no_classify_deps,
+        "rerank_leftover_files": not args.no_rerank_leftovers,
         "joern_dataflow": not (args.no_joern or args.no_joern_dataflow),
         "joern_scan_queries": not (args.no_joern or args.no_joern_queries),
         "catalog_prefilter": args.catalog_prefilter,

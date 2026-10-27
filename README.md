@@ -38,7 +38,7 @@ Secure Build is an application-security platform with a **FastAPI** backend and 
 - Verdicts: `true_positive`, `false_positive`, and `unverified` (a pattern matched and nobody has reviewed it yet).
 - Optional [Joern](https://joern.io) taint analysis (`reachableByFlows` from request inputs to dangerous sinks).
 - Token-efficiency features: prompt caching on Bedrock, JSON-envelope outputs, batched confirmations, and a cross-scan LLM result cache. A per-scan spend cutoff (default $2) caps cost.
-- Pluggable LLM providers: AWS Bedrock, any OpenAI-compatible endpoint (vLLM, LM Studio, llama.cpp, OpenAI), and Ollama. A per-project `local_only` data policy blocks any non-local provider.
+- Pluggable LLM providers: AWS Bedrock, the local Claude CLI (one Claude session per scan), any OpenAI-compatible endpoint (vLLM, LM Studio, llama.cpp, OpenAI), and Ollama. A per-project `local_only` data policy blocks any non-local provider.
 
 **DAST**
 
@@ -71,7 +71,7 @@ Secure Build is an application-security platform with a **FastAPI** backend and 
  Postgres    backend/sast_engine/      backend/app/dast/
  (data/)     LangGraph pipeline        LangGraph + Playwright
                │                         │
-               └──── LLM providers: Bedrock · OpenAI-compatible · Ollama
+               └──── LLM providers: Bedrock · Claude CLI · OpenAI-compatible · Ollama
 ```
 
 - People sign in with their own accounts. The session lives in an HttpOnly cookie; the frontend's server-side routes forward it to the backend as `Authorization: Session <token>`. The browser never talks to the backend directly.
@@ -379,6 +379,7 @@ The backend reads the **root** `.env` file (`secure-build/.env`) via `app/config
 |---|---|
 | `AWS_REGION`, `BEDROCK_MODEL_ID` | AWS Bedrock (default model: Claude Haiku 4.5). Uses the standard AWS credential chain. |
 | `BEDROCK_PROMPT_CACHE` | Set `0` to disable Bedrock prompt caching. |
+| `CLAUDE_CLI_PATH`, `CLAUDE_CLI_REQUEST_TIMEOUT` | Local `claude` CLI provider (`claude_cli`); path defaults to `claude` on `PATH`. Each scan runs as one Claude session under `claude_cli_dir`. |
 | `OLLAMA_BASE_URL`, `OLLAMA_REQUEST_TIMEOUT` | Local Ollama server (default `http://localhost:11434`). |
 | `OPENAI_COMPAT_BASE_URL`, `OPENAI_COMPAT_API_KEY` | Default OpenAI-compatible endpoint (per-project overrides available). |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | Hosted providers for DAST model routing. Read from the environment only. |

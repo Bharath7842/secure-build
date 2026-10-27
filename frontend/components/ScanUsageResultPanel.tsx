@@ -1,7 +1,7 @@
 "use client";
 
 import type { UsageSummary } from "@/lib/types";
-import { formatCostUsd, formatTokenCount, providerLabel } from "@/lib/formatUsage";
+import { formatCostUsd, formatTokenCount, llmLabel } from "@/lib/formatUsage";
 
 import ScanUsagePanel from "@/components/ScanUsagePanel";
 
@@ -112,7 +112,7 @@ export default function ScanUsageResultPanel({
             <p className="truncate text-sm font-medium text-[var(--ink)]">Token usage</p>
             <p className="truncate text-xs text-[var(--muted)]">
               {formatTokenCount(usage.total_tokens)} tokens · {formatCostUsd(usage.cost_usd)} ·{" "}
-              {providerLabel(activeProvider)} ({activeModel})
+              {llmLabel(activeProvider, activeModel, "paren")}
             </p>
           </div>
         </div>

@@ -1,5 +1,5 @@
 /** SAST LLM backends (backend app/services/llm_policy.py). */
-export type SastLlmProvider = "bedrock" | "openai_compat" | "ollama";
+export type SastLlmProvider = "bedrock" | "openai_compat" | "ollama" | "claude_cli";
 /** "none": stop LLM work at the cost cutoff instead of switching providers. */
 export type SastFallbackProvider = SastLlmProvider | "none";
 
@@ -317,11 +317,28 @@ export interface ScanReport {
 }
 
 /** One persisted `Finding` row — from `GET /scans/{id}/findings`. */
+/** Where a SAST finding's severity came from (`app/services/severity.py`). */
+export interface SeverityBasis {
+  scheme: string;
+  /** rule: the rule's own vector · cwe: the CWE baseline · quality: not a vulnerability ·
+   *  original: no baseline, the rule's or model's severity is kept. */
+  source: "rule" | "cwe" | "quality" | "original";
+  cwe: string | null;
+  rationale?: string;
+  baseline_vector?: string;
+  adjustments: { metric: string; to: string; why: string }[];
+  original_severity: string;
+  note?: string;
+}
+
 export interface Finding {
   id: string;
   scan_id: string;
   severity: string;
   cvss: number | null;
+  /** SAST: the CVSS v3.1 vector `cvss` and `severity` come from. */
+  cvss_vector?: string | null;
+  severity_basis?: SeverityBasis | null;
   cwe: string | null;
   owasp_category: string | null;
   rule_id: string | null;
@@ -519,8 +536,37 @@ export interface ScanFindings {
     actionable: Record<string, { groups: number; occurrences: number }>;
     dismissed: { groups: number; occurrences: number };
     by_owasp: { category: string; groups: number; severe: number; occurrences: number }[];
+    /** Unresolved occurrences per `unresolved_reason` (`unknown` when a row names none). */
+    by_unresolved_reason?: Record<string, number>;
   } | null;
+  /** SAST: the same groups rolled up per CWE (`scan_export.group_by_cwe`). */
+  cwe_groups?: CweGroup[];
+  /** SAST: false positives the scanner was at least 90 % sure of, left out of everything here. */
+  hidden_fp_count?: number;
   findings: Finding[];
+}
+
+/** The groups of one CWE that fall in one verdict bucket; `finding_ids` name rows of `findings`. */
+export interface CweBucket {
+  groups: number;
+  occurrences: number;
+  files: number;
+  finding_ids: string[];
+}
+
+/** One CWE over every group of a scan. `by_bucket` is keyed by verdict
+ *  (`true_positive` | `unverified` | `false_positive` | `unknown`). */
+export interface CweGroup {
+  key: string;
+  cwe: string | null;
+  title: string;
+  owasp_category: string | null;
+  severity: string;
+  groups: number;
+  occurrences: number;
+  file_count: number;
+  files: string[];
+  by_bucket: Record<string, CweBucket>;
 }
 
 /** One selectable model in `GET /settings/models`; `key` is `sast:<preset id>` or `dast:<provider>:<model>`. */

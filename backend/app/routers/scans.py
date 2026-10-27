@@ -41,12 +41,14 @@ from app.services.dast_scan_setup import DastSetupError, prepare_dast_scan
 from app.services.decision_diff import DiffError, build_decision_diff_xlsx, compare_scans
 from app.services.decision_history import finding_history
 from app.services.feedback import apply_effective_verdicts, effective_scan_findings
+from app.services.fp_visibility import hide_confident_false_positives
 from app.services.ollama_check import DEFAULT_FALLBACK_OLLAMA_MODEL, ollama_model_error
 from app.services.scan_export import (
     build_excel_report,
     build_pdf_report,
     count_findings,
     export_filenames,
+    group_by_cwe,
     group_findings_by_issue,
 )
 from app.services.scan_progress import infer_progress_from_lines
@@ -554,9 +556,9 @@ def get_scan_findings(
         return build_dast_findings(db, scan, severity=severity, verdict=verdict, role=role, check=check)
     # Reviewer verdicts count as the verdict, so the filter and totals run on the overlaid
     # rows rather than in SQL. The LLM's original stays on `llm_verdict`.
-    all_findings = apply_effective_verdicts(
+    all_findings, hidden_fp_count = hide_confident_false_positives(db, scan, apply_effective_verdicts(
         db, scan, db.query(Finding).filter(Finding.scan_id == scan.id).order_by(Finding.file_path, Finding.line).all()
-    )
+    ))
     files_scanned = len({f.file_path for f in all_findings if f.file_path})
     # Grouped once (grouping stamps the ORM instances) and counted once, over every
     # finding rather than the verdict-filtered page: `count_findings` is the single
@@ -574,6 +576,8 @@ def get_scan_findings(
         unverified_count=totals[UNVERIFIED_VERDICT]["occurrences"],
         files_scanned=files_scanned,
         severity_group_counts=counts,
+        cwe_groups=group_by_cwe(all_groups),
+        hidden_fp_count=hidden_fp_count,
         findings=[FindingOut.model_validate(f) for f in grouped_findings],
     )
 

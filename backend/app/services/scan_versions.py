@@ -7,6 +7,7 @@ row (SAST-00-050) can carry the evidence version it was made under.
     engine_commit          git SHA of the backend checkout, or "unknown"
     rule_catalog_sha256    hash of the loaded rule catalog files
     result_cache_version   llm_client.RESULT_CACHE_VERSION
+    severity_scheme        app/defaults/cwe_cvss.SCHEME (how severity was scored)
     system_prompt_sha256   per LLM step, the sha256 of each system prompt used
                            (filled in from the usage summary once the run ends)
     llm_provider, llm_model  the snapshot taken on the scan row
@@ -24,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.defaults.cwe_cvss import SCHEME as SEVERITY_SCHEME
 from app.models import Scan
 
 VERSIONS_KEY = "versions"
@@ -73,6 +75,7 @@ def static_versions(scan: Scan, *, mock: bool) -> dict[str, Any]:
         "engine_commit": MOCK_VALUE if mock else engine_commit(),
         "rule_catalog_sha256": MOCK_VALUE if mock else _safe(rule_catalog_sha256),
         "result_cache_version": MOCK_VALUE if mock else result_cache_version(),
+        "severity_scheme": SEVERITY_SCHEME,
         "system_prompt_sha256": {},
         "llm_provider": scan.llm_provider,
         "llm_model": scan.llm_model,

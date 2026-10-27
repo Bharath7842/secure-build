@@ -38,6 +38,11 @@ def test_presets_include_openai_compatible_provider():
     assert any(p.provider == "openai_compat" for p in LLM_PRESETS)
 
 
+def test_presets_include_claude_cli_provider():
+    models = {p.model for p in LLM_PRESETS if p.provider == "claude_cli"}
+    assert models == {"claude-sonnet-5-5", "claude-haiku-5-5"}
+
+
 def test_preset_for_model_lookup():
     p = preset_for_model("ollama", "starcoder2:3b")
     assert p is not None

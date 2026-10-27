@@ -1,0 +1,8 @@
+{
+  "input_tokens": 4413,
+  "key": "650be79d3572b864b6cc755309ef3f7efa472ec43ac5deb39d47714bf63ea709",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 126,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 11, \"verdict\": \"true_positive\", \"confidence\": 0.7, \"rule_id\": \"llm-extra\", \"severity\": \"MEDIUM\", \"cwe\": \"CWE-79\", \"title\": \"XSS through a translated message\", \"owasp_category\": \"A03:2021-Injection\", \"verdict_reason\": \"The translated text may contain markup.\", \"source\": \"translation dictionary\", \"sink\": \"this.html = this.translate.instant\", \"data_flow\": \"the translated text reaches the page\", \"snippet\": \"this.html = this.translate.instant\", \"ai_fix\": \"Encode before rendering.\"}]}"
+}

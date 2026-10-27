@@ -1,0 +1,456 @@
+[
+  {
+    "id": "docker-base-image-latest-tag",
+    "title": "Container base image uses the :latest tag",
+    "description": "FROM <image>:latest is not reproducible: the image can change under the build, so a compromised or breaking upstream push reaches production unreviewed. Pin a version, ideally by digest.",
+    "cwe": "CWE-1104",
+    "severity": "LOW",
+    "category": "code",
+    "owasp": "A08:2021-Software-and-Data-Integrity-Failures",
+    "languages": [
+      "dockerfile"
+    ],
+    "frameworks": [],
+    "pattern": "(?im)^\\s*FROM\\s+(?:--platform=\\S+\\s+)?\\S+:latest\\b",
+    "examples": {
+      "match": [
+        {
+          "code": "FROM node:latest AS build",
+          "path": "Dockerfile"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "FROM node:20.11-slim",
+          "path": "Dockerfile"
+        },
+        {
+          "code": "FROM eclipse-temurin@sha256:0123abcd",
+          "path": "Dockerfile"
+        }
+      ]
+    }
+  },
+  {
+    "id": "docker-user-root",
+    "title": "Container explicitly runs as root",
+    "description": "USER root (or USER 0) makes every process in the container root; a container escape or a vulnerable dependency then has full privileges. Use a dedicated unprivileged user. A Dockerfile with no USER instruction at all also runs as root: check for that when reading the file.",
+    "cwe": "CWE-250",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "dockerfile"
+    ],
+    "frameworks": [],
+    "pattern": "(?im)^\\s*USER\\s+(?:root|0)(?::\\S+)?\\s*$",
+    "examples": {
+      "match": [
+        {
+          "code": "USER root",
+          "path": "Dockerfile"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "USER appuser",
+          "path": "Dockerfile"
+        },
+        {
+          "code": "# USER root",
+          "path": "Dockerfile"
+        }
+      ]
+    }
+  },
+  {
+    "id": "docker-remote-script-pipe-shell",
+    "title": "Remote script piped straight into a shell",
+    "description": "curl/wget output piped into sh or bash runs whatever the server returns, with no integrity check. Download, verify a checksum or signature, then run.",
+    "cwe": "CWE-494",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A08:2021-Software-and-Data-Integrity-Failures",
+    "languages": [
+      "dockerfile",
+      "github-actions"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)\\b(?:curl|wget)\\b[^\\n|;&]*\\|\\s*(?:sudo\\s+)?(?:ba|z)?sh\\b",
+    "examples": {
+      "match": [
+        {
+          "code": "RUN curl -fsSL https://example.com/install.sh | sh",
+          "path": "Dockerfile"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "RUN curl -fsSL -o /tmp/i.sh https://example.com/i.sh && sha256sum -c i.sha",
+          "path": "Dockerfile"
+        }
+      ]
+    }
+  },
+  {
+    "id": "docker-add-remote-url",
+    "title": "Dockerfile ADD fetches a remote URL",
+    "description": "ADD <url> downloads at build time with no checksum and no cache control. Use COPY for local files, or RUN curl with a verified checksum (or ADD --checksum) for remote ones.",
+    "cwe": "CWE-494",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A08:2021-Software-and-Data-Integrity-Failures",
+    "languages": [
+      "dockerfile"
+    ],
+    "frameworks": [],
+    "pattern": "(?im)^\\s*ADD\\s+(?:--(?!checksum)\\S+\\s+)*https?://",
+    "examples": {
+      "match": [
+        {
+          "code": "ADD https://example.com/app.tar.gz /opt/",
+          "path": "Dockerfile"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "COPY app.tar.gz /opt/",
+          "path": "Dockerfile"
+        },
+        {
+          "code": "ADD --checksum=sha256:ab12 https://example.com/a.tgz /opt/",
+          "path": "Dockerfile"
+        }
+      ]
+    }
+  },
+  {
+    "id": "docker-secret-in-env-or-arg",
+    "title": "Secret value set in Dockerfile ENV or ARG",
+    "description": "A literal password, token or key in ENV/ARG is baked into the image layers and visible in `docker history`. Pass secrets at runtime or use BuildKit secret mounts.",
+    "cwe": "CWE-798",
+    "severity": "HIGH",
+    "category": "secrets",
+    "owasp": "A07:2021-Identification-and-Authentication-Failures",
+    "languages": [
+      "dockerfile"
+    ],
+    "frameworks": [],
+    "pattern": "(?im)^\\s*(?:ENV|ARG)\\s+\\w*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|PRIVATE_?KEY)\\w*\\s*[= ]\\s*[\\\"']?[^\\s\\\"'$][^\\s\\\"']*",
+    "examples": {
+      "match": [
+        {
+          "code": "ENV DB_PASSWORD=hunter2",
+          "path": "Dockerfile"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "ARG API_TOKEN",
+          "path": "Dockerfile"
+        },
+        {
+          "code": "ENV DB_PASSWORD=${DB_PASSWORD}",
+          "path": "Dockerfile"
+        }
+      ]
+    }
+  },
+  {
+    "id": "build-tls-verification-disabled",
+    "title": "TLS certificate verification disabled in a build or pipeline step",
+    "description": "--no-check-certificate, curl -k/--insecure, NODE_TLS_REJECT_UNAUTHORIZED=0 or GIT_SSL_NO_VERIFY make the download or clone trust any certificate, so a network attacker can swap what gets built.",
+    "cwe": "CWE-295",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "dockerfile",
+      "github-actions"
+    ],
+    "frameworks": [],
+    "pattern": "(?i)(?:--no-check-certificate|--insecure\\b|\\bcurl\\b[^\\n]*\\s-[a-zA-Z]*k\\b|NODE_TLS_REJECT_UNAUTHORIZED\\s*=\\s*[\\\"']?0|GIT_SSL_NO_VERIFY\\s*=\\s*[\\\"']?(?:1|true))",
+    "examples": {
+      "match": [
+        {
+          "code": "RUN wget --no-check-certificate https://example.com/a.zip",
+          "path": "Dockerfile"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "RUN curl -fsSL https://example.com/a.zip -o a.zip",
+          "path": "Dockerfile"
+        }
+      ]
+    }
+  },
+  {
+    "id": "gha-unpinned-third-party-action",
+    "title": "Third-party GitHub Action pinned to a mutable tag or branch",
+    "description": "uses: owner/action@v1 (or a branch) follows whatever the action's author pushes next, with access to the job's token and secrets. Pin third-party actions to a full 40-character commit SHA. First-party actions/* and github/* are not flagged by this rule.",
+    "cwe": "CWE-829",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A08:2021-Software-and-Data-Integrity-Failures",
+    "languages": [
+      "github-actions"
+    ],
+    "frameworks": [],
+    "pattern": "(?m)^\\s*-?\\s*uses:\\s*(?!actions/|github/|\\./|docker://)[\\w.-]+/[\\w./-]+@(?![0-9a-f]{40}\\b)[^\\s#]+",
+    "examples": {
+      "match": [
+        {
+          "code": "      - uses: docker/build-push-action@v5",
+          "path": ".github/workflows/ci.yml"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "      - uses: actions/checkout@v4",
+          "path": ".github/workflows/ci.yml"
+        },
+        {
+          "code": "      - uses: docker/build-push-action@0123456789abcdef0123456789abcdef01234567",
+          "path": ".github/workflows/ci.yml"
+        }
+      ]
+    }
+  },
+  {
+    "id": "gha-script-injection",
+    "title": "Untrusted GitHub event data interpolated into a run script",
+    "description": "${{ github.event.issue.title }}, pull_request.title/body/head.ref, head_commit.message and similar are attacker-controlled and are substituted into the shell script before it runs, so a crafted title runs commands with the job's token. Pass the value through env: and read it as a shell variable instead.",
+    "cwe": "CWE-78",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A03:2021-Injection",
+    "languages": [
+      "github-actions"
+    ],
+    "frameworks": [],
+    "pattern": "(?m)(?=[\\s\\S]|\\Z)^([ \\t]*)(?:-[ \\t]+)?run:(?:[ \\t]*[^\\n|>\\s][^\\n]*\\$\\{\\{\\s*(?:github\\.event\\.(?:issue\\.(?:title|body)|pull_request\\.(?:title|body|head\\.(?:ref|label))|comment\\.body|review\\.body|review_comment\\.body|head_commit\\.message|head_commit\\.author\\.(?:name|email)|discussion\\.(?:title|body)|workflow_run\\.(?:head_branch|head_commit\\.message))|github\\.head_ref)|[ \\t]*[|>][-+]?[ \\t]*\\n(?:\\1[ \\t]+[^\\n]*\\n)*?\\1[ \\t]+[^\\n]*\\$\\{\\{\\s*(?:github\\.event\\.(?:issue\\.(?:title|body)|pull_request\\.(?:title|body|head\\.(?:ref|label))|comment\\.body|review\\.body|review_comment\\.body|head_commit\\.message|head_commit\\.author\\.(?:name|email)|discussion\\.(?:title|body)|workflow_run\\.(?:head_branch|head_commit\\.message))|github\\.head_ref))",
+    "examples": {
+      "match": [
+        {
+          "code": "      - run: echo \"${{ github.event.pull_request.title }}\"",
+          "path": ".github/workflows/ci.yml"
+        },
+        {
+          "code": "      - run: |\n          echo building\n          git checkout ${{ github.head_ref }}\n",
+          "path": ".github/workflows/ci.yml"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "      - run: echo \"$TITLE\"\n        env:\n          TITLE: ${{ github.event.pull_request.title }}\n",
+          "path": ".github/workflows/ci.yml"
+        },
+        {
+          "code": "      - run: echo ${{ github.sha }}",
+          "path": ".github/workflows/ci.yml"
+        }
+      ]
+    }
+  },
+  {
+    "id": "gha-pull-request-target-checkout",
+    "title": "pull_request_target workflow checks out the pull request's code",
+    "description": "pull_request_target runs with a write token and the repository's secrets. Checking out the PR head (github.event.pull_request.head.sha/ref) and then running or building it executes untrusted code with those privileges. Use pull_request, or split the privileged step into a separate workflow_run.",
+    "cwe": "CWE-829",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A08:2021-Software-and-Data-Integrity-Failures",
+    "languages": [
+      "github-actions"
+    ],
+    "frameworks": [],
+    "pattern": "pull_request_target[\\s\\S]{0,2500}?actions/checkout[\\s\\S]{0,300}?ref:\\s*\\$\\{\\{\\s*github\\.event\\.pull_request\\.head\\.(?:sha|ref)",
+    "examples": {
+      "match": [
+        {
+          "code": "on: pull_request_target\njobs:\n  b:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n",
+          "path": ".github/workflows/pr.yml"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "on: pull_request\njobs:\n  b:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n",
+          "path": ".github/workflows/pr.yml"
+        }
+      ]
+    }
+  },
+  {
+    "id": "gha-permissions-write-all",
+    "title": "Workflow grants the token write-all permissions",
+    "description": "permissions: write-all gives every job in the workflow write access to the repository, packages, deployments and more. Grant only what each job needs, with a top-level read-only default. A workflow with no permissions: block at all inherits the repository default, which may also be write.",
+    "cwe": "CWE-250",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "github-actions"
+    ],
+    "frameworks": [],
+    "pattern": "(?m)^[ \\t]*permissions:[ \\t]*write-all\\b",
+    "examples": {
+      "match": [
+        {
+          "code": "permissions: write-all",
+          "path": ".github/workflows/ci.yml"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "permissions:\n  contents: read\n",
+          "path": ".github/workflows/ci.yml"
+        }
+      ]
+    }
+  },
+  {
+    "id": "cfn-resource-publicly-accessible",
+    "title": "CloudFormation resource is publicly accessible",
+    "description": "PubliclyAccessible: true puts the database endpoint on a public address; combined with a wide security group it is reachable from the internet. Keep databases private and reach them through the VPC.",
+    "cwe": "CWE-284",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "yaml"
+    ],
+    "frameworks": [],
+    "pattern": "(?m)^[ \\t]*PubliclyAccessible:[ \\t]*[\\\"']?true[\\\"']?[ \\t]*(?:#.*)?$",
+    "examples": {
+      "match": [
+        {
+          "code": "      PubliclyAccessible: true",
+          "path": "iac/db.cloudformation.yaml"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "      PubliclyAccessible: false",
+          "path": "iac/db.cloudformation.yaml"
+        }
+      ]
+    }
+  },
+  {
+    "id": "cfn-storage-encryption-disabled",
+    "title": "CloudFormation storage encryption explicitly disabled",
+    "description": "StorageEncrypted: false / Encrypted: false leaves data at rest unencrypted. Enable encryption (StorageEncrypted: true with a KMS key). A resource that omits the property entirely is also unencrypted by default for RDS: check for that when reading the template.",
+    "cwe": "CWE-311",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [
+      "yaml"
+    ],
+    "frameworks": [],
+    "pattern": "(?m)^[ \\t]*(?:StorageEncrypted|Encrypted):[ \\t]*[\\\"']?false[\\\"']?[ \\t]*(?:#.*)?$",
+    "examples": {
+      "match": [
+        {
+          "code": "      StorageEncrypted: false",
+          "path": "iac/db.cloudformation.yaml"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "      StorageEncrypted: true",
+          "path": "iac/db.cloudformation.yaml"
+        }
+      ]
+    }
+  },
+  {
+    "id": "cfn-ingress-open-to-world",
+    "title": "CloudFormation security group ingress open to 0.0.0.0/0",
+    "description": "An ingress rule from 0.0.0.0/0 (or ::/0) exposes the port to the whole internet. Restrict the source to a known CIDR or another security group.",
+    "cwe": "CWE-284",
+    "severity": "MEDIUM",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "yaml"
+    ],
+    "frameworks": [],
+    "pattern": "(?m)(?:SecurityGroupIngress|Type:[ \\t]*AWS::EC2::SecurityGroupIngress)\\b(?:(?!SecurityGroupEgress)[\\s\\S]){0,400}?(?:CidrIp|CidrIpv6):[ \\t]*[\\\"']?(?:0\\.0\\.0\\.0/0|::/0)",
+    "examples": {
+      "match": [
+        {
+          "code": "      SecurityGroupIngress:\n        - IpProtocol: tcp\n          FromPort: 5432\n          CidrIp: 0.0.0.0/0\n",
+          "path": "iac/db.cloudformation.yaml"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "      SecurityGroupEgress:\n        - IpProtocol: -1\n          CidrIp: 0.0.0.0/0\n",
+          "path": "iac/db.cloudformation.yaml"
+        },
+        {
+          "code": "      SecurityGroupIngress:\n        - CidrIp: 10.0.0.0/16\n",
+          "path": "iac/db.cloudformation.yaml"
+        }
+      ]
+    }
+  },
+  {
+    "id": "cfn-iam-wildcard",
+    "title": "CloudFormation policy uses a wildcard Action or Principal",
+    "description": "Action: '*' or Principal: '*' grants every action or every principal. Name the specific actions and principals required.",
+    "cwe": "CWE-269",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A01:2021-Broken-Access-Control",
+    "languages": [
+      "yaml"
+    ],
+    "frameworks": [],
+    "pattern": "(?m)^[ \\t]*(?:-[ \\t]+)?(?:Action|Principal):[ \\t]*[\\\"']\\*[\\\"'][ \\t]*(?:#.*)?$",
+    "examples": {
+      "match": [
+        {
+          "code": "            Action: '*'",
+          "path": "iac/policy.cloudformation.yaml"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "            Action: 's3:GetObject'",
+          "path": "iac/policy.cloudformation.yaml"
+        }
+      ]
+    }
+  },
+  {
+    "id": "cfn-s3-public-acl",
+    "title": "CloudFormation S3 bucket uses a public ACL",
+    "description": "AccessControl: PublicRead / PublicReadWrite / AuthenticatedRead exposes the bucket's objects beyond the account. Keep buckets private and serve public content through CloudFront.",
+    "cwe": "CWE-284",
+    "severity": "HIGH",
+    "category": "code",
+    "owasp": "A05:2021-Security-Misconfiguration",
+    "languages": [
+      "yaml"
+    ],
+    "frameworks": [],
+    "pattern": "(?m)^[ \\t]*AccessControl:[ \\t]*[\\\"']?(?:PublicRead|PublicReadWrite|AuthenticatedRead)\\b",
+    "examples": {
+      "match": [
+        {
+          "code": "      AccessControl: PublicRead",
+          "path": "iac/bucket.cloudformation.yaml"
+        }
+      ],
+      "no_match": [
+        {
+          "code": "      AccessControl: Private",
+          "path": "iac/bucket.cloudformation.yaml"
+        }
+      ]
+    }
+  }
+]

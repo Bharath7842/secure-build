@@ -66,6 +66,7 @@ from app.services.gates import build_gate_summary
 from app.services.git_workspace import redact_git_url
 from app.services.module_path import to_module_path
 from app.services.occurrence import semantic_signature
+from app.services.severity import severity_basis_text
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +161,15 @@ _COURIER_ADVANCE = 0.6
 # Excel cell hard limit is 32767; leave headroom and mark truncation.
 _EXCEL_CELL_MAX = 32000
 _INDEX_MAX_ROWS = 60
+
+
+def _llm_display(scan) -> str:
+    """`provider / model` for the report header; the Claude CLI reads as plain "Claude Sonnet 5.5"."""
+    if (scan.llm_provider or "").strip().lower() == "claude_cli":
+        from app.services.scan_runner import _friendly_model_label
+
+        return _friendly_model_label("claude_cli", scan.llm_model) or "Claude"
+    return f"{scan.llm_provider or '—'} / {scan.llm_model or '—'}"
 
 
 def _sanitize_text(text: str) -> str:
@@ -364,15 +374,24 @@ def count_findings(grouped: list[Finding]) -> dict[str, Any]:
       (the headline: what still needs attention), and `dismissed` — the
       false-positive cell. Both keep the shape older clients read;
     * `by_owasp`    — [{category, groups, severe, occurrences}] over actionable
-      groups, ordered by size.
+      groups, ordered by size;
+    * `by_unresolved_reason` — {reason: occurrences} over the unresolved bucket,
+      largest first (`unknown` for a row that names none).
     """
     by_verdict = {
         bucket: {sev: _empty_cell() for sev in SEVERITY_ORDER} for bucket in VERDICT_BUCKETS
     }
     unknown = {sev: _empty_cell() for sev in SEVERITY_ORDER}
     by_issue_class = {name: _empty_cell() for name in (*sorted(ISSUE_CLASSES), UNCLASSIFIED)}
+    by_reason: dict[str, int] = {}
     for finding in grouped:
         bucket = _verdict_bucket(finding)
+        if bucket == UNVERIFIED_VERDICT:
+            reasons = getattr(finding, "unresolved_reason_counts", None) or {
+                finding.unresolved_reason or UNKNOWN_BUCKET: _occurrences(finding)
+            }
+            for reason, n in reasons.items():
+                by_reason[reason] = by_reason.get(reason, 0) + n
         severity = _severity_bucket(finding.severity)
         occurrences = _occurrences(finding)
         issue_class = getattr(finding, "issue_class", None)
@@ -409,6 +428,7 @@ def count_findings(grouped: list[Finding]) -> dict[str, Any]:
             {"category": label, "groups": groups, "severe": severe, "occurrences": occurrences}
             for label, groups, severe, occurrences in _count_by_owasp(grouped)
         ],
+        "by_unresolved_reason": dict(sorted(by_reason.items(), key=lambda kv: (-kv[1], kv[0]))),
     }
 
 
@@ -495,6 +515,19 @@ def _owasp_display(finding: Finding) -> str:
 
 def _cwe_display(finding: Finding) -> str:
     return (finding.cwe or "").strip() or "—"
+
+
+def _severity_text(finding: Finding) -> str:
+    """"HIGH · CVSS 3.1 7.5 (CVSS:3.1/AV:N/…) · CWE-89 baseline: …; was MEDIUM"."""
+    if not finding.cvss_vector and not finding.severity_basis:
+        return ""
+    parts = [_severity_bucket(finding.severity).upper()]
+    if finding.cvss is not None:
+        parts.append(f"CVSS 3.1 {finding.cvss:.1f}" + (f" ({finding.cvss_vector})" if finding.cvss_vector else ""))
+    basis = severity_basis_text(finding.severity_basis)
+    if basis:
+        parts.append(basis)
+    return " · ".join(parts)
 
 
 def _description_text(finding: Finding) -> str:
@@ -943,7 +976,13 @@ def group_findings_by_issue(findings: list[Finding]) -> list[Finding]:
     must never be flushed — nothing commits after this runs."""
     result: list[Finding] = []
     for members in issue_groups(findings):
+        reasons: dict[str, int] = {}
+        for m in members:
+            if _verdict_bucket(m) == UNVERIFIED_VERDICT:
+                reason = m.unresolved_reason or UNKNOWN_BUCKET
+                reasons[reason] = reasons.get(reason, 0) + 1
         if len(members) == 1:
+            members[0].unresolved_reason_counts = reasons
             members[0].occurrence_count = 1
             members[0].affected_lines = None
             members[0].member_occurrence_ids = (
@@ -978,6 +1017,7 @@ def group_findings_by_issue(findings: list[Finding]) -> list[Finding]:
         representative.affected_files = paths
         representative.affected_lines = [{"file_path": p, "line": n} for p, n in locations] or None
         representative.occurrence_count = len(members)
+        representative.unresolved_reason_counts = reasons
         member_ids: list[str] = []
         for m in members:
             if m.occurrence_id and m.occurrence_id not in member_ids:
@@ -985,6 +1025,95 @@ def group_findings_by_issue(findings: list[Finding]) -> list[Finding]:
         representative.member_occurrence_ids = member_ids or None
         result.append(representative)
     return _sorted_findings(annotate_construct_mix(result))
+
+
+def _cwe_group_key(finding: Finding) -> str:
+    """The CWE a grouped finding rolls up under ("CWE-89", whatever the spelling).
+    One without a CWE stays with its own rule (or, for a model-written finding,
+    its title topic), so unrelated issues never share a catch-all row."""
+    number = _cwe_number(finding)
+    if number is not None:
+        return f"CWE-{number}"
+    rule_id = (finding.rule_id or "").strip()
+    if rule_id and rule_id.lower() != "llm-extra":
+        return f"rule:{rule_id}"
+    return "topic:" + (_issue_topic(finding) or " ".join((finding.title or "").lower().split()))
+
+
+def _group_paths(finding: Finding) -> list[str]:
+    return [p for p in (finding.affected_files or [finding.file_path or ""]) if p]
+
+
+def group_by_cwe(grouped: list[Finding]) -> list[dict[str, Any]]:
+    """Roll the issue groups (`group_findings_by_issue` output) up to one row per
+    CWE: every file it touches, its occurrences, and per verdict bucket how many
+    groups, occurrences and files fall there plus the ids of those groups. A
+    read-side view only — each group, and each occurrence in it, keeps its own
+    verdict; nothing here decides or copies one. Ordered by highest severity, then
+    confirmed occurrences, then size."""
+    rows: dict[str, dict[str, Any]] = {}
+    for finding in grouped:
+        key = _cwe_group_key(finding)
+        occurrences = _occurrences(finding)
+        paths = _group_paths(finding)
+        row = rows.get(key)
+        if row is None:
+            row = rows[key] = {
+                "key": key, "cwe": key if key.startswith("CWE-") else None,
+                "title": finding.title or "", "owasp_category": finding.owasp_category,
+                "severity": _severity_bucket(finding.severity), "groups": 0, "occurrences": 0,
+                "files": [], "by_bucket": {}, "_seen": set(), "_lead": -1,
+            }
+        if occurrences > row["_lead"]:  # the largest group names the row
+            row["_lead"] = occurrences
+            row["title"] = finding.title or row["title"]
+            row["owasp_category"] = finding.owasp_category or row["owasp_category"]
+        severity = _severity_bucket(finding.severity)
+        if SEVERITY_ORDER.index(severity) < SEVERITY_ORDER.index(row["severity"]):
+            row["severity"] = severity
+        row["groups"] += 1
+        row["occurrences"] += occurrences
+        for path in paths:
+            if path not in row["_seen"]:
+                row["_seen"].add(path)
+                row["files"].append(path)
+        cell = row["by_bucket"].setdefault(
+            _verdict_bucket(finding),
+            {"groups": 0, "occurrences": 0, "files": 0, "finding_ids": [], "_seen": set()},
+        )
+        cell["groups"] += 1
+        cell["occurrences"] += occurrences
+        cell["finding_ids"].append(finding.id)
+        cell["_seen"].update(paths)
+
+    result = []
+    for row in rows.values():
+        del row["_seen"], row["_lead"]
+        for cell in row["by_bucket"].values():
+            cell["files"] = len(cell.pop("_seen"))
+        row["file_count"] = len(row["files"])
+        result.append(row)
+    result.sort(key=lambda r: (
+        SEVERITY_ORDER.index(r["severity"]),
+        -r["by_bucket"].get("true_positive", {}).get("occurrences", 0),
+        -r["occurrences"],
+        r["key"],
+    ))
+    return result
+
+
+_REPORT_BUCKETS = (*VERDICT_BUCKETS, UNKNOWN_BUCKET)
+
+
+def _report_order(findings: list[Finding], cwe_rows: list[dict[str, Any]]) -> list[Finding]:
+    """The PDF's order (its index and its finding blocks share the numbering):
+    verdict bucket (Confirmed, Unresolved, False Positive), then CWE in
+    `group_by_cwe` order, then the usual severity order within a CWE."""
+    cwe_rank = {row["key"]: i for i, row in enumerate(cwe_rows)}
+    base = {id(f): i for i, f in enumerate(_sorted_findings(findings))}
+    return sorted(findings, key=lambda f: (
+        _REPORT_BUCKETS.index(_verdict_bucket(f)), cwe_rank.get(_cwe_group_key(f), len(cwe_rank)), base[id(f)],
+    ))
 
 
 # =============================================================================
@@ -1049,7 +1178,7 @@ def _build_summary_sheet(sheet: Any, project: Project, scan: Scan, gate: dict, c
             "None"
             if (scan.metadata_json or {}).get("use_llm") is False
             or (not scan.llm_provider and not scan.llm_model)
-            else f"{scan.llm_provider or '—'} / {scan.llm_model or '—'}",
+            else _llm_display(scan),
         ),
         ("Actionable issues (groups)", sum(v["groups"] for v in actionable.values())),
         ("Occurrences", sum(v["occurrences"] for v in actionable.values())),
@@ -1140,6 +1269,8 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
         "OWASP Category",
         "CWE",
         "CVSS",
+        "CVSS Vector",
+        "Severity Basis",
         "Confidence",
         "Files",
         "Issue",
@@ -1152,7 +1283,7 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
         "Construct Mix",
         "Reviewed / Total",
     ]
-    widths = [5, 12, 24, 22, 12, 24, 16, 14, 32, 12, 8, 12, 8, 42, 44, 36, 44, 44, 46, 68, 40, 16]
+    widths = [5, 12, 24, 22, 12, 24, 16, 14, 32, 12, 8, 44, 48, 12, 8, 42, 44, 36, 44, 44, 46, 68, 40, 16]
     _xl_header_row(sheet, 1, headers, widths=widths)
 
     sorted_findings = _sorted_findings(findings)
@@ -1175,6 +1306,8 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
             _owasp_display(finding),
             _cwe_display(finding),
             finding.cvss if finding.cvss is not None else "",
+            finding.cvss_vector or "",
+            _excel_cell(severity_basis_text(finding.severity_basis)),
             _confidence_display(finding),
             _affected_file_count(finding),
             _excel_cell(finding.title or ""),
@@ -1205,6 +1338,49 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
     sheet.freeze_panes = "A2"
     last_col = get_column_letter(len(headers))
     sheet.auto_filter.ref = f"A1:{last_col}{max(1, len(sorted_findings) + 1)}"
+
+
+_CWE_SHEET_MAX_PATHS = 50
+
+
+def _bucket_cell(row: dict[str, Any], bucket: str) -> str:
+    cell = row["by_bucket"].get(bucket)
+    if not cell:
+        return ""
+    return f"{cell['groups']} ({cell['occurrences']})"
+
+
+def _build_cwe_sheet(sheet: Any, cwe_rows: list[dict[str, Any]]) -> None:
+    """One row per CWE (`group_by_cwe`): what it is, how bad, where, and how its
+    groups split by verdict — "groups (occurrences)" per bucket."""
+    headers = [
+        "CWE", "Title", "OWASP Category", "Highest Severity", "Confirmed", "Unresolved",
+        "False Positive", "Groups", "Occurrences", "Files", "Affected Files",
+    ]
+    widths = [12, 48, 32, 14, 14, 14, 14, 10, 12, 8, 80]
+    _xl_header_row(sheet, 1, headers, widths=widths)
+    for idx, row in enumerate(cwe_rows, start=2):
+        paths = [to_module_path(p) or p for p in row["files"]]
+        shown = "\n".join(paths[:_CWE_SHEET_MAX_PATHS])
+        if len(paths) > _CWE_SHEET_MAX_PATHS:
+            shown += f"\n… and {len(paths) - _CWE_SHEET_MAX_PATHS} more file(s)"
+        sev = row["severity"]
+        values = [
+            row["cwe"] or "—", _excel_cell(row["title"]), row["owasp_category"] or "",
+            sev.upper(), _bucket_cell(row, "true_positive"), _bucket_cell(row, UNVERIFIED_VERDICT),
+            _bucket_cell(row, "false_positive"), row["groups"], row["occurrences"], row["file_count"],
+            _excel_cell(shown),
+        ]
+        sheet.append([_excel_scalar(v) for v in values])
+        for col in range(1, len(headers) + 1):
+            cell = sheet.cell(idx, col)
+            cell.border = _THIN
+            cell.alignment = Alignment(vertical="top", wrap_text=col in (2, len(headers)))
+        sev_cell = sheet.cell(idx, 4)
+        sev_cell.fill = EXCEL_SEVERITY_FILLS[sev]
+        sev_cell.font = Font(name="Calibri", bold=True, color="FFFFFF")
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{max(1, len(cwe_rows) + 1)}"
 
 
 def _build_sca_summary_sheet(sheet: Any, project: Project, scan: Scan, findings: list[Finding]) -> None:
@@ -1455,6 +1631,7 @@ def build_excel_report(project: Project, scan: Scan, findings: list[Finding]) ->
     summary.title = "Summary"
     _build_summary_sheet(summary, project, scan, gate, counts)
 
+    _build_cwe_sheet(wb.create_sheet("By CWE"), group_by_cwe(findings))
     _build_findings_sheet(wb.create_sheet("Findings"), findings)
 
     buf = io.BytesIO()
@@ -1748,6 +1925,10 @@ def _finding_story_block(
         + (f" · Construct: {mix}" if (mix := construct_mix_text(getattr(finding, "construct_mix", None))) else "")
         + (f" · Reviewed / Total: {cov}" if (cov := review_coverage_text(finding)) else ""),
         styles=styles, width=inner_width, label_color="#334155"))
+    severity_text = _severity_text(finding)
+    if severity_text:
+        strips.append(_labelled_block("Severity", severity_text, styles=styles, width=inner_width,
+                                      label_color="#334155"))
 
     if description:
         strips.append(_labelled_block("Description", description, styles=styles,
@@ -1817,7 +1998,7 @@ def _meta_grid(project: Project, scan: Scan, styles: Any, width: float) -> Table
         "None"
         if (scan.metadata_json or {}).get("use_llm") is False
         or (not scan.llm_provider and not scan.llm_model)
-        else f"{scan.llm_provider or '—'} / {scan.llm_model or '—'}"
+        else _llm_display(scan)
     )
     fields = [
         ("Project", project.name or "—"),
@@ -1919,8 +2100,8 @@ def _owasp_table(rows: list[dict[str, Any]], styles: Any, width: float) -> Table
     return table
 
 
-def _findings_index(findings: list[Finding], styles: Any, width: float) -> Table | None:
-    ordered = _sorted_findings(findings)
+def _findings_index(ordered: list[Finding], styles: Any, width: float) -> Table | None:
+    """The summary-page index, numbered like the finding blocks (`_report_order`)."""
     if not ordered:
         return None
     shown = ordered[:_INDEX_MAX_ROWS]
@@ -1965,6 +2146,71 @@ def _findings_index(findings: list[Finding], styles: Any, width: float) -> Table
     table.hAlign = "LEFT"
     table.setStyle(TableStyle(cmds))
     return table
+
+
+def _cwe_table(cwe_rows: list[dict[str, Any]], styles: Any, width: float) -> Table | None:
+    """Summary-page table, one row per CWE: occurrences per verdict bucket and files."""
+    if not cwe_rows:
+        return None
+    shown = cwe_rows[:_INDEX_MAX_ROWS]
+    data: list[list[Any]] = [[
+        Paragraph("<b>CWE</b>", styles["TableHead"]),
+        Paragraph("<b>ISSUE</b>", styles["TableHead"]),
+        Paragraph("<b>SEVERITY</b>", styles["TableHeadCenter"]),
+        Paragraph("<b>CONFIRMED</b>", styles["TableHeadCenter"]),
+        Paragraph("<b>UNRESOLVED</b>", styles["TableHeadCenter"]),
+        Paragraph("<b>FALSE POS.</b>", styles["TableHeadCenter"]),
+        Paragraph("<b>FILES</b>", styles["TableHeadCenter"]),
+    ]]
+    cmds: list[tuple] = [
+        ("BACKGROUND", (0, 0), (-1, 0), INK),
+        ("BOX", (0, 0), (-1, -1), 0.5, RULE),
+        ("INNERGRID", (0, 0), (-1, -1), 0.4, HAIRLINE),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 2.2 * mm),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 2.2 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.4 * mm),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.4 * mm),
+    ]
+
+    def occurrences(row: dict[str, Any], bucket: str) -> str:
+        return str(row["by_bucket"].get(bucket, {}).get("occurrences", 0))
+
+    for idx, row in enumerate(shown, start=1):
+        sev = row["severity"]
+        data.append([
+            Paragraph(_esc(row["cwe"] or "—"), styles["TableCell"]),
+            Paragraph(_esc(_truncate_text(row["title"] or "Untitled finding", 150)), styles["TableCell"]),
+            Paragraph(f'<font color="{_hex(SEVERITY_COLORS[sev])}"><b>{sev.upper()}</b></font>',
+                      styles["TableCellCenter"]),
+            Paragraph(occurrences(row, "true_positive"), styles["TableCellCenter"]),
+            Paragraph(occurrences(row, UNVERIFIED_VERDICT), styles["TableCellCenter"]),
+            Paragraph(occurrences(row, "false_positive"), styles["TableCellCenter"]),
+            Paragraph(str(row["file_count"]), styles["TableCellCenter"]),
+        ])
+        if idx % 2 == 0:
+            cmds.append(("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#f8fafc")))
+        cmds.append(("LINEBEFORE", (0, idx), (0, idx), 2.5, SEVERITY_COLORS[sev]))
+    table = Table(
+        data, colWidths=[width * w for w in (0.09, 0.43, 0.1, 0.1, 0.1, 0.1, 0.08)], repeatRows=1,
+    )
+    table.hAlign = "LEFT"
+    table.setStyle(TableStyle(cmds))
+    return table
+
+
+def _cwe_heading(row: dict[str, Any], bucket: str, styles: Any) -> Paragraph:
+    """The line above one CWE's finding blocks within a verdict section. It must
+    never read like a block heading or verdict line to `_check_pdf`."""
+    cell = row["by_bucket"].get(bucket, {})
+    groups, occ, files = cell.get("groups", 0), cell.get("occurrences", 0), cell.get("files", 0)
+    label = row["cwe"] or "No CWE"
+    return Paragraph(
+        f"<b>{_esc(label)}</b>&nbsp;&nbsp;{_esc(_truncate_text(row['title'] or '', 120))}"
+        f'&nbsp;&nbsp;<font color="#64748b">{groups} {"group" if groups == 1 else "groups"} · '
+        f'{occ} {"occurrence" if occ == 1 else "occurrences"} · {files} {"file" if files == 1 else "files"}</font>',
+        styles["FindingTitle"],
+    )
 
 
 # =============================================================================
@@ -2580,7 +2826,20 @@ def build_pdf_report(project: Project, scan: Scan, findings: list[Finding]) -> b
         ]))
         story.append(Spacer(1, 6 * mm))
 
-    index = _findings_index(findings, styles, content_width)
+    cwe_rows = group_by_cwe(findings)
+    ordered = _report_order(findings, cwe_rows)
+    cwe_table = _cwe_table(cwe_rows, styles, content_width)
+    if cwe_table is not None:
+        story.append(Paragraph("FINDINGS BY CWE", styles["SectionHeading"]))
+        story.append(cwe_table)
+        if len(cwe_rows) > _INDEX_MAX_ROWS:
+            story.append(Spacer(1, 2 * mm))
+            story.append(Paragraph(
+                f'<font color="#64748b">… and {len(cwe_rows) - _INDEX_MAX_ROWS} further CWE(s); '
+                f'see the "By CWE" sheet of the Excel export.</font>', styles["FindingBody"]))
+        story.append(Spacer(1, 6 * mm))
+
+    index = _findings_index(ordered, styles, content_width)
     if index is not None:
         extra = max(0, len(findings) - _INDEX_MAX_ROWS)
         story.append(Paragraph("FINDINGS INDEX", styles["SectionHeading"]))
@@ -2599,7 +2858,16 @@ def build_pdf_report(project: Project, scan: Scan, findings: list[Finding]) -> b
         story.append(PageBreak())
         story.append(_Bookmark("Findings", "findings"))
         story.append(Paragraph("DETAILED FINDINGS", styles["SectionHeading"]))
-        for idx, finding in enumerate(_sorted_findings(findings), start=1):
+        rows_by_key = {row["key"]: row for row in cwe_rows}
+        section: tuple[str, str] | None = None
+        for idx, finding in enumerate(ordered, start=1):
+            bucket, key = _verdict_bucket(finding), _cwe_group_key(finding)
+            if section is None or section[0] != bucket:
+                story.append(Paragraph(_BUCKET_LABELS[bucket].upper(), styles["SectionHeading"]))
+            if section != (bucket, key):
+                story.append(_cwe_heading(rows_by_key[key], bucket, styles))
+                story.append(Spacer(1, 2 * mm))
+                section = (bucket, key)
             story.extend(_finding_story_block(idx, finding, styles=styles,
                                               content_width=content_width))
 

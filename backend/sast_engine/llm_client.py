@@ -1,6 +1,6 @@
 """Shared LLM client — Bedrock (Claude), any OpenAI-compatible
-`/chat/completions` server (vLLM, LM Studio, llama.cpp, OpenAI, ...), and
-Ollama (local, optional)."""
+`/chat/completions` server (vLLM, LM Studio, llama.cpp, OpenAI, ...), the
+local `claude` CLI (one session per scan), and Ollama (local, optional)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ import json
 import os
 import random
 import re
+import shutil
+import subprocess
 import threading
 import time
 from contextlib import contextmanager
@@ -52,17 +54,32 @@ OPENAI_COMPAT_CACHE_READ_PRICE_MULTIPLIER = float(
     os.environ.get("OPENAI_COMPAT_CACHE_READ_PRICE_MULTIPLIER", "0.5")
 )
 
+# Local `claude` CLI (`claude -p`), driven as a subprocess. Each scan is one
+# Claude session: the first call creates it (--session-id), later calls
+# continue it (--resume). Prices are notional (a subscription bills per
+# seat, not per token) and only feed the cost cutoff / usage summary.
+CLAUDE_CLI_PATH = os.environ.get("CLAUDE_CLI_PATH", "")
+CLAUDE_CLI_MODEL = os.environ.get("CLAUDE_CLI_MODEL", "claude-sonnet-5-5")
+# Short names the CLI would resolve on its own (to whatever it currently maps them to)
+# are pinned to the exact model the app offers.
+CLAUDE_CLI_MODEL_ALIASES = {"sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5"}
+CLAUDE_CLI_REQUEST_TIMEOUT = int(os.environ.get("CLAUDE_CLI_REQUEST_TIMEOUT", "600"))
+
 PROVIDER_BEDROCK = "bedrock"
 PROVIDER_OLLAMA = "ollama"
 PROVIDER_OPENAI_COMPAT = "openai_compat"
+PROVIDER_CLAUDE_CLI = "claude_cli"
 # Fallback-only: stop making LLM calls once the cost cutoff is reached.
 PROVIDER_NONE = "none"
-KNOWN_PROVIDERS = (PROVIDER_BEDROCK, PROVIDER_OLLAMA, PROVIDER_OPENAI_COMPAT)
+KNOWN_PROVIDERS = (PROVIDER_BEDROCK, PROVIDER_OLLAMA, PROVIDER_OPENAI_COMPAT, PROVIDER_CLAUDE_CLI)
+# Primary providers that run with no spend cutoff (and so never use a fallback).
+UNCAPPED_PROVIDERS = (PROVIDER_OLLAMA, PROVIDER_CLAUDE_CLI)
 
 # Soft spend cap: once estimated cost_usd reaches this, remaining calls route
 # to the fallback provider — or, with the default fallback "none", raise
 # LlmBudgetExhausted so each stage records its remaining work as unverified.
-# Disabled when the primary provider is ollama. Parallel workers may slightly
+# Disabled when the primary provider is ollama or claude_cli (a local model, or
+# a subscription with nothing billed per call). Parallel workers may slightly
 # overshoot before the next call sees the updated total.
 LLM_COST_CUTOFF_USD = float(os.environ.get("LLM_COST_CUTOFF_USD", "2.0"))
 DEFAULT_FALLBACK_LLM_PROVIDER = os.environ.get("FALLBACK_LLM_PROVIDER", PROVIDER_NONE)
@@ -313,6 +330,8 @@ def _default_model_for(provider: str) -> str:
         return OLLAMA_MODEL
     if provider == PROVIDER_OPENAI_COMPAT:
         return OPENAI_COMPAT_MODEL
+    if provider == PROVIDER_CLAUDE_CLI:
+        return CLAUDE_CLI_MODEL
     return BEDROCK_MODEL_ID
 
 
@@ -340,9 +359,10 @@ def init_usage(
     this scan (falling back to env)."""
     provider = (provider or DEFAULT_LLM_PROVIDER or "bedrock").strip().lower()
     model = model or _default_model_for(provider)
-    # Ollama primary: no Bedrock spend, so no cutoff. Otherwise use env default
-    # unless the caller passes an explicit override (including 0 to disable).
-    if provider == "ollama":
+    # Ollama / Claude CLI primary: nothing billed per call, so no cutoff.
+    # Otherwise use env default unless the caller passes an explicit override
+    # (including 0 to disable).
+    if provider in UNCAPPED_PROVIDERS:
         cutoff: Optional[float] = None
     elif cost_cutoff_usd is None:
         cutoff = LLM_COST_CUTOFF_USD
@@ -580,7 +600,7 @@ def _resolve_provider_for_call(
         primary_model = model or usage.get("model") or primary_model
 
     cutoff = usage.get("cost_cutoff_usd")
-    if cutoff is None or primary == "ollama":
+    if cutoff is None or primary in UNCAPPED_PROVIDERS:
         usage["active_provider"] = primary
         usage["active_model"] = primary_model
         return primary, primary_model
@@ -828,6 +848,21 @@ def call_llm(
                 api_key=str(options.get("api_key") or OPENAI_COMPAT_API_KEY or ""),
                 meta_out=meta_out,
             )
+    elif provider == PROVIDER_CLAUDE_CLI:
+        options = ((usage or {}).get(PROVIDER_OPTIONS_USAGE_KEY) or {}).get(provider) or {}
+        with _LIMITER.slot():
+            text = _call_claude_cli(
+                system,
+                user,
+                model,
+                retries,
+                usage=usage,
+                step=step,
+                json_mode=json_mode,
+                session_id=str(options.get("session_id") or ""),
+                workdir=str(options.get("workdir") or ""),
+                meta_out=meta_out,
+            )
     else:
         cache_system = should_cache_system_prompt(system, model)
 
@@ -888,7 +923,12 @@ def call_llm(
 #        can overrule it, a proven fact turns a dismissal into a conflict).
 #   "4": EPIC-01 — grouped confirmation answers per member (`member` ids), not
 #        one verdict per group; the prompt and response schema changed.
-RESULT_CACHE_VERSION = "4"
+#   "5": grouped confirmation's `confidence` is defined as certainty in the
+#        verdict (it was unspecified, and models used both scales). The app
+#        reads this version off `Scan.metadata_json["versions"]` to know a
+#        group-confirmed false positive's confidence can be trusted
+#        (app/services/fp_visibility.py).
+RESULT_CACHE_VERSION = "5"
 # The cache object rides on the shared scan usage dict — the one object every
 # LLM-calling stage already threads through — rather than a new parameter on
 # every call site. It must expose get(key) -> {text, input_tokens,
@@ -1231,6 +1271,201 @@ def _call_openai_compat(
             time.sleep(wait)
             attempt += 1
     raise last_exc  # type: ignore[misc]
+
+
+# --- claude CLI: one `claude -p` subprocess per call, one session per scan ---
+
+# The CLI snapshots a session's system prompt on its first request and reuses
+# it on resume, but every scan stage has its own system text. So the CLI-level
+# prompt is this fixed one and the stage's `system` rides on the user message.
+_CLAUDE_CLI_SYSTEM = (
+    "You are a precise static-application-security-testing assistant. Each message "
+    "is an independent task with its own instructions: follow them exactly, answer "
+    "only about the code in that message, and do not use prior messages as evidence."
+)
+_CLAUDE_CLI_JSON_SUFFIX = (
+    "\n\nRespond with a single JSON object only: no prose before or after it and no code fences."
+)
+_CLAUDE_SESSION_IN_USE_RE = re.compile(r"already (?:in use|exists)", re.IGNORECASE)
+_CLAUDE_SESSION_MISSING_RE = re.compile(r"no conversation found", re.IGNORECASE)
+_CLAUDE_THROTTLE_RE = re.compile(r"rate.?limit|overloaded|usage limit|429", re.IGNORECASE)
+
+# session_id -> {"lock": Lock, "started": bool}. Calls of one scan hold the
+# lock, so two resumes of one session never overlap. Process-wide so the
+# reconcile sweep after the scan continues the same session.
+_CLAUDE_SESSIONS: Dict[str, Dict[str, Any]] = {}
+_CLAUDE_SESSIONS_LOCK = threading.Lock()
+
+
+def _claude_session_state(session_id: str) -> Dict[str, Any]:
+    with _CLAUDE_SESSIONS_LOCK:
+        return _CLAUDE_SESSIONS.setdefault(session_id, {"lock": threading.Lock(), "started": False})
+
+
+def _claude_cli_binary() -> str:
+    path = CLAUDE_CLI_PATH or os.environ.get("CLAUDE_CLI_PATH", "") or shutil.which("claude") or ""
+    if not path:
+        raise _NonRetryableHttpError(
+            "claude CLI not found: install Claude Code or set CLAUDE_CLI_PATH to the `claude` binary"
+        )
+    return path
+
+
+def _claude_cli_command(
+    binary: str, model: str, session_id: str, *, resume: bool, name: str
+) -> List[str]:
+    cmd = [
+        binary, "-p",
+        "--output-format", "json",
+        "--model", model,
+        "--system-prompt", _CLAUDE_CLI_SYSTEM,
+        "--tools", "",
+        "--setting-sources", "",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+    ]
+    if not session_id:
+        cmd.append("--no-session-persistence")
+    elif resume:
+        cmd += ["--resume", session_id]
+    else:
+        cmd += ["--session-id", session_id, "-n", name]
+    return cmd
+
+
+def _call_claude_cli(
+    system: str,
+    user: str,
+    model: str,
+    retries: int,
+    *,
+    usage: Optional[Dict[str, Any]],
+    step: str,
+    json_mode: bool = False,
+    session_id: str = "",
+    workdir: str = "",
+    meta_out: Optional[Dict[str, Any]] = None,
+) -> str:
+    """One `claude -p` call. With a `session_id` the scan's calls share one
+    persisted session (created by the first, resumed by the rest, serialized
+    by a per-session lock); without one the call is ephemeral. The CLI runs
+    with no tools, no settings/hooks/MCP, in `workdir` (an empty per-scan
+    directory), so it can neither read the checkout nor load its CLAUDE.md.
+    `max_tokens`/`temperature` have no CLI equivalent and are not sent."""
+    binary = _claude_cli_binary()
+    model = CLAUDE_CLI_MODEL_ALIASES.get(model.strip().lower(), model)
+    message = (
+        "Independent task: ignore earlier messages in this conversation.\n\n"
+        f"<instructions>\n{system}\n</instructions>\n\n{user}"
+    )
+    if json_mode:
+        message += _CLAUDE_CLI_JSON_SUFFIX
+    timeout = int(os.environ.get("CLAUDE_CLI_REQUEST_TIMEOUT", str(CLAUDE_CLI_REQUEST_TIMEOUT)))
+    if workdir:
+        os.makedirs(workdir, exist_ok=True)
+    state = _claude_session_state(session_id) if session_id else None
+    name = f"sast-scan-{session_id[:8]}" if session_id else ""
+
+    last_exc: Optional[Exception] = None
+    attempt = 0
+    throttles = 0
+    while attempt < retries:
+        try:
+            with (state["lock"] if state else _NULL_LOCK):
+                cmd = _claude_cli_command(
+                    binary, model, session_id, resume=bool(state and state["started"]), name=name
+                )
+                proc = subprocess.run(
+                    cmd,
+                    input=message,
+                    capture_output=True,
+                    text=True,
+                    cwd=workdir or None,
+                    timeout=timeout,
+                )
+                payload = _parse_claude_cli_output(proc)
+                if state is not None:
+                    state["started"] = True
+            text = str(payload.get("result") or "")
+            if json_mode:
+                text = _THINK_BLOCK_RE.sub("", text)
+            raw = payload.get("usage") or {}
+            cache_read = int(raw.get("cache_read_input_tokens") or 0)
+            cache_write = int(raw.get("cache_creation_input_tokens") or 0)
+            meta: Dict[str, Any] = {
+                "input_tokens": int(raw.get("input_tokens") or 0) + cache_read + cache_write,
+                "output_tokens": int(raw.get("output_tokens") or 0),
+                "cache_read_tokens": cache_read,
+                "cache_write_tokens": cache_write,
+            }
+            if not raw:
+                meta = {}
+            stop_reason = str(payload.get("stop_reason") or "")
+            recorded = _record_llm_usage_from_meta(
+                usage, step, system, user, text, meta,
+                provider=PROVIDER_CLAUDE_CLI, model=model, stop_reason=stop_reason,
+            )
+            if meta_out is not None:
+                meta_out.update(recorded)
+                meta_out["stop_reason"] = stop_reason
+            return text
+        except _NonRetryableHttpError:
+            raise
+        except (RuntimeError, OSError, subprocess.SubprocessError, ValueError) as exc:
+            last_exc = exc
+            message_text = str(exc)
+            if state is not None and not state["started"] and _CLAUDE_SESSION_IN_USE_RE.search(message_text):
+                # The session survived a restart: continue it instead of creating it.
+                state["started"] = True
+                continue
+            if state is not None and state["started"] and _CLAUDE_SESSION_MISSING_RE.search(message_text):
+                state["started"] = False  # session was deleted: start a new one under the same id
+                continue
+            if _CLAUDE_THROTTLE_RE.search(message_text) and throttles < THROTTLE_RETRIES:
+                throttles += 1
+                _LIMITER.on_throttle()
+                wait = throttle_wait_seconds(throttles)
+                print(f"  [claude] rate limited; backing off {wait:.1f}s "
+                      f"(concurrency limit now {_LIMITER.limit})...")
+                time.sleep(wait)
+                continue
+            wait = 2**attempt
+            print(f"  [claude] call failed ({type(exc).__name__}), retrying in {wait}s...")
+            time.sleep(wait)
+            attempt += 1
+    raise last_exc  # type: ignore[misc]
+
+
+class _NullLock:
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, *exc: Any) -> None:
+        return None
+
+
+_NULL_LOCK = _NullLock()
+
+
+def _parse_claude_cli_output(proc: "subprocess.CompletedProcess[str]") -> Dict[str, Any]:
+    """The CLI's single JSON result, or an exception naming what failed
+    (stderr/result truncated; the prompt is never echoed)."""
+    stdout = (proc.stdout or "").strip()
+    payload: Dict[str, Any] = {}
+    if stdout:
+        try:
+            parsed = json.loads(stdout)
+            if isinstance(parsed, dict):
+                payload = parsed
+        except ValueError:
+            payload = {}
+    if proc.returncode != 0 or payload.get("is_error"):
+        reported = payload.get("result") if payload.get("is_error") else None
+        detail = str(reported or proc.stderr or stdout)[:300].strip()
+        raise RuntimeError(f"claude CLI failed (exit {proc.returncode}): {detail}")
+    if "result" not in payload:
+        raise ValueError(f"claude CLI returned no result: {stdout[:200]}")
+    return payload
 
 
 def _record_llm_usage_from_meta(
