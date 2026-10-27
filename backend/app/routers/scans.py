@@ -47,6 +47,7 @@ from app.services.scan_export import (
     build_excel_report,
     build_pdf_report,
     count_findings,
+    cwe_findings,
     export_filenames,
     group_by_cwe,
     group_findings_by_issue,
@@ -565,7 +566,10 @@ def get_scan_findings(
     # source of every number here and in the exports. A verdict filter selects whole
     # groups — the group key leads with the verdict.
     all_groups = group_findings_by_issue(all_findings)
-    counts = count_findings(all_groups)
+    # The headline unit is one finding per CWE and verdict (`cwe_findings`), the
+    # same the PDF and Excel count; `findings` still lists the issue groups, which
+    # is what a review decides.
+    counts = count_findings(cwe_findings(all_groups))
     grouped_findings = [g for g in all_groups if g.verdict == verdict] if verdict else all_groups
     totals = counts["totals"]
     return ScanFindingsOut(

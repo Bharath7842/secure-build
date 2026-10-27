@@ -1,6 +1,7 @@
 """One row per CWE over the issue groups (`scan_export.group_by_cwe`), and the
 exports that show it."""
 
+import re
 from io import BytesIO
 
 from openpyxl import load_workbook
@@ -8,7 +9,9 @@ from openpyxl import load_workbook
 from app.models import Finding, Project, Scan
 from app.services.scan_export import (
     build_excel_report,
+    build_pdf_report,
     count_findings,
+    cwe_findings,
     group_by_cwe,
     group_findings_by_issue,
 )
@@ -96,21 +99,55 @@ def test_unresolved_reasons_are_counted_per_occurrence():
     assert counts["by_unresolved_reason"] == {"llm_budget_exhausted": 2, "not_in_sample": 1, "unknown": 1}
 
 
-def test_the_excel_export_has_a_by_cwe_sheet_matching_the_counts():
+def _export_inputs():
     grouped = group_findings_by_issue([
-        _finding("sqli", "CWE-89", "true_positive", "A.java"),
-        _finding("sqli2", "CWE-89", "unverified", "B.java"),
-        _finding("xss", "CWE-79", "false_positive", "C.ts"),
+        _finding("sqli", "CWE-89", "true_positive", "A.java", severity="CRITICAL"),
+        _finding("sqli2", "CWE-89", "true_positive", "B.java", severity="HIGH"),
+        _finding("sqli3", "CWE-89", "unverified", "C.java"),
+        _finding("xss", "CWE-79", "false_positive", "D.ts", severity="MEDIUM"),
+        _finding("xss2", "CWE-79", "false_positive", "E.ts", severity="LOW"),
     ])
     project = Project(id="p1", name="demo")
     scan = Scan(id="s1", project_id="p1", version=1, scan_type="sast", status="success")
+    return grouped, project, scan
+
+
+def test_the_final_finding_is_one_per_cwe_and_verdict():
+    grouped, _project, _scan = _export_inputs()
+    units = cwe_findings(grouped)
+    by_key = {(f.verdict, f.cwe): f for f in units}
+    assert len(units) == 3  # CWE-89 confirmed, CWE-89 unresolved, CWE-79 false positive
+    confirmed = by_key[("true_positive", "CWE-89")]
+    assert confirmed.severity == "CRITICAL" and confirmed.occurrence_count == 2
+    assert [g.rule_id for g in confirmed.issue_groups] == ["sqli", "sqli2"]
+    assert confirmed.affected_files == ["A.java", "B.java"]
+    fp = by_key[("false_positive", "CWE-79")]
+    assert fp.severity == "MEDIUM" and fp.occurrence_count == 2
+    counts = count_findings(units)
+    assert counts["by_verdict"]["true_positive"]["critical"] == {"groups": 1, "occurrences": 2}
+    assert counts["totals"]["false_positive"] == {"groups": 1, "occurrences": 2}
+    # The issue groups themselves keep their own verdicts and severities.
+    assert {g.severity for g in confirmed.issue_groups} == {"CRITICAL", "HIGH"}
+
+
+def test_the_excel_findings_sheet_lists_the_final_findings_and_issue_groups_follow():
+    grouped, project, scan = _export_inputs()
     workbook = load_workbook(BytesIO(build_excel_report(project, scan, grouped)))
-    assert workbook.sheetnames[:3] == ["Summary", "By CWE", "Findings"]
-    sheet = workbook["By CWE"]
-    headers = [c.value for c in sheet[1]]
-    rows = [dict(zip(headers, r)) for r in sheet.iter_rows(min_row=2, values_only=True)]
-    assert [r["CWE"] for r in rows] == ["CWE-89", "CWE-79"]
-    assert rows[0]["Confirmed"] == "1 (1)" and rows[0]["Unresolved"] == "1 (1)"
-    assert sum(r["Occurrences"] for r in rows) == sum(
-        cell["occurrences"] for cell in count_findings(grouped)["totals"].values()
-    )
+    assert workbook.sheetnames == ["Summary", "Findings", "Issue Groups"]
+    findings = workbook["Findings"]
+    headers = [c.value for c in findings[1]]
+    rows = [dict(zip(headers, r)) for r in findings.iter_rows(min_row=2, values_only=True)]
+    assert len(rows) == 3
+    assert sorted(r["Issue Groups"] for r in rows) == [1, 2, 2]
+    assert workbook["Issue Groups"].max_row - 1 == len(grouped)
+    assert sum(r["Files"] for r in rows) == 5
+
+
+def test_the_pdf_has_one_block_per_final_finding():
+    from pypdf import PdfReader
+
+    grouped, project, scan = _export_inputs()
+    text = " ".join(page.extract_text() or "" for page in PdfReader(BytesIO(build_pdf_report(project, scan, grouped))).pages)
+    assert len(re.findall(r"FINDING \d+", text)) == 3
+    assert "Confirmed: 1 group (2 occurrences)" in " ".join(text.split())
+    assert "ISSUE GROUPS (2)" in text.upper()

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api } from "@/lib/api";
 import { toModulePath } from "@/lib/modulePath";
-import type { CweGroup, Finding, ScanReport } from "@/lib/types";
+import type { CweBucket, CweGroup, Finding, ScanReport } from "@/lib/types";
 import {
   RISK_DOT,
   RISK_STYLES,
@@ -402,15 +402,16 @@ function plural(n: number, word: string) {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
-/** The finding ids, groups, occurrences and files of `row` in the selected tab. */
-function tabSlice(row: CweGroup, tab: VerdictTab) {
-  const cells = tab === "all" ? Object.values(row.by_bucket) : [row.by_bucket[tab]].filter(Boolean);
-  return {
-    ids: cells.flatMap((c) => c.finding_ids),
-    groups: cells.reduce((n, c) => n + c.groups, 0),
-    occurrences: cells.reduce((n, c) => n + c.occurrences, 0),
-    files: tab === "all" ? row.file_count : cells.reduce((n, c) => n + c.files, 0),
-  };
+const BUCKET_ORDER = ["true_positive", "unverified", "false_positive", "unknown"];
+
+/** The final findings a tab lists: one per CWE and verdict — the unit the server counts
+ *  (`scan_export.cwe_findings`), so a tab's rows add up to its numbers. "All" lists every
+ *  verdict of a CWE as its own row. */
+function tabUnits(row: CweGroup, tab: VerdictTab): { bucket: string; cell: CweBucket }[] {
+  const buckets = tab === "all" ? BUCKET_ORDER : [tab];
+  return buckets
+    .filter((bucket) => row.by_bucket[bucket])
+    .map((bucket) => ({ bucket, cell: row.by_bucket[bucket] }));
 }
 
 function groupPaths(findings: Finding[]): string[] {
@@ -509,21 +510,24 @@ export default function ScanFindingsPanel({
     [severityFilter],
   );
 
-  // One row per CWE that has groups in this tab, each with its groups in the server's order.
+  // One row per CWE and verdict in this tab, each with its issue groups in the server's
+  // order. Its severity is the highest of those groups, the one the chips count it under.
   const visibleCwes = useMemo(() => {
     return (cweGroups ?? [])
-      .map((row) => {
-        const slice = tabSlice(row, tab);
-        const members = slice.ids
-          .map((id) => byId.get(id))
-          .filter((m): m is { finding: Finding; index: number } => Boolean(m))
-          .sort((a, b) => a.index - b.index)
-          .map((m) => m.finding)
-          .filter(severityMatches);
-        return { row, slice, members };
-      })
-      .filter((entry) => entry.members.length > 0);
-  }, [cweGroups, tab, byId, severityMatches]);
+      .flatMap((row) =>
+        tabUnits(row, tab).map(({ bucket, cell }) => {
+          const members = cell.finding_ids
+            .map((id) => byId.get(id))
+            .filter((m): m is { finding: Finding; index: number } => Boolean(m))
+            .sort((a, b) => a.index - b.index)
+            .map((m) => m.finding);
+          const severity = normalizeSeverity(cell.severity ?? members[0]?.severity, true);
+          return { key: `${row.key}|${bucket}`, row, bucket, cell, members, severity };
+        }),
+      )
+      .filter((entry) => entry.members.length > 0)
+      .filter((entry) => !severityFilter || entry.severity === severityFilter);
+  }, [cweGroups, tab, byId, severityFilter]);
 
   // Flat rows: the "Mixed" chip shows one construct's rows across every tab, and a backend
   // without `cwe_groups` gets the tab's rows ungrouped rather than an empty list.
@@ -549,7 +553,7 @@ export default function ScanFindingsPanel({
   }, []);
 
   const allOpen =
-    visibleCwes.length > 0 && visibleCwes.every((entry) => openCwes.has(entry.row.key));
+    visibleCwes.length > 0 && visibleCwes.every((entry) => openCwes.has(entry.key));
   const reasons = Object.entries(counts?.by_unresolved_reason ?? {});
 
   const renderRow = (finding: Finding) => (
@@ -643,7 +647,7 @@ export default function ScanFindingsPanel({
             <button
               type="button"
               onClick={() =>
-                setOpenCwes(allOpen ? new Set() : new Set(visibleCwes.map((entry) => entry.row.key)))
+                setOpenCwes(allOpen ? new Set() : new Set(visibleCwes.map((entry) => entry.key)))
               }
               className="ml-auto rounded-md px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-50"
             >
@@ -690,16 +694,16 @@ export default function ScanFindingsPanel({
           </p>
         ) : (
           <ul className="mt-3 space-y-2">
-            {visibleCwes.map(({ row, slice, members }) => {
-              const open = openCwes.has(row.key);
-              const severity = normalizeSeverity(members[0].severity, true);
-              const files = tab === "all" ? row.files : groupPaths(members);
+            {visibleCwes.map(({ key, row, bucket, cell, members, severity }) => {
+              const open = openCwes.has(key);
+              const files = groupPaths(members);
               const breakdown = BUCKET_SHORT.filter((b) => row.by_bucket[b.key]);
+              const verdict = BUCKET_SHORT.find((b) => b.key === bucket);
               return (
-                <li key={row.key} className="rounded-md border border-slate-200 bg-white">
+                <li key={key} className="rounded-md border border-slate-200 bg-white">
                   <button
                     type="button"
-                    onClick={() => toggle(setOpenCwes, row.key)}
+                    onClick={() => toggle(setOpenCwes, key)}
                     aria-expanded={open}
                     className="agent-focus-ring flex w-full items-start gap-2 rounded-md px-3 py-2.5 text-left"
                   >
@@ -728,10 +732,15 @@ export default function ScanFindingsPanel({
                         <span className="text-xs font-semibold text-[var(--ink)]">
                           {row.cwe ?? "No CWE"}
                         </span>
+                        {tab === "all" && verdict ? (
+                          <span className={`text-xs font-medium capitalize ${verdict.className}`}>
+                            {verdict.label}
+                          </span>
+                        ) : null}
                         <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium tabular-nums text-slate-700">
-                          {plural(slice.occurrences, "occurrence")} · {plural(slice.files, "file")}
+                          {plural(cell.occurrences, "occurrence")} · {plural(cell.files, "file")}
                         </span>
-                        {breakdown.length > 1 || tab === "all" ? (
+                        {breakdown.length > 1 ? (
                           <span className="text-xs text-[var(--muted)]">
                             {breakdown.map((b, i) => (
                               <span key={b.key}>

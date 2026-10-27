@@ -337,6 +337,7 @@ def test_excel_findings_use_expected_columns():
         "Severity Basis",
         "Confidence",
         "Files",
+        "Issue Groups",
         "Issue",
         "Location(s)",
         "Data Flow",

@@ -29,8 +29,9 @@ def build_gate_summary(project: Project, findings: list[Finding], counts: dict |
     `scan_export.count_findings`, passed in when the caller already has it."""
     if counts is None:
         # Lazy: scan_export imports this module.
-        from app.services.scan_export import count_findings
+        from app.services.scan_export import count_findings, cwe_findings
 
+        findings = cwe_findings(findings)
         counts = count_findings(findings)
 
     by_severity = {

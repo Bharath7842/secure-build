@@ -50,6 +50,9 @@ DEFAULT_REVIEW_COLUMNS = {
 }
 DEFAULT_REVIEW_SHEET = "Secure Build Findings"
 DEFAULT_SCANNER_SHEET = "Findings"
+# Exports since the CWE roll-up list one row per CWE and verdict in "Findings";
+# the per-issue rows this tool joins on are in "Issue Groups".
+ISSUE_GROUPS_SHEET = "Issue Groups"
 
 # The legacy 14-column Findings sheet of the scanner export, for a file with no header row.
 _LEGACY_SCANNER_COLUMNS = (
@@ -213,7 +216,7 @@ def read_scanner(path: Path, sheet: str | None = None) -> list[Row]:
     from openpyxl import load_workbook
 
     workbook = load_workbook(path, read_only=True, data_only=True)
-    name = sheet or DEFAULT_SCANNER_SHEET
+    name = sheet or (ISSUE_GROUPS_SHEET if ISSUE_GROUPS_SHEET in workbook.sheetnames else DEFAULT_SCANNER_SHEET)
     worksheet = workbook[name] if name in workbook.sheetnames else workbook[workbook.sheetnames[0]]
     rows_iter = worksheet.iter_rows(values_only=True)
     first = next(rows_iter, None)

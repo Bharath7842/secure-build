@@ -548,6 +548,8 @@ export interface ScanFindings {
 
 /** The groups of one CWE that fall in one verdict bucket; `finding_ids` name rows of `findings`. */
 export interface CweBucket {
+  /** The highest severity among these groups: what the chips count this finding under. */
+  severity?: string;
   groups: number;
   occurrences: number;
   files: number;

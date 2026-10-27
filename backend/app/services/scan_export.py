@@ -518,6 +518,21 @@ def _cwe_display(finding: Finding) -> str:
     return (finding.cwe or "").strip() or "—"
 
 
+_PDF_ISSUE_GROUPS_MAX = 40
+
+
+def _issue_groups_text(groups: list[Finding]) -> str:
+    """One line per issue group of a CWE finding: severity, title, where, how many."""
+    lines = [
+        f"• [{_severity_bucket(g.severity).upper()}] {g.title or 'Untitled finding'} — "
+        f"{_primary_location(g)} ({_occurrences(g)}×)"
+        for g in groups[:_PDF_ISSUE_GROUPS_MAX]
+    ]
+    if len(groups) > _PDF_ISSUE_GROUPS_MAX:
+        lines.append(f"… and {len(groups) - _PDF_ISSUE_GROUPS_MAX} more; see the Excel \"Issue Groups\" sheet.")
+    return "\n".join(lines)
+
+
 def _severity_text(finding: Finding) -> str:
     """"HIGH · CVSS 3.1 7.5 (CVSS:3.1/AV:N/…) · CWE-89 baseline: …; was MEDIUM"."""
     if not finding.cvss_vector and not finding.severity_basis:
@@ -1080,8 +1095,11 @@ def group_by_cwe(grouped: list[Finding]) -> list[dict[str, Any]]:
                 row["files"].append(path)
         cell = row["by_bucket"].setdefault(
             _verdict_bucket(finding),
-            {"groups": 0, "occurrences": 0, "files": 0, "finding_ids": [], "_seen": set()},
+            {"groups": 0, "occurrences": 0, "files": 0, "finding_ids": [], "_seen": set(),
+             "severity": severity},
         )
+        if SEVERITY_ORDER.index(severity) < SEVERITY_ORDER.index(cell["severity"]):
+            cell["severity"] = severity
         cell["groups"] += 1
         cell["occurrences"] += occurrences
         cell["finding_ids"].append(finding.id)
@@ -1106,14 +1124,91 @@ def group_by_cwe(grouped: list[Finding]) -> list[dict[str, Any]]:
 _REPORT_BUCKETS = (*VERDICT_BUCKETS, UNKNOWN_BUCKET)
 
 
-def _report_order(findings: list[Finding], cwe_rows: list[dict[str, Any]]) -> list[Finding]:
+class CweFinding:
+    """One final finding: every issue group of one CWE that ended with one
+    verdict. Reads through to its most severe group (its description, code, fix)
+    for anything it does not set itself; `issue_groups` are the groups it stands
+    for. A read-side view: each group, and each occurrence in it, keeps its own
+    verdict and its own review."""
+
+    def __init__(self, representative: Finding, **fields: Any) -> None:
+        self.__dict__["_representative"] = representative
+        self.__dict__.update(fields)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.__dict__["_representative"], name)
+
+
+def cwe_findings(grouped: list[Finding]) -> list["CweFinding"]:
+    """The final findings of a scan: `group_findings_by_issue` output collapsed
+    to one per (verdict bucket, CWE). This is what the headline counts count and
+    what the PDF and the Excel "Findings" sheet list, so "Confirmed CRITICAL 2"
+    means two CWEs, however many issue groups and occurrences are behind them."""
+    units: dict[tuple[str, str], list[Finding]] = {}
+    for finding in grouped:
+        units.setdefault((_verdict_bucket(finding), _cwe_group_key(finding)), []).append(finding)
+    out: list[CweFinding] = []
+    for (_bucket, key), groups in units.items():
+        ordered = sorted(groups, key=lambda f: (
+            SEVERITY_ORDER.index(_severity_bucket(f.severity)), -(f.cvss or 0), -_occurrences(f), f.title or "",
+        ))
+        representative = ordered[0]
+        if len(ordered) == 1:
+            out.append(CweFinding(representative, issue_groups=ordered))
+            continue
+        lead = min(ordered, key=lambda f: (-_occurrences(f), ordered.index(f)))
+        paths: list[str] = []
+        for group in ordered:
+            for path in _group_paths(group):
+                if path not in paths:
+                    paths.append(path)
+        locations = sorted({
+            (loc["file_path"], loc["line"])
+            for group in ordered
+            for loc in (getattr(group, "affected_lines", None) or (
+                [{"file_path": group.file_path or "", "line": group.line}] if group.line else []
+            ))
+        })[:_MAX_AFFECTED_LINES]
+        member_ids: list[str] = []
+        for group in ordered:
+            for occurrence in _occurrence_ids(group):
+                if occurrence not in member_ids:
+                    member_ids.append(occurrence)
+        reasons: dict[str, int] = {}
+        for group in ordered:
+            counts = getattr(group, "unresolved_reason_counts", None) or (
+                {group.unresolved_reason or UNKNOWN_BUCKET: _occurrences(group)}
+                if _verdict_bucket(group) == UNVERIFIED_VERDICT else {}
+            )
+            for reason, n in counts.items():
+                reasons[reason] = reasons.get(reason, 0) + n
+        covered = [g.review_coverage for g in ordered if getattr(g, "review_coverage", None)]
+        out.append(CweFinding(
+            representative,
+            title=lead.title or representative.title,
+            occurrence_count=sum(_occurrences(g) for g in ordered),
+            affected_files=paths,
+            affected_lines=[{"file_path": p, "line": n} for p, n in locations] or None,
+            member_occurrence_ids=member_ids or None,
+            unresolved_reason_counts=reasons,
+            review_coverage={
+                "reviewed": sum(c.get("reviewed", 0) for c in covered),
+                "total": sum(c.get("total", 0) for c in covered),
+            } if covered else None,
+            construct_key=f"cwe:{key}",
+            construct_mix=None,
+            issue_groups=ordered,
+        ))
+    return out
+
+
+def _report_order(units: list[Any]) -> list[Any]:
     """The PDF's order (its index and its finding blocks share the numbering):
-    verdict bucket (Confirmed, Unresolved, False Positive), then CWE in
-    `group_by_cwe` order, then the usual severity order within a CWE."""
-    cwe_rank = {row["key"]: i for i, row in enumerate(cwe_rows)}
-    base = {id(f): i for i, f in enumerate(_sorted_findings(findings))}
-    return sorted(findings, key=lambda f: (
-        _REPORT_BUCKETS.index(_verdict_bucket(f)), cwe_rank.get(_cwe_group_key(f), len(cwe_rank)), base[id(f)],
+    verdict bucket (Confirmed, Unresolved, False Positive), then severity, then
+    size."""
+    return sorted(units, key=lambda f: (
+        _REPORT_BUCKETS.index(_verdict_bucket(f)), SEVERITY_ORDER.index(_severity_bucket(f.severity)),
+        -_occurrences(f), f.title or "",
     ))
 
 
@@ -1274,6 +1369,7 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
         "Severity Basis",
         "Confidence",
         "Files",
+        "Issue Groups",
         "Issue",
         "Location(s)",
         "Data Flow",
@@ -1284,7 +1380,7 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
         "Construct Mix",
         "Reviewed / Total",
     ]
-    widths = [5, 12, 24, 22, 12, 24, 16, 14, 32, 12, 8, 44, 48, 12, 8, 42, 44, 36, 44, 44, 46, 68, 40, 16]
+    widths = [5, 12, 24, 22, 12, 24, 16, 14, 32, 12, 8, 44, 48, 12, 8, 10, 42, 44, 36, 44, 44, 46, 68, 40, 16]
     _xl_header_row(sheet, 1, headers, widths=widths)
 
     sorted_findings = _sorted_findings(findings)
@@ -1311,6 +1407,7 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
             _excel_cell(severity_basis_text(finding.severity_basis)),
             _confidence_display(finding),
             _affected_file_count(finding),
+            len(getattr(finding, "issue_groups", None) or [finding]),
             _excel_cell(finding.title or ""),
             _excel_cell(_location_block(finding)),
             _excel_cell(_taint_flow_text(finding)),
@@ -1339,49 +1436,6 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
     sheet.freeze_panes = "A2"
     last_col = get_column_letter(len(headers))
     sheet.auto_filter.ref = f"A1:{last_col}{max(1, len(sorted_findings) + 1)}"
-
-
-_CWE_SHEET_MAX_PATHS = 50
-
-
-def _bucket_cell(row: dict[str, Any], bucket: str) -> str:
-    cell = row["by_bucket"].get(bucket)
-    if not cell:
-        return ""
-    return f"{cell['groups']} ({cell['occurrences']})"
-
-
-def _build_cwe_sheet(sheet: Any, cwe_rows: list[dict[str, Any]]) -> None:
-    """One row per CWE (`group_by_cwe`): what it is, how bad, where, and how its
-    groups split by verdict — "groups (occurrences)" per bucket."""
-    headers = [
-        "CWE", "Title", "OWASP Category", "Highest Severity", "Confirmed", "Unresolved",
-        "False Positive", "Groups", "Occurrences", "Files", "Affected Files",
-    ]
-    widths = [12, 48, 32, 14, 14, 14, 14, 10, 12, 8, 80]
-    _xl_header_row(sheet, 1, headers, widths=widths)
-    for idx, row in enumerate(cwe_rows, start=2):
-        paths = [to_module_path(p) or p for p in row["files"]]
-        shown = "\n".join(paths[:_CWE_SHEET_MAX_PATHS])
-        if len(paths) > _CWE_SHEET_MAX_PATHS:
-            shown += f"\n… and {len(paths) - _CWE_SHEET_MAX_PATHS} more file(s)"
-        sev = row["severity"]
-        values = [
-            row["cwe"] or "—", _excel_cell(row["title"]), row["owasp_category"] or "",
-            sev.upper(), _bucket_cell(row, "true_positive"), _bucket_cell(row, UNVERIFIED_VERDICT),
-            _bucket_cell(row, "false_positive"), row["groups"], row["occurrences"], row["file_count"],
-            _excel_cell(shown),
-        ]
-        sheet.append([_excel_scalar(v) for v in values])
-        for col in range(1, len(headers) + 1):
-            cell = sheet.cell(idx, col)
-            cell.border = _THIN
-            cell.alignment = Alignment(vertical="top", wrap_text=col in (2, len(headers)))
-        sev_cell = sheet.cell(idx, 4)
-        sev_cell.fill = EXCEL_SEVERITY_FILLS[sev]
-        sev_cell.font = Font(name="Calibri", bold=True, color="FFFFFF")
-    sheet.freeze_panes = "A2"
-    sheet.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{max(1, len(cwe_rows) + 1)}"
 
 
 def _build_sca_summary_sheet(sheet: Any, project: Project, scan: Scan, findings: list[Finding]) -> None:
@@ -1624,16 +1678,19 @@ def build_excel_report(project: Project, scan: Scan, findings: list[Finding]) ->
     if _is_sbom_scan(scan):
         return _build_excel_sbom_report(project, scan)
 
-    counts = count_findings(findings)
-    gate = build_gate_summary(project, findings, counts=counts)
+    # The final findings are one per CWE and verdict; the issue groups behind
+    # them get their own sheet.
+    units = cwe_findings(findings)
+    counts = count_findings(units)
+    gate = build_gate_summary(project, units, counts=counts)
     wb = Workbook()
 
     summary = wb.active
     summary.title = "Summary"
     _build_summary_sheet(summary, project, scan, gate, counts)
 
-    _build_cwe_sheet(wb.create_sheet("By CWE"), group_by_cwe(findings))
-    _build_findings_sheet(wb.create_sheet("Findings"), findings)
+    _build_findings_sheet(wb.create_sheet("Findings"), units)
+    _build_findings_sheet(wb.create_sheet("Issue Groups"), findings)
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -1950,6 +2007,11 @@ def _finding_story_block(
                                       width=prose_width, label_color="#065f46", accent="#ecfdf5"))
     if example_fix:
         strips.extend(_code_boxes("Example fix", example_fix, styles=styles, width=inner_width))
+    issue_groups = getattr(finding, "issue_groups", None) or []
+    if len(issue_groups) > 1:
+        strips.append(_labelled_block(
+            f"Issue groups ({len(issue_groups)})", _issue_groups_text(issue_groups),
+            styles=styles, width=inner_width, label_color="#334155"))
     occurrence_ids = _occurrence_ids(finding)
     if occurrence_ids:
         shown = ", ".join(occurrence_ids[:6])
@@ -2147,71 +2209,6 @@ def _findings_index(ordered: list[Finding], styles: Any, width: float) -> Table 
     table.hAlign = "LEFT"
     table.setStyle(TableStyle(cmds))
     return table
-
-
-def _cwe_table(cwe_rows: list[dict[str, Any]], styles: Any, width: float) -> Table | None:
-    """Summary-page table, one row per CWE: occurrences per verdict bucket and files."""
-    if not cwe_rows:
-        return None
-    shown = cwe_rows[:_INDEX_MAX_ROWS]
-    data: list[list[Any]] = [[
-        Paragraph("<b>CWE</b>", styles["TableHead"]),
-        Paragraph("<b>ISSUE</b>", styles["TableHead"]),
-        Paragraph("<b>SEVERITY</b>", styles["TableHeadCenter"]),
-        Paragraph("<b>CONFIRMED</b>", styles["TableHeadCenter"]),
-        Paragraph("<b>UNRESOLVED</b>", styles["TableHeadCenter"]),
-        Paragraph("<b>FALSE POS.</b>", styles["TableHeadCenter"]),
-        Paragraph("<b>FILES</b>", styles["TableHeadCenter"]),
-    ]]
-    cmds: list[tuple] = [
-        ("BACKGROUND", (0, 0), (-1, 0), INK),
-        ("BOX", (0, 0), (-1, -1), 0.5, RULE),
-        ("INNERGRID", (0, 0), (-1, -1), 0.4, HAIRLINE),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 2.2 * mm),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 2.2 * mm),
-        ("TOPPADDING", (0, 0), (-1, -1), 1.4 * mm),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.4 * mm),
-    ]
-
-    def occurrences(row: dict[str, Any], bucket: str) -> str:
-        return str(row["by_bucket"].get(bucket, {}).get("occurrences", 0))
-
-    for idx, row in enumerate(shown, start=1):
-        sev = row["severity"]
-        data.append([
-            Paragraph(_esc(row["cwe"] or "—"), styles["TableCell"]),
-            Paragraph(_esc(_truncate_text(row["title"] or "Untitled finding", 150)), styles["TableCell"]),
-            Paragraph(f'<font color="{_hex(SEVERITY_COLORS[sev])}"><b>{sev.upper()}</b></font>',
-                      styles["TableCellCenter"]),
-            Paragraph(occurrences(row, "true_positive"), styles["TableCellCenter"]),
-            Paragraph(occurrences(row, UNVERIFIED_VERDICT), styles["TableCellCenter"]),
-            Paragraph(occurrences(row, "false_positive"), styles["TableCellCenter"]),
-            Paragraph(str(row["file_count"]), styles["TableCellCenter"]),
-        ])
-        if idx % 2 == 0:
-            cmds.append(("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#f8fafc")))
-        cmds.append(("LINEBEFORE", (0, idx), (0, idx), 2.5, SEVERITY_COLORS[sev]))
-    table = Table(
-        data, colWidths=[width * w for w in (0.09, 0.43, 0.1, 0.1, 0.1, 0.1, 0.08)], repeatRows=1,
-    )
-    table.hAlign = "LEFT"
-    table.setStyle(TableStyle(cmds))
-    return table
-
-
-def _cwe_heading(row: dict[str, Any], bucket: str, styles: Any) -> Paragraph:
-    """The line above one CWE's finding blocks within a verdict section. It must
-    never read like a block heading or verdict line to `_check_pdf`."""
-    cell = row["by_bucket"].get(bucket, {})
-    groups, occ, files = cell.get("groups", 0), cell.get("occurrences", 0), cell.get("files", 0)
-    label = row["cwe"] or "No CWE"
-    return Paragraph(
-        f"<b>{_esc(label)}</b>&nbsp;&nbsp;{_esc(_truncate_text(row['title'] or '', 120))}"
-        f'&nbsp;&nbsp;<font color="#64748b">{groups} {"group" if groups == 1 else "groups"} · '
-        f'{occ} {"occurrence" if occ == 1 else "occurrences"} · {files} {"file" if files == 1 else "files"}</font>',
-        styles["FindingTitle"],
-    )
 
 
 # =============================================================================
@@ -2767,6 +2764,9 @@ def build_pdf_report(project: Project, scan: Scan, findings: list[Finding]) -> b
     if _is_sbom_scan(scan):
         return _build_pdf_sbom_report(project, scan)
 
+    # One finding per CWE and verdict (`cwe_findings`): the cover counts them,
+    # the index lists them and each gets one block naming its issue groups.
+    findings = cwe_findings(findings)
     summary = count_findings(findings)
     group_counts = {sev: v["groups"] for sev, v in summary["actionable"].items()}
     occurrence_counts = {sev: v["occurrences"] for sev, v in summary["actionable"].items()}
@@ -2827,19 +2827,7 @@ def build_pdf_report(project: Project, scan: Scan, findings: list[Finding]) -> b
         ]))
         story.append(Spacer(1, 6 * mm))
 
-    cwe_rows = group_by_cwe(findings)
-    ordered = _report_order(findings, cwe_rows)
-    cwe_table = _cwe_table(cwe_rows, styles, content_width)
-    if cwe_table is not None:
-        story.append(Paragraph("FINDINGS BY CWE", styles["SectionHeading"]))
-        story.append(cwe_table)
-        if len(cwe_rows) > _INDEX_MAX_ROWS:
-            story.append(Spacer(1, 2 * mm))
-            story.append(Paragraph(
-                f'<font color="#64748b">… and {len(cwe_rows) - _INDEX_MAX_ROWS} further CWE(s); '
-                f'see the "By CWE" sheet of the Excel export.</font>', styles["FindingBody"]))
-        story.append(Spacer(1, 6 * mm))
-
+    ordered = _report_order(findings)
     index = _findings_index(ordered, styles, content_width)
     if index is not None:
         extra = max(0, len(findings) - _INDEX_MAX_ROWS)
@@ -2859,16 +2847,12 @@ def build_pdf_report(project: Project, scan: Scan, findings: list[Finding]) -> b
         story.append(PageBreak())
         story.append(_Bookmark("Findings", "findings"))
         story.append(Paragraph("DETAILED FINDINGS", styles["SectionHeading"]))
-        rows_by_key = {row["key"]: row for row in cwe_rows}
-        section: tuple[str, str] | None = None
+        section: str | None = None
         for idx, finding in enumerate(ordered, start=1):
-            bucket, key = _verdict_bucket(finding), _cwe_group_key(finding)
-            if section is None or section[0] != bucket:
+            bucket = _verdict_bucket(finding)
+            if section != bucket:
                 story.append(Paragraph(_BUCKET_LABELS[bucket].upper(), styles["SectionHeading"]))
-            if section != (bucket, key):
-                story.append(_cwe_heading(rows_by_key[key], bucket, styles))
-                story.append(Spacer(1, 2 * mm))
-                section = (bucket, key)
+                section = bucket
             story.extend(_finding_story_block(idx, finding, styles=styles,
                                               content_width=content_width))
 
@@ -2923,10 +2907,13 @@ def _check_construct_mix(rows: list[dict[str, Any]]) -> list[str]:
     return problems
 
 
-def _check_api(counts: dict[str, Any], grouped: list[Finding]) -> list[str]:
+def _check_api(counts: dict[str, Any], units: list[Any], grouped: list[Finding]) -> list[str]:
+    """`units` are the final (CWE) findings the counts count; `grouped` the issue
+    groups the API lists, whose construct mix is checked on its own."""
     from app.schemas import FindingOut  # lazy: keeps this module import-light
 
-    rows = [FindingOut.model_validate(f).model_dump() for f in grouped]
+    rows = [FindingOut.model_validate(f).model_dump() for f in units]
+    group_rows = [FindingOut.model_validate(f).model_dump() for f in grouped]
     recomputed = _recount_rows(rows)
     problems: list[str] = []
     for bucket in (*VERDICT_BUCKETS, UNKNOWN_BUCKET):
@@ -2942,7 +2929,7 @@ def _check_api(counts: dict[str, Any], grouped: list[Finding]) -> list[str]:
                 problems.append(
                     f"API counts: {_BUCKET_LABELS[bucket]} / {sev} says {stated}, its rows give {actual}"
                 )
-    problems += _check_construct_mix(rows)
+    problems += _check_construct_mix(group_rows)
     for sev in SEVERITY_ORDER:
         expected_groups = sum(
             recomputed.get(b, {}).get(sev, {"groups": 0})["groups"]
@@ -3051,9 +3038,10 @@ def check_report_consistency(db: Any, scan: Scan) -> list[str]:
     from app.services.feedback import effective_scan_findings  # lazy: feedback imports this module
 
     grouped = group_findings_by_issue(effective_scan_findings(db, scan))
-    counts = count_findings(grouped)
+    units = cwe_findings(grouped)
+    counts = count_findings(units)
     project = scan.project
-    problems = _check_api(counts, grouped)
-    problems += _check_xlsx(build_excel_report(project, scan, grouped), counts, grouped)
+    problems = _check_api(counts, units, grouped)
+    problems += _check_xlsx(build_excel_report(project, scan, grouped), counts, units)
     problems += _check_pdf(build_pdf_report(project, scan, grouped), counts)
     return problems
