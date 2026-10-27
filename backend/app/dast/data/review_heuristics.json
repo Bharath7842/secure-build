@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "_comment": "Heuristics that list endpoints for human review (DAST-09-050). These checks never run a test: they only point at where a person should look. Edit this file to extend them; no code change is needed.",
+  "sensitive_flows": [
+    {"id": "authentication", "label": "login or sign-in", "path": "(?i)/(?:log[-_]?in|sign[-_]?in|authenticate|session)\\b"},
+    {"id": "registration", "label": "account registration", "path": "(?i)/(?:register|sign[-_]?up|signup|enrol)"},
+    {"id": "password-reset", "label": "password reset or recovery", "path": "(?i)/(?:reset|forgot|recover)[-_]?(?:password|pwd|account)?|/password"},
+    {"id": "checkout", "label": "checkout, order or payment", "path": "(?i)/(?:checkout|payment|purchase|order|cart|basket|billing|invoice)"},
+    {"id": "transfer", "label": "money or asset transfer", "path": "(?i)/(?:transfer|withdraw|deposit|payout|refund)"},
+    {"id": "invite", "label": "invitation or sharing", "path": "(?i)/(?:invite|invitation|share|referral)"},
+    {"id": "redeem", "label": "coupon, voucher or reward redemption", "path": "(?i)/(?:coupon|voucher|redeem|promo|reward|gift)"},
+    {"id": "voting", "label": "voting, rating or review submission", "path": "(?i)/(?:vote|rating|rate|review|comment|feedback)"}
+  ],
+  "unsafe_consumption": [
+    {"id": "proxy", "label": "proxies or fetches another service", "path": "(?i)/(?:proxy|fetch|forward|relay|gateway)\\b"},
+    {"id": "import", "label": "imports external data", "path": "(?i)/(?:import|sync|ingest|feed|rss|scrape)"},
+    {"id": "webhook", "label": "receives third-party callbacks", "path": "(?i)/(?:webhook|callback|hook|notify)"},
+    {"id": "integration", "label": "integrates a third-party service", "path": "(?i)/(?:integration|connector|external|third[-_]?party|partner|oauth)"}
+  ],
+  "url_parameter_names": ["url", "uri", "link", "href", "src", "source", "dest", "destination", "redirect", "redirect_uri", "return", "return_url", "next", "callback", "webhook", "feed", "image_url", "avatar_url", "target", "endpoint", "proxy", "domain", "host", "site", "path", "file", "page"]
+}

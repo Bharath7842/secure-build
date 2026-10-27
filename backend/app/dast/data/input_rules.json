@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "version": 1,
+  "description": "Deny-list for model-generated DAST test inputs (DAST-01-060). Each pattern is run, case-insensitively by default, against the raw input and its decoded views. Extend by adding an entry; ids must be unique.",
+  "shape": {
+    "max_length": 2000,
+    "allow_control_chars": "\t\r\n"
+  },
+  "deny": [
+    {
+      "id": "sql-ddl",
+      "reason": "data-definition statement (DROP/ALTER/CREATE/RENAME)",
+      "pattern": "\\b(?:drop|alter|rename)\\s+(?:table|database|schema|index|view|user|role|column|procedure|function|trigger|sequence|tablespace|constraint)\\b|\\bcreate\\s+(?:or\\s+replace\\s+)?(?:table|database|schema|index|view|user|role|procedure|function|trigger|sequence|extension)\\b"
+    },
+    {
+      "id": "sql-dml",
+      "reason": "data-manipulation statement (INSERT/UPDATE/DELETE/REPLACE/MERGE/TRUNCATE)",
+      "pattern": "\\binsert\\s+(?:ignore\\s+)?into\\b|\\bupdate\\s+[\\w.\\\"`\\[\\]]+\\s+set\\b|\\bdelete\\s+from\\b|\\b(?:replace|merge)\\s+into\\b|\\btruncate\\s+(?:table\\s+)?[\\w.\\\"`\\[\\]]+"
+    },
+    {
+      "id": "sql-privilege",
+      "reason": "privilege change (GRANT/REVOKE)",
+      "pattern": "\\b(?:grant|revoke)\\s+(?:all|select|insert|update|delete|execute|usage|create|alter|drop|\\w+\\s+on)\\b"
+    },
+    {
+      "id": "sql-server-side-effects",
+      "reason": "SQL feature that writes files, runs commands or stops the server",
+      "pattern": "\\b(?:xp_cmdshell|xp_regwrite|xp_regdelete|sp_oacreate|sp_oamethod|sp_configure)\\b|\\bexec(?:ute)?\\s*(?:\\(|\\s+(?:xp_|sp_|master\\.))|\\bexecute\\s+immediate\\b|\\binto\\s+(?:out|dump)file\\b|\\butl_file\\.(?:put\\w*|fremove|fcopy|frename)\\b|\\blo_(?:export|unlink|import)\\b|\\bcopy\\b[^;]{0,200}\\bprogram\\b|\\bshutdown\\s*(?:--|;|#|$|with\\b)|\\bdbms_(?:scheduler|job)\\b"
+    },
+    {
+      "id": "sql-stacked-statement",
+      "reason": "stacked statement after a semicolon",
+      "pattern": ";\\s*(?!\\s*(?:waitfor\\s+delay\\b|select\\s+(?:pg_sleep|sleep|benchmark)\\b|--|/\\*|#|$))\\s*(?:select|insert|update|delete|drop|alter|create|truncate|exec|execute|declare|grant|revoke|shutdown|merge|replace|call|copy|set|use|begin|commit|rollback|backup|restore|load|do|prepare|vacuum|attach|pragma)\\b"
+    },
+    {
+      "id": "nosql-or-datastore-destructive",
+      "reason": "destructive NoSQL / key-value store command",
+      "pattern": "\\bdb\\s*\\.\\s*(?:\\w+\\s*\\.\\s*)?(?:drop\\w*|remove|deleteMany|deleteOne|updateMany|updateOne|insertMany|insertOne|findAndModify|renameCollection)\\s*\\(|\\b(?:flushall|flushdb)\\b|\\bconfig\\s+set\\s+\\w+|\\bshutdown\\s+nosave\\b"
+    },
+    {
+      "id": "graphql-mutation",
+      "reason": "GraphQL mutation while safe mode is on",
+      "pattern": "^\\s*mutation\\b|[\\\"']query[\\\"']\\s*:\\s*[\\\"']\\s*mutation\\b|[{}]\\s*mutation\\s*[\\w({]",
+      "safe_mode_only": true
+    },
+    {
+      "id": "shell-delete-or-overwrite",
+      "reason": "shell command that deletes, overwrites or reconfigures the host",
+      "pattern": "(?<![\\w.-])(?:rm|rmdir|shred|mkfs(?:\\.\\w+)?|mkfifo|unlink|killall|pkill|taskkill|useradd|userdel|usermod|crontab|chown|chgrp)\\s+\\S|(?<![\\w.-])(?:del|erase)\\s+(?:/\\w\\s+)*[\\w./\\\\~$\\\"'-]|(?<![\\w.-])dd\\s+(?:if|of)=|(?<![\\w.-])format\\s+[a-z]:|(?<![\\w.-])chmod\\s+(?:-\\w+\\s+)?[0-7]{3,4}\\b|(?<![\\w.-])find\\s+[^;&|\\n]*-(?:delete|exec(?:dir)?|ok)\\b"
+    },
+    {
+      "id": "shell-host-disruption",
+      "reason": "shell command that shuts down, restarts or stops the host or a service",
+      "pattern": "(?<![\\w.-])(?:shutdown|reboot|halt|poweroff)(?![\\w.-])(?:\\s+\\S|\\s*$|\\s*[;&|`)])|(?<![\\w.-])init\\s+[06]\\b|(?<![\\w.-])systemctl\\s+(?:stop|disable|mask|kill|poweroff|reboot|halt)\\b|(?<![\\w.-])service\\s+\\S+\\s+stop\\b|(?<![\\w.-])kill\\s+-(?:9|KILL)\\b"
+    },
+    {
+      "id": "shell-chain-write",
+      "reason": "shell command chain that writes, moves or installs files",
+      "pattern": "(?:^|[;&|`\\n(]|\\$\\()\\s*(?:mv|cp|copy|move|ren|rename|tee|touch|mkdir|ln|install|sed\\s+-i|perl\\s+-i|truncate)\\s+\\S"
+    },
+    {
+      "id": "shell-chain-interpreter",
+      "reason": "shell command chain that starts an interpreter or reverse shell",
+      "pattern": "(?:^|[;&|`\\n(]|\\$\\()\\s*(?:bash|sh|zsh|nc|ncat|netcat|powershell|pwsh|cmd(?:\\.exe)?|python[23]?|perl|ruby|php|node)\\s+-"
+    },
+    {
+      "id": "shell-pipe-to-interpreter",
+      "reason": "input piped into a shell or script interpreter",
+      "flags": "i",
+      "pattern": "\\|\\s*(?:(?:/usr)?/bin/)?(?:ba|z|da|k|c|tc|fi)?sh\\b|\\|\\s*(?:python[23]?|perl|ruby|php|node|powershell|pwsh|cmd(?:\\.exe)?)\\b|\\|\\s*xargs\\b"
+    },
+    {
+      "id": "shell-fork-bomb",
+      "reason": "self-replicating shell construct (fork bomb) that would exhaust the host",
+      "pattern": ":\\s*\\(\\s*\\)\\s*\\{[^}]*:\\s*\\|\\s*:|(?:^|[;&|])\\s*while\\s*(?:true|:|\\[\\s*1\\s*\\])\\s*;?\\s*do\\b|%0\\s*\\|\\s*%0"
+    },
+    {
+      "id": "jndi-lookup",
+      "reason": "JNDI lookup expression that makes the target load code from a remote host",
+      "flags": "i",
+      "pattern": "\\$\\{[^}]{0,80}j[^a-z]{0,6}n[^a-z]{0,6}d[^a-z]{0,6}i[^a-z]{0,6}:|\\$\\{\\s*(?:lower|upper|env|sys|java|base64):[^}]*\\}\\s*(?:\\$\\{[^}]*\\}\\s*)*ndi"
+    },
+    {
+      "id": "smuggling-scheme",
+      "reason": "URL scheme used to smuggle protocols through a server-side request (gopher, dict, ldap, rmi, tftp, smb)",
+      "flags": "i",
+      "pattern": "\\b(?:gopher|dict|ldaps?|rmi|iiop|tftp|smb|netdoc|jar)://"
+    },
+    {
+      "id": "shell-download-to-file",
+      "reason": "download written to disk or remote delete",
+      "pattern": "\\b(?:wget|curl)\\b[^;&|\\n]*\\s(?:-o|-O|--output|--remote-name|--upload-file|-X\\s*DELETE)\\b"
+    },
+    {
+      "id": "shell-redirect-write",
+      "reason": "output redirection that writes a file",
+      "pattern": ">>?\\s*(?:/(?:etc|var|tmp|root|home|usr|opt|bin|sbin|dev|proc|boot|srv)\\b|~/|[A-Za-z]:[/\\\\])|(?:[;&|`\\n]|\\$\\()[^;&|`\\n]*?>>?\\s*(?:/|~|\\.{1,2}[/\\\\]|\\$|\\w+\\.(?:txt|php|jsp|aspx?|sh|html?|log|conf|cfg|ini|py|js|bak|dat|json|xml)\\b)"
+    },
+    {
+      "id": "code-api-file-write-or-exec",
+      "reason": "code-level file write/delete or process execution",
+      "pattern": "\\b(?:file_put_contents|fwrite|fputs|unlink|rmdir|rename|copy|move_uploaded_file|touch|chmod|tempnam|system|shell_exec|passthru|popen|proc_open)\\s*\\(|\\bfopen\\s*\\([^)]*['\\\"][waxc]\\+?b?['\\\"]|\\bos\\.(?:remove|unlink|rmdir|removedirs|rename|system|popen)\\s*\\(|\\bshutil\\.(?:rmtree|move|copy\\w*)\\s*\\(|\\bFiles?\\.(?:delete\\w*|write\\w*|move|copy|createFile)\\s*\\(|\\bnew\\s+FileWriter\\b|\\bFileOutputStream\\b|\\bRuntime\\.getRuntime\\(\\)\\.exec|\\bProcessBuilder\\b|\\bchild_process\\b|\\bfs\\.(?:writeFile\\w*|appendFile\\w*|unlink\\w*|rm|rmdir|rename|createWriteStream)\\s*\\("
+    },
+    {
+      "id": "stream-wrapper-write-or-exec",
+      "reason": "stream wrapper that writes or executes",
+      "pattern": "\\bphp://(?:output|filter/[^\\s]*write=)|\\bexpect://|\\bphar://"
+    }
+  ]
+}

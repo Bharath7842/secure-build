@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "_comment": "Pattern families for passive analysis (DAST-08-030) and technology disclosure (DAST-08-020). Edit this file to extend coverage; no code change is needed. confidence=ambiguous families only ever produce unverified findings. Sensitive families never quote their match in evidence. Personal-data coverage is deliberately narrow (payment-card numbers that pass the Luhn check, US-style SSNs); e-mail addresses and names are not flagged because they are too common to be a signal on their own.",
+  "families": [
+    {"id": "framework_error_page", "check": "verbose", "label": "framework error page", "confidence": "definite", "flags": "i",
+     "pattern": "server error in '/[^']*' application|<title>[^<]{0,80}(?:django debug|exception|error 500)[^<]{0,40}</title>|application error \\(debug|ruby on rails.{0,40}in .{0,40}controller|symfony\\\\component\\\\|spring boot.{0,40}error|express.{0,20}cannot (?:get|post)"},
+    {"id": "internal_path", "check": "verbose", "label": "internal file path", "confidence": "definite", "errors_only": true,
+     "pattern": "(?:/(?:var|usr|home|opt|srv|etc|app|workspace)/[\\w.@-]+(?:/[\\w.@-]+){1,}|[A-Za-z]:\\\\(?:Users|inetpub|Windows|Program Files|wwwroot)\\\\[\\w .\\\\@-]{3,})"},
+    {"id": "internal_address", "check": "verbose", "label": "private network address", "confidence": "ambiguous",
+     "pattern": "\\b(?:10\\.\\d{1,3}|192\\.168|172\\.(?:1[6-9]|2\\d|3[01]))\\.\\d{1,3}\\.\\d{1,3}\\b"},
+    {"id": "aws_access_key_id", "check": "sensitive", "label": "AWS access key id", "confidence": "definite",
+     "pattern": "\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b"},
+    {"id": "private_key_block", "check": "sensitive", "label": "private key block", "confidence": "definite",
+     "pattern": "-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----"},
+    {"id": "github_token", "check": "sensitive", "label": "GitHub token", "confidence": "definite",
+     "pattern": "\\bgh[pousr]_[A-Za-z0-9]{36,}\\b"},
+    {"id": "slack_token", "check": "sensitive", "label": "Slack token", "confidence": "definite",
+     "pattern": "\\bxox[baprs]-[A-Za-z0-9-]{10,}\\b"},
+    {"id": "stripe_live_key", "check": "sensitive", "label": "Stripe live secret key", "confidence": "definite",
+     "pattern": "\\bsk_live_[0-9a-zA-Z]{24,}\\b"},
+    {"id": "google_api_key", "check": "sensitive", "label": "Google API key", "confidence": "definite",
+     "pattern": "\\bAIza[0-9A-Za-z_\\-]{35}\\b"},
+    {"id": "secret_assignment", "check": "sensitive", "label": "credential-like value", "confidence": "ambiguous", "flags": "i",
+     "pattern": "\\b(?:api[_-]?key|client[_-]?secret|secret[_-]?key|access[_-]?token|passwd|password)[\"']?\\s*[:=]\\s*[\"'][A-Za-z0-9/+=_\\-]{12,}[\"']"},
+    {"id": "jwt_in_response", "check": "sensitive", "label": "JSON Web Token", "confidence": "ambiguous", "validator": "jwt",
+     "pattern": "\\beyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\b"},
+    {"id": "payment_card_number", "check": "sensitive", "label": "payment card number", "confidence": "ambiguous", "validator": "luhn",
+     "pattern": "\\b(?:\\d[ -]?){13,19}\\b"},
+    {"id": "us_ssn", "check": "sensitive", "label": "US social security number", "confidence": "ambiguous",
+     "pattern": "\\b(?!000|666|9\\d\\d)\\d{3}-(?!00)\\d{2}-(?!0000)\\d{4}\\b"}
+  ],
+  "disclosure": {
+    "headers": ["x-powered-by", "x-aspnet-version", "x-aspnetmvc-version", "x-generator"],
+    "versioned_headers": ["server"],
+    "version_pattern": "\\d+\\.\\d+"
+  }
+}
