@@ -11,6 +11,9 @@ row (SAST-00-050) can carry the evidence version it was made under.
     system_prompt_sha256   per LLM step, the sha256 of each system prompt used
                            (filled in from the usage summary once the run ends)
     llm_provider, llm_model  the snapshot taken on the scan row
+    llm_endpoint_host      host the scan sent code to (None: no HTTP endpoint)
+    llm_policy_sha256      hash of the approved hosts/models policy in force
+    derived_rules_sha256   hash of the rules derived from the repository (real scans)
 
 The mock engine records fixed values, so tests can assert the whole block.
 """
@@ -18,6 +21,7 @@ The mock engine records fixed values, so tests can assert the whole block.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import subprocess
 from functools import lru_cache
@@ -79,8 +83,31 @@ def static_versions(scan: Scan, *, mock: bool) -> dict[str, Any]:
         "system_prompt_sha256": {},
         "llm_provider": scan.llm_provider,
         "llm_model": scan.llm_model,
+        # LLM03: where this scan's code was sent (host only — never the URL's path or
+        # query) and which approved-hosts/models policy was in force.
+        "llm_endpoint_host": None if mock else _endpoint_host(scan),
+        "llm_policy_sha256": MOCK_VALUE if mock else _policy_sha256(),
     }
     return versions
+
+
+def _endpoint_host(scan: Scan) -> str | None:
+    from app.services import llm_policy
+
+    return llm_policy.host_of(llm_policy.endpoint_for(scan.llm_provider, scan.llm_base_url))
+
+
+def _policy_sha256() -> str:
+    from app.services import llm_policy
+
+    try:
+        policy = llm_policy.load_policy()
+    except Exception:  # noqa: BLE001 — a missing table must not fail a scan
+        return UNKNOWN
+    canonical = json.dumps(
+        {k: policy[k] for k in ("allowed_hosts", "allowed_models", "allow_loopback")}, sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _safe(fn) -> str:
@@ -88,6 +115,17 @@ def _safe(fn) -> str:
         return fn()
     except OSError:
         return UNKNOWN
+
+
+def with_derived_rules(versions: dict[str, Any] | None, discovery: dict[str, Any] | None) -> dict[str, Any]:
+    """`versions` completed with the hash of the rule set this scan derived from the
+    repository (LLM04), when the engine derived any — a different derived set is
+    then visible when two scans are compared."""
+    merged = dict(versions or {})
+    digest = ((discovery or {}).get("derived_rules_summary") or {}).get("sha256")
+    if digest:
+        merged["derived_rules_sha256"] = digest
+    return merged
 
 
 def with_prompt_hashes(versions: dict[str, Any] | None, usage_summary: dict[str, Any] | None) -> dict[str, Any]:

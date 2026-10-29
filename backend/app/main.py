@@ -14,6 +14,7 @@ from app.routers.dast_settings import router as dast_settings_router
 from app.routers.dast_training import router as dast_training_router
 from app.routers.feedback import router as feedback_router
 from app.routers.git_auth import router as git_auth_router
+from app.routers.llm_policy import router as llm_policy_router
 from app.routers.llm_presets import router as llm_presets_router
 from app.routers.model_settings import router as model_settings_router
 from app.routers.projects import router as projects_router
@@ -66,6 +67,7 @@ app.include_router(feedback_router)
 app.include_router(llm_presets_router)
 app.include_router(scan_limitations_router)
 app.include_router(model_settings_router)
+app.include_router(llm_policy_router)
 app.include_router(git_auth_router)
 app.include_router(dast_rules_router)
 app.include_router(dast_settings_router)

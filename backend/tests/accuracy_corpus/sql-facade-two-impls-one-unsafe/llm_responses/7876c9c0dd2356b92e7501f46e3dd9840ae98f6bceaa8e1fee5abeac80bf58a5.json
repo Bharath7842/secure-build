@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5979,
+  "key": "7876c9c0dd2356b92e7501f46e3dd9840ae98f6bceaa8e1fee5abeac80bf58a5",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 146,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 12, \"verdict\": \"true_positive\", \"confidence\": 0.85, \"rule_id\": \"java-sql-string-concat\", \"severity\": \"HIGH\", \"cwe\": \"CWE-89\", \"title\": \"SQL injection through a JDBC statement\", \"owasp_category\": \"A03:2021-Injection\", \"source\": \"name (method parameter)\", \"sink\": \"st.executeQuery(...)\", \"data_flow\": \"name is concatenated into the query\", \"snippet\": \"return st.executeQuery(\\\"SELECT * FROM customers WHERE name = '\\\" + name + \\\"'\\\");\", \"verdict_reason\": \"name is concatenated into the SQL text.\", \"ai_fix\": \"Bind the value with a PreparedStatement placeholder.\"}]}"
+}

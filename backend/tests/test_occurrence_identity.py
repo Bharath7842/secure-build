@@ -231,6 +231,7 @@ def test_static_versions_for_the_mock_engine_are_fixed(tmp_path):
         "engine_commit": "mock", "rule_catalog_sha256": "mock", "result_cache_version": "mock",
         "severity_scheme": SEVERITY_SCHEME,
         "system_prompt_sha256": {}, "llm_provider": "bedrock", "llm_model": "m",
+        "llm_endpoint_host": None, "llm_policy_sha256": "mock",
     }
 
 

@@ -106,6 +106,12 @@ PERMISSIONS: tuple[Permission, ...] = (
         user_default=False, grantable_to_user=False,
     ),
     Permission(
+        "llm.approve", "action", "Approve LLM endpoints and models",
+        "Approve the hosts scans may send code to (private-network or plain-http LLM servers) "
+        "and restrict which models projects may use.",
+        user_default=False, grantable_to_user=False,
+    ),
+    Permission(
         "dast.training", "action", "Manage DAST training data",
         "Turn training-data capture on or off and read captured examples.",
         user_default=False, grantable_to_user=False,

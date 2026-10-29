@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from xml.sax.saxutils import escape
 
+from app.services import secret_masking
+
 
 def _level(severity: str | None) -> str:
     return {"critical": "error", "high": "error", "medium": "warning", "low": "note", "info": "note"}.get(
@@ -60,7 +62,7 @@ def junit_xml(findings: list, *, name: str = "scan") -> str:
         verdict = (finding.verdict or "").lower()
         title = escape(finding.title or finding.rule_id or "finding")
         classname = escape(finding.rule_id or "finding")
-        body = escape((finding.snippet or finding.verdict_reason or "")[:2000])
+        body = escape(secret_masking.mask_text(finding.snippet or finding.verdict_reason or "")[:2000])
         if verdict == "false_positive":
             cases.append(f'<testcase classname="{classname}" name="{title}"/>')
         else:

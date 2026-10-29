@@ -27,6 +27,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 from app.config import settings
+from app.services import secret_masking
 
 _MAX_LINES_PER_SCAN = 2000
 _MAX_TRACKED_SCANS = 50
@@ -181,6 +182,13 @@ def _append(scan_id: str, line: str) -> None:
     with _lock:
         for secret in _secrets.get(scan_id, ()):
             line = line.replace(secret, "********")
+        # Pattern-based masking on top of the registered values: a line that
+        # echoes code or a match must not carry a credential (LLM02). Always on —
+        # the log has no project to read the opt-out from.
+        try:
+            line = secret_masking.mask_text(line)
+        except Exception:  # noqa: BLE001 — logging must not break the scan
+            pass
         buf = _buffers.setdefault(scan_id, [])
         seq = _next_seq.get(scan_id, 0) + 1
         _next_seq[scan_id] = seq

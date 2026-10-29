@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     openai_compat_base_url: str = "http://localhost:8000/v1"
     openai_compat_api_key: SecretStr | None = None
     openai_compat_request_timeout: int = 600
+    # Where scans may send code (LLM03). Hosts an LLM endpoint may use even though
+    # it resolves to a private address or speaks plain http (comma separated
+    # `host` or `host:port`; administrators can add more in the app). Loopback
+    # (a local Ollama/vLLM) is allowed unless this is turned off on a server.
+    llm_allowed_hosts: str = ""
+    llm_allow_loopback: bool = True
     # Local `claude` CLI for projects with llm_provider == "claude_cli". Empty
     # path means "find `claude` on PATH". Each scan gets one persisted Claude
     # session whose working directory lives under claude_cli_dir.

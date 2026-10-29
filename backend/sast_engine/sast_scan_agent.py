@@ -1721,7 +1721,10 @@ def _scan_context(state: SastState) -> tuple:
     priority_rule_ids = regex_scan.surface_rule_ids(
         _resolve_active_surfaces(state, rules_path)
     )
-    priority_rule_ids = set(priority_rule_ids) | {r.id for r in derived_rules}
+    # Derived rules are not prompt-catalog entries (regex_scan.rules_for_prompt skips
+    # them; they reach the model as a fenced block in the user turn), so they take
+    # no part in the catalog's priority ordering.
+    priority_rule_ids = set(priority_rule_ids)
     stack_context = llm_analysis.get("tech_stack") or "unknown"
     usage = state.get("usage") or init_usage(state.get("llm_provider"), state.get("llm_model"))
     return (root, rules, active_frameworks, dependency_index,
@@ -2246,6 +2249,8 @@ def node_derive_runtime_rules(state: SastState) -> dict:
         "failed_by_reason": dropped_by_reason,
         "wrapper_candidates": wrapper_stats.get("candidates", 0),
         "wrappers_derived": wrapper_stats.get("derived", 0),
+        # Which derived set the scan ran with (recorded in the scan's versions).
+        "sha256": derive_rules.derived_rules_sha256(derived),
     }
     if wrapper_stats.get("candidates"):
         tracer.log(5, "derive_runtime_rules",
@@ -2329,6 +2334,15 @@ def node_scan_deep_files(state: SastState) -> dict:
         completed.append(result)
         tp, fp = result["tp_count"], result["fp_count"]
         total_findings = tp + fp
+        if result.get("chunk_errors"):
+            first = str(result["chunk_errors"][0])[:200]
+            tracer.log(
+                7, "scan_deep_files",
+                f"{result['file_path']}: {len(result['chunk_errors'])} LLM call(s) failed",
+                detail=first,
+                narrative=f"  WARNING: {result['file_path']} was NOT fully reviewed — "
+                          f"{len(result['chunk_errors'])} model call(s) failed ({first}).",
+            )
         tracer.log(
             7, "scan_deep_files",
             f"{result['file_path']}: {result['chunks']} chunk(s), {tp} TP, {fp} FP",
@@ -2368,6 +2382,12 @@ def node_scan_deep_files(state: SastState) -> dict:
                 narrative=f"Done — {scan_results['tp_count']} finding(s) confirmed across "
                           f"{scan_results['files_scanned']} {tier} file(s) "
                           f"({scan_results['fp_count']} dismissed).")
+    if scan_results.get("chunk_errors"):
+        tracer.log(7, "scan_deep_files",
+                    f"{scan_results['chunk_errors']} LLM call(s) failed during the deep scan",
+                    narrative=f"WARNING: {scan_results['chunk_errors']} model call(s) failed during the deep scan, "
+                              f"so the files above marked as failed were not (fully) reviewed. Their regex hits are "
+                              f"recorded as unverified; a file with no hit shows nothing. Check the model server.")
 
     return {"scan_results": scan_results, "usage": usage}
 
@@ -2985,14 +3005,18 @@ def persist_to_disk(state: SastState) -> Dict[str, Any]:
         "local_path": state["local_path"],
         "scanned_at": datetime.now(timezone.utc).isoformat(),
         "scan_summary": {k: v for k, v in state["scan"].items() if k != "files"},
-        "llm_analysis": state["llm_analysis"],
-        "categorized_counts": {k: len(v) for k, v in state["categorized"].items()},
-        "module_plan": state["module_plan"],
+        "llm_analysis": state.get("llm_analysis"),
+        "categorized_counts": {k: len(v) for k, v in (state.get("categorized") or {}).items()},
+        "module_plan": state.get("module_plan"),
         "report": state.get("report"),
         "trace": tracer.events if tracer is not None else [],
     }
     with open(json_path, "w", encoding="utf-8") as fh:
         json.dump(json_payload, fh, indent=2)
+
+    if not state.get("module_plan") or not state.get("llm_analysis"):
+        # Partial run (--stop-after before risk mapping): the JSON is all there is.
+        return {"json_path": json_path, "db_path": None}
 
     conn = sqlite3.connect(db_path)
     try:
@@ -3077,8 +3101,37 @@ def _staged(stage: str, node: Callable[[SastState], dict]) -> Callable[[SastStat
     return run
 
 
-def build_graph(parallel: bool = False):
+# Stages in the linear prefix of the graph, in run order — the points a CLI run
+# can stop after (--stop-after) to inspect what the scan has worked out so far.
+STOP_AFTER_STAGES = (
+    "scan_directory", "analyze_tech_stack", "categorize_files", "map_modules_and_risk",
+    "build_joern_cpg", "build_call_graph", "derive_runtime_rules",
+)
+
+
+def build_graph(parallel: bool = False, stop_after: Optional[str] = None):
+    if stop_after is not None and stop_after not in STOP_AFTER_STAGES:
+        raise ValueError(f"stop_after must be one of {STOP_AFTER_STAGES}, got {stop_after!r}")
     graph = StateGraph(SastState)
+    if stop_after is not None:
+        # Wire only the stages up to and including `stop_after`, then END.
+        keep = STOP_AFTER_STAGES[:STOP_AFTER_STAGES.index(stop_after) + 1]
+        nodes = {
+            "scan_directory": node_scan_directory,
+            "analyze_tech_stack": node_analyze_tech_stack,
+            "categorize_files": node_categorize_files,
+            "map_modules_and_risk": node_map_modules_and_risk,
+            "build_joern_cpg": node_build_joern_cpg,
+            "build_call_graph": node_build_call_graph,
+            "derive_runtime_rules": node_derive_runtime_rules,
+        }
+        for name in keep:
+            graph.add_node(name, nodes[name])
+        graph.add_edge(START, keep[0])
+        for a, b in zip(keep, keep[1:]):
+            graph.add_edge(a, b)
+        graph.add_edge(keep[-1], END)
+        return graph.compile()
     graph.add_node("scan_directory", node_scan_directory)
     graph.add_node("analyze_tech_stack", node_analyze_tech_stack)
     graph.add_node("categorize_files", node_categorize_files)
@@ -3235,6 +3288,10 @@ def main() -> None:
     parser.add_argument("--max-derived-regex-rules", type=int, default=None,
                          help="Cap on runtime-derived regex rules merged onto the catalog "
                               f"(default: {derive_rules.DEFAULT_MAX_DERIVED})")
+    parser.add_argument("--stop-after", choices=STOP_AFTER_STAGES, default=None,
+                         help="Stop after this stage and print what it produced (no scanning, no "
+                              "findings). E.g. --stop-after map_modules_and_risk to check tech "
+                              "stack and risk mapping before spending LLM time on the rest")
     parser.add_argument("--sequential", action="store_true",
                          help="Run flows, deep scan and triage one after another instead of in parallel "
                               "(easier-to-read log for debugging)")
@@ -3305,7 +3362,7 @@ def main() -> None:
     if args.triage_confirm_groups_per_call is not None:
         initial_state["triage_confirm_groups_per_call"] = args.triage_confirm_groups_per_call
 
-    app = build_graph(parallel=initial_state.get("parallel_stages", False))
+    app = build_graph(parallel=initial_state.get("parallel_stages", False), stop_after=args.stop_after)
     final_state = invoke_graph(app, initial_state)
     final_state["trace"] = tracer.events
 
@@ -3315,11 +3372,18 @@ def main() -> None:
     print("\n=== SUMMARY ===")
     print(f"scan_id:      {final_state['scan_id']}")
     print(f"scanned:      {final_state['scan']['root']}")
-    print(f"tech_stack:   {final_state['llm_analysis']['tech_stack']}")
-    print(f"project_type: {final_state['llm_analysis']['project_type']}")
-    print(f"confidence:   {final_state['llm_analysis']['confidence']}")
-    print(f"risk_areas:   {final_state['llm_analysis']['risk_areas']}")
-    print(f"risk_counts:  {final_state['module_plan']['risk_counts']}")
+    if args.stop_after:
+        print(f"stopped after: {args.stop_after}")
+    analysis = final_state.get("llm_analysis") or {}
+    if analysis:
+        print(f"tech_stack:   {analysis.get('tech_stack')}")
+        print(f"project_type: {analysis.get('project_type')}")
+        print(f"confidence:   {analysis.get('confidence')}")
+        print(f"risk_areas:   {analysis.get('risk_areas')}")
+    plan = final_state.get("module_plan") or {}
+    if plan:
+        print(f"risk_counts:  {plan['risk_counts']}")
+        print(f"deep scan:    {len(plan['deep_scan_paths'])} file(s); triage: {len(plan['triage_scan_paths'])} file(s)")
     report = final_state.get("report") or {}
     print(f"findings:     {report.get('tp_count', 0)} true positive(s), {report.get('fp_count', 0)} false positive(s)")
     if final_state.get("persisted"):

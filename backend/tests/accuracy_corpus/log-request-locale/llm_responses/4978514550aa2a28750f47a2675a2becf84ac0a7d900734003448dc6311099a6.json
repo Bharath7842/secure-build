@@ -1,0 +1,8 @@
+{
+  "input_tokens": 5952,
+  "key": "4978514550aa2a28750f47a2675a2becf84ac0a7d900734003448dc6311099a6",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 135,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 9, \"verdict\": \"true_positive\", \"confidence\": 0.8, \"rule_id\": \"java-log-injection-unsanitized-input\", \"severity\": \"MEDIUM\", \"cwe\": \"CWE-117\", \"title\": \"Unsanitized data reaches a log call\", \"owasp_category\": \"A09:2021-Security-Logging-and-Monitoring-Failures\", \"verdict_reason\": \"A request value is logged.\", \"source\": \"the logged value\", \"sink\": \"log.info\", \"data_flow\": \"the value reaches the log call unchanged\", \"snippet\": \"log.info(\\\"locale {}\\\", request.getLocale());\", \"ai_fix\": \"Encode CR/LF before logging.\"}]}"
+}

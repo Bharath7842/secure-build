@@ -12,6 +12,7 @@ import logging
 from typing import Any, Mapping
 
 from app.models import UNVERIFIED_VERDICT, DastEvidence, Finding
+from app.services import secret_masking
 from app.services.occurrence import occurrence_id, occurrence_parts
 from app.services.severity import apply_severity
 
@@ -28,11 +29,20 @@ def cap_excerpt(text: str | None, limit: int = EVIDENCE_EXCERPT_CAP) -> str | No
 
 
 def build_finding_row(
-    scan_id: str, f: Mapping[str, Any], file_path: str, project_id: str | None = None
+    scan_id: str,
+    f: Mapping[str, Any],
+    file_path: str,
+    project_id: str | None = None,
+    mask_secrets: bool = False,
 ) -> Finding:
     """`project_id`, when given, stamps the row's `occurrence_id`; DAST rows
-    never get one (their own dedupe keys them)."""
+    never get one (their own dedupe keys them).
+
+    `mask_secrets` (the project's `secret-masking`) replaces secret values in
+    the stored code and explanation columns (LLM02). The occurrence id is
+    computed from the unmasked finding, so it does not move."""
     is_dast = bool(f.get("target"))
+    mask = secret_masking.mask_value if mask_secrets else (lambda value: value)
     verdict = f.get("verdict")
     unresolved_reason = f.get("unresolved_reason")
     if verdict == UNVERIFIED_VERDICT and not unresolved_reason:
@@ -52,19 +62,19 @@ def build_finding_row(
         owasp_category=f.get("owasp_category"),
         owasp_ref=f.get("owasp_ref"),
         rule_id=f.get("rule_id"),
-        title=f.get("title") or "Untitled finding",
+        title=mask(f.get("title")) or "Untitled finding",
         file_path=f.get("file_path") or file_path,
         line=f.get("line"),
-        snippet=f.get("snippet"),
-        ai_fix=f.get("ai_fix"),
+        snippet=mask(f.get("snippet")),
+        ai_fix=mask(f.get("ai_fix")),
         kind=f.get("kind") or "llm",
         verdict=verdict,
         confidence=f.get("confidence"),
-        source=f.get("source"),
-        sink=f.get("sink"),
-        data_flow=f.get("data_flow"),
-        verdict_reason=f.get("verdict_reason"),
-        matched_text=f.get("matched_text"),
+        source=mask(f.get("source")),
+        sink=mask(f.get("sink")),
+        data_flow=mask(f.get("data_flow")),
+        verdict_reason=mask(f.get("verdict_reason")),
+        matched_text=mask(f.get("matched_text")),
         group_by_rule=f.get("group_by_rule"),
         occurrence_id=(
             occurrence_id(project_id, f, file_path) if project_id and not is_dast else None
@@ -74,10 +84,10 @@ def build_finding_row(
         ),
         issue_class=f.get("issue_class"),
         unresolved_reason=unresolved_reason if verdict == UNVERIFIED_VERDICT else None,
-        facts=f.get("facts") or None,
+        facts=mask(f.get("facts")) or None,
         reason_tag=f.get("reason_tag"),
         review_coverage=f.get("review_coverage"),
-        flow_path=f.get("flow_path"),
+        flow_path=mask(f.get("flow_path")),
         reachability=f.get("reachability"),
         affected_files=f.get("affected_files"),
         # DAST fields: absent (None) on SAST/SCA/SBOM finding dicts.

@@ -116,11 +116,13 @@ def test_chunk_file_single_chunk_for_small_file(llm_file_scan):
 
 
 def test_chunk_file_splits_large_file_with_overlap(llm_file_scan):
+    # A language with no tree-sitter chunker keeps the line-window splitter
+    # (Java/TypeScript/Python cut between declarations: test_ast_chunker_and_neighborhood).
     lines = [f"value_{i} = 'padding_padding_padding_padding_padding'" for i in range(700)]
     text = "\n".join(lines)
     assert len(text) > llm_file_scan.SINGLE_CALL_CHAR_BUDGET
 
-    chunks = llm_file_scan.chunk_file(text, "python")
+    chunks = llm_file_scan.chunk_file(text, "ruby")
     assert len(chunks) > 1
     assert chunks[0]["start_line"] == 1
     assert chunks[-1]["end_line"] == len(lines)
@@ -1532,7 +1534,10 @@ def test_group_confirm_unverified_findings_confirms_overflow_severities_too(tmp_
 
     def fake_call_llm(system, user, **kwargs):
         calls.append(user)
-        return '[{"verdict": "false_positive", "confidence": 0.2, "verdict_reason": "test fixture"}]'
+        return (
+            '[{"member": "m1", "verdict": "false_positive", "confidence": 0.2, "verdict_reason": "test fixture"},'
+            ' {"member": "m2", "verdict": "false_positive", "confidence": 0.2, "verdict_reason": "test fixture"}]'
+        )
 
     result = llm_file_scan.group_confirm_unverified_findings(
         file_results=file_results, repo_root=tmp_path, rules=rules,
@@ -1540,7 +1545,7 @@ def test_group_confirm_unverified_findings_confirms_overflow_severities_too(tmp_
     )
 
     # Same rule_id + matched_text as the plain MEDIUM finding -> one group,
-    # one LLM call, applied to both members.
+    # one LLM call deciding both members.
     assert result["candidate_count"] == 2
     assert len(calls) == 1
     assert already_confirmed["verdict"] == "true_positive"  # untouched

@@ -48,12 +48,15 @@ pytest-asyncio==1.4.0
 pypdf==6.19.0  # reads the exported PDFs back: scan_export.check_report_consistency and the export tests
 
 # --- SAST-only (unchanged) ---
-requests>=2.32.0
-tree-sitter>=0.23.0
-tree-sitter-java>=0.23.0
-tree-sitter-python>=0.23.0
-tree-sitter-typescript>=0.23.0
-python-dotenv>=1.0.0
+# Exact pins (the versions the suite runs against): a floating range here would let a
+# new release of a package that parses repository code, or sends it to a model, in
+# without review (LLM03).
+requests==2.34.2
+tree-sitter==0.26.0
+tree-sitter-java==0.23.5
+tree-sitter-python==0.25.0
+tree-sitter-typescript==0.23.2
+python-dotenv==1.2.3
 # Triage catalog prefilter (pipeline/rg_prefilter.py): ships a pinned `rg`
 # binary into the interpreter's bin/ (pipeline/rg_runner.find_rg_binary looks
 # there). RG_PATH can point at another build instead.

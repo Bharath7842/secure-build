@@ -322,6 +322,7 @@ def test_call_openai_compat_posts_chat_completion_and_records_usage(openai_llm, 
     usage = llm.init_usage(
         "openai_compat", "qwen2.5-coder-32b",
         provider_options={"openai_compat": {"base_url": "http://10.0.0.5:8000/v1/", "api_key": "sk-test"}},
+        endpoint_policy={"allowed_hosts": ["10.0.0.5"]},  # a private host needs an administrator's approval
     )
     text = llm.call_llm("system", "user", usage=usage, step="unit", json_mode=True)
 

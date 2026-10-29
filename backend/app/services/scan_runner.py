@@ -17,7 +17,7 @@ from sqlalchemy import func, or_
 
 from app import db as db_module
 from app.config import settings
-from app.models import DAST_SETTINGS_SNAPSHOT_KEY, UNVERIFIED_VERDICT, Finding, FindingDecision, Scan
+from app.models import DAST_SETTINGS_SNAPSHOT_KEY, UNVERIFIED_VERDICT, Finding, FindingDecision, Project, Scan
 from app.dast.domain.identities import identity_from_public
 from app.dast.domain.redaction import redact_json, redact_text
 from app.services import (
@@ -29,6 +29,7 @@ from app.services import (
     scan_export,
     scan_log,
     scan_versions,
+    secret_masking,
 )
 from app.services.credential_holder import InMemoryCredentialHolder
 from app.services.dast_findings import DastFindingsWriter
@@ -248,6 +249,10 @@ def _merge_engine_metadata(
         metadata["usage_summary"] = usage_summary
         metadata[scan_versions.VERSIONS_KEY] = scan_versions.with_prompt_hashes(
             metadata.get(scan_versions.VERSIONS_KEY), usage_summary
+        )
+    if discovery:
+        metadata[scan_versions.VERSIONS_KEY] = scan_versions.with_derived_rules(
+            metadata.get(scan_versions.VERSIONS_KEY), metadata.get("discovery")
         )
     scan.metadata_json = metadata
     db.commit()
@@ -579,7 +584,14 @@ def _make_findings_writer(scan_id: str):
                 return
             scan = session.get(Scan, scan_id)
             project_id = scan.project_id if scan is not None else None
-            rows = [build_finding_row(scan_id, f, file_path, project_id) for f in findings]
+            project = session.get(Project, project_id) if project_id else None
+            # Stored code and explanations never carry a secret value (LLM02).
+            # A scan with no project (tests) is masked: the opt-out is a project's.
+            mask_secrets = secret_masking.mask_enabled(project)
+            rows = [
+                build_finding_row(scan_id, f, file_path, project_id, mask_secrets=mask_secrets)
+                for f in findings
+            ]
             with _DB_WRITE_LOCK:
                 session.add_all(rows)
                 session.flush()  # assign finding ids so evidence rows can reference them
@@ -1392,6 +1404,9 @@ def execute_scan(scan_id: str) -> None:
                 )
                 if discovery:
                     metadata["discovery"] = discovery
+                    metadata[scan_versions.VERSIONS_KEY] = scan_versions.with_derived_rules(
+                        metadata.get(scan_versions.VERSIONS_KEY), discovery
+                    )
                 if usage_summary:
                     metadata["usage_summary"] = usage_summary
                     total = int(usage_summary.get("total_tokens") or 0)

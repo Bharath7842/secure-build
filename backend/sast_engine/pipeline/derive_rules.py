@@ -17,6 +17,7 @@ Catalog rules always win on id or normalized-pattern collision.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -24,7 +25,7 @@ from llm_client import call_llm, parse_llm_json_array
 
 from pipeline.call_graph_common import GraphAdapter
 from pipeline.owasp_map import owasp_for_rule
-from pipeline.regex_scan import RegexRule
+from pipeline.regex_scan import RegexRule, clean_text, normalize_cwe
 
 DEFAULT_MAX_DERIVED = 50
 MAX_PATTERN_CHARS = 200
@@ -113,6 +114,150 @@ def _norm_pattern(pattern: str) -> str:
     return re.sub(r"\s+", "", s)
 
 
+try:  # Python 3.11+; the structural ReDoS check needs the parse tree
+    import re._constants as _sre_const
+    import re._parser as _sre_parse
+except ImportError:  # pragma: no cover — older interpreters
+    _sre_const = _sre_parse = None  # type: ignore[assignment]
+
+# A pattern is a few characters of identifier, not a program. The check below
+# works on the parse tree, not on the text, because a model asked for a
+# "word-bounded API name" can still return `(\w+\s?)+$` or `(a|aa)+$` — which
+# pass any list of banned substrings and take exponential time on a long line.
+_PROBE_ALPHABET = frozenset(chr(i) for i in range(32, 127)) | {"\t", "\n"}
+_WILDCARD_MIN_CHARS = 80  # a repeated class this wide (`.`, `[^)]`, `\S`) is a wildcard
+_LARGE_REPEAT = 20
+
+
+def _category_chars(category: Any) -> frozenset:
+    name = str(category).replace("UNI_", "")
+    positive = {
+        "CATEGORY_DIGIT": str.isdigit,
+        "CATEGORY_SPACE": str.isspace,
+        "CATEGORY_WORD": lambda c: c.isalnum() or c == "_",
+    }
+    if name in positive:
+        return frozenset(c for c in _PROBE_ALPHABET if positive[name](c))
+    base = name.replace("NOT_", "")
+    if name != base and base in positive:
+        return _PROBE_ALPHABET - frozenset(c for c in _PROBE_ALPHABET if positive[base](c))
+    return _PROBE_ALPHABET
+
+
+def _item_chars(op: Any, av: Any) -> Optional[frozenset]:
+    """The characters a single-character parse item can match (None: not one)."""
+    c = _sre_const
+    if op == c.LITERAL:
+        return frozenset({chr(av)})
+    if op == c.NOT_LITERAL:
+        return _PROBE_ALPHABET - {chr(av)}
+    if op == c.ANY:
+        return _PROBE_ALPHABET - {"\n"}
+    if op == c.CATEGORY:
+        return _category_chars(av)
+    if op == c.IN:
+        chars: Set[str] = set()
+        negate = False
+        for inner_op, inner_av in av:
+            if inner_op == c.NEGATE:
+                negate = True
+            elif inner_op == c.LITERAL:
+                chars.add(chr(inner_av))
+            elif inner_op == c.RANGE:
+                chars |= {ch for ch in _PROBE_ALPHABET if inner_av[0] <= ord(ch) <= inner_av[1]}
+            elif inner_op == c.CATEGORY:
+                chars |= _category_chars(inner_av)
+        return (_PROBE_ALPHABET - chars) if negate else frozenset(chars & _PROBE_ALPHABET)
+    return None
+
+
+def _repeat_parts(op: Any, av: Any) -> Optional[Tuple[int, int, Any]]:
+    c = _sre_const
+    repeats = (c.MAX_REPEAT, c.MIN_REPEAT, getattr(c, "POSSESSIVE_REPEAT", c.MAX_REPEAT))
+    return (av[0], av[1], av[2]) if op in repeats else None
+
+
+def _children(op: Any, av: Any) -> List[Any]:
+    """The sub-patterns (lists of parse items) directly under one parse item."""
+    c = _sre_const
+    if op == c.BRANCH:
+        return list(av[1])
+    if op == c.SUBPATTERN:
+        return [av[-1]]
+    if op in (c.ASSERT, c.ASSERT_NOT):
+        return [av[1]]
+    if op == getattr(c, "ATOMIC_GROUP", None):
+        return [av]
+    return []
+
+
+def _has_repeat_or_branch(items: Any) -> bool:
+    c = _sre_const
+    for op, av in items:
+        parts = _repeat_parts(op, av)
+        if parts and parts[1] > 1:
+            return True
+        if op == c.BRANCH and len(av[1]) > 1:
+            return True
+        if any(_has_repeat_or_branch(child) for child in _children(op, av)):
+            return True
+        if parts and _has_repeat_or_branch(parts[2]):
+            return True
+    return False
+
+
+def _redos_walk(items: Any, wildcards: List[int]) -> Optional[str]:
+    c = _sre_const
+    previous: Optional[frozenset] = None  # chars of the last unbounded repeat with nothing consumed since
+    for op, av in items:
+        parts = _repeat_parts(op, av)
+        if parts is not None:
+            lo, hi, sub = parts
+            if hi > 1 and _has_repeat_or_branch(sub):
+                return "nested_quantifier"
+            inner = _redos_walk(sub, wildcards)
+            if inner:
+                return inner
+            if hi == c.MAXREPEAT or hi > _LARGE_REPEAT:
+                chars = _item_chars(*sub[0]) if len(sub) == 1 else None
+                chars = chars if chars is not None else _PROBE_ALPHABET
+                if previous is not None and previous & chars:
+                    return "adjacent_overlapping_repeats"
+                if len(chars) >= _WILDCARD_MIN_CHARS:
+                    wildcards[0] += 1
+                    if wildcards[0] > 1:
+                        return "multiple_wildcards"
+                previous = chars
+            elif lo > 0:
+                previous = None  # a mandatory piece sits between repeats
+            continue
+        if op in (c.GROUPREF, getattr(c, "GROUPREF_EXISTS", None)):
+            return "backreference"
+        if op == c.AT:
+            continue  # zero-width
+        children = _children(op, av)
+        for child in children:
+            inner = _redos_walk(child, wildcards)
+            if inner:
+                return inner
+        previous = None
+    return None
+
+
+def redos_reason(pattern: str) -> Optional[str]:
+    """Why `pattern` could take super-linear time, or None. Conservative on purpose:
+    a derived pattern is one API name with a word boundary, so rejecting a nested
+    quantifier, an alternation inside a repeat, two adjacent overlapping unbounded
+    repeats, two wildcards, or a backreference costs nothing real."""
+    if _sre_parse is None:
+        return "no_parser" if re.search(r"[)\]}][*+{]", pattern) else None
+    try:
+        tree = _sre_parse.parse(pattern)
+    except (re.error, RecursionError, OverflowError):
+        return None  # not a valid pattern: compile_error reports it
+    return _redos_walk(tree.data if hasattr(tree, "data") else tree, [0])
+
+
 def pattern_is_unsafe(pattern: str) -> Optional[str]:
     """Return a reason string if `pattern` must not be compiled for scanning."""
     if not pattern or not str(pattern).strip():
@@ -124,6 +269,12 @@ def pattern_is_unsafe(pattern: str) -> Optional[str]:
     if _NESTED_QUANTIFIERS.search(pattern):
         return "redos"
     if re.search(r"\([^()]*[+*]\)[+*]", pattern):
+        return "redos"
+    # A whole-file ([\s\S]) pattern runs over the entire file instead of one
+    # line, and the prompt asks for single-call patterns only.
+    if "[\\s\\S]" in pattern or "[\\S\\s]" in pattern:
+        return "multiline"
+    if redos_reason(pattern):
         return "redos"
     if not re.search(r"[A-Za-z_]", pattern):
         return "no_identifier"
@@ -269,10 +420,15 @@ def compile_derived_rule(
         if dropped is not None:
             dropped.append("duplicate_pattern")
         return None
+    invalid = _validate_entry(entry)
+    if invalid:
+        if dropped is not None:
+            dropped.append(invalid)
+        return None
     entry["derived"] = True
     try:
         rule = RegexRule(entry)
-    except (re.error, KeyError, TypeError):
+    except (re.error, KeyError, TypeError, AttributeError, ValueError):
         if dropped is not None:
             dropped.append("compile_error")
         return None
@@ -304,14 +460,19 @@ def compile_derived_rules(
             if dropped is not None:
                 dropped.append("over_cap")
             continue
-        rule = compile_derived_rule(
-            raw,
-            catalog_ids=catalog_ids,
-            catalog_patterns=catalog_patterns,
-            seen_ids=seen_ids,
-            seen_patterns=seen_patterns,
-            dropped=dropped,
-        )
+        try:
+            rule = compile_derived_rule(
+                raw,
+                catalog_ids=catalog_ids,
+                catalog_patterns=catalog_patterns,
+                seen_ids=seen_ids,
+                seen_patterns=seen_patterns,
+                dropped=dropped,
+            )
+        except Exception:  # noqa: BLE001 — one malformed candidate must not abort the rest
+            rule = None
+            if dropped is not None:
+                dropped.append("compile_error")
         if rule is not None:
             out.append(rule)
     return out
@@ -325,14 +486,72 @@ def _coerce_rule_items(items: Iterable[Any]) -> List[Dict[str, Any]]:
     return out
 
 
+# The only fields a model may set on a rule it proposes (LLM04). Everything else a
+# RegexRule understands changes what a rule *does* — `scan_comments` un-masks
+# comments, `group_by_rule`/`issue_class`/`category` change how hits are grouped
+# and reported, `wrapper_*`/`tainted_params` make a rule a call-identity rule,
+# `requires_dependency` can switch it off, `examples` is documentation — and is
+# set only by this module's own (Pass A) code.
+PASS_B_ALLOWED_FIELDS = (
+    "id", "title", "description", "cwe", "severity", "owasp", "languages", "frameworks", "pattern",
+)
+
+
 def _ensure_runtime_llm_id(raw: Dict[str, Any], index: int) -> Dict[str, Any]:
-    entry = dict(raw)
+    entry = {key: raw[key] for key in PASS_B_ALLOWED_FIELDS if key in raw}
     rid = str(entry.get("id") or "").strip()
     if not rid.startswith("runtime-llm-"):
         suffix = _sanitize_id_fragment(rid) if rid else str(index)
         entry["id"] = f"runtime-llm-{suffix}"
     entry["derived"] = True
     return entry
+
+
+_RULE_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")  # Finding.rule_id is String(80)
+_CWE_RE = re.compile(r"^CWE-\d{1,5}$")
+_SEVERITIES = frozenset({"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"})
+_LABEL_RE = re.compile(r"^[A-Za-z0-9_.+\- ]{1,40}$")
+MAX_TITLE_CHARS = 200
+MAX_DESCRIPTION_CHARS = 500
+MAX_LABELS = 10
+
+
+def _validate_entry(entry: Dict[str, Any]) -> Optional[str]:
+    """Normalise the descriptive fields of a derived rule in place; the reason
+    it must be rejected, or None."""
+    if not _RULE_ID_RE.match(str(entry.get("id") or "")):
+        return "invalid_id"
+    severity = str(entry.get("severity") or "MEDIUM").strip().upper()
+    if severity not in _SEVERITIES:
+        return "invalid_severity"
+    cwe = normalize_cwe(entry.get("cwe"))
+    if not _CWE_RE.match(cwe):
+        return "invalid_cwe"
+    for key in ("languages", "frameworks"):
+        labels = entry.get(key) or []
+        if not isinstance(labels, (list, tuple)) or len(labels) > MAX_LABELS or not all(
+            isinstance(label, str) and _LABEL_RE.match(label) for label in labels
+        ):
+            return "invalid_field"
+        entry[key] = list(labels)
+    entry["severity"], entry["cwe"] = severity, cwe
+    entry["title"] = clean_text(entry.get("title") or entry["id"], MAX_TITLE_CHARS)
+    entry["description"] = clean_text(entry.get("description"), MAX_DESCRIPTION_CHARS)
+    entry["owasp"] = clean_text(entry.get("owasp"), 80)
+    return None
+
+
+def derived_rules_sha256(rules: Iterable[RegexRule]) -> str:
+    """Hash of the derived rule set (what each rule matches and says), in id
+    order — recorded with the scan so a different derived set is visible."""
+    canonical = json.dumps(
+        [
+            [r.id, r.pattern, r.cwe, r.severity, r.title, r.description, list(r.languages), list(r.frameworks)]
+            for r in sorted(rules, key=lambda rule: rule.id)
+        ],
+        ensure_ascii=False, separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 # One derived rule costs about 170 output tokens (id, title, description, cwe,

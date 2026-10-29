@@ -31,7 +31,7 @@ from app.schemas import (
     ScanStatusOut,
     ScanTriggerOut,
 )
-from app.services import dast_narration, git_token, git_workspace, scan_log, scan_runner
+from app.services import dast_narration, git_token, git_workspace, llm_policy, scan_log, scan_runner
 from app.services import dast_settings
 from app.services.dast_authz import build_authz_matrix
 from app.services.dast_diff import build_diff
@@ -314,6 +314,16 @@ def trigger_scan(
             if fallback_llm_provider == "ollama" and not fallback_llm_model:
                 fallback_llm_model = DEFAULT_FALLBACK_OLLAMA_MODEL
         llm_base_url = getattr(project, "llm_base_url", None) or None
+        # A per-scan override must not reach an endpoint or model the project could
+        # not be configured with (LLM03).
+        try:
+            llm_policy.check_config(
+                provider=llm_provider, model=llm_model, base_url=llm_base_url,
+                fallback_provider=fallback_llm_provider, fallback_model=fallback_llm_model,
+                policy=llm_policy.load_policy(db),
+            )
+        except llm_policy.LlmPolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         # The fallback only matters once the cutoff is hit, so a missing model
         # would otherwise surface mid-scan. Skipped for the offline mock engine.
         if (
@@ -858,7 +868,7 @@ def triage_finding(
             db, finding, status=body.status, assignee=body.assignee, note=body.note, actor=principal.label
         )
     except TriageError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return FindingOut.model_validate(updated)
 
 

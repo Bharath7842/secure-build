@@ -157,8 +157,8 @@ SCAN_LIMITATIONS: tuple[ScanLimitation, ...] = (
         enabled_by_default=True,
         category="analysis-check",
         title="Runtime-Derived Regex From Call-Graph Wrappers",
-        description="After Java flow verification, derive extra regex rules from project methods that wrap a typed sink (Pass A, no LLM) and optionally one LLM pass for stack-specific source/sink APIs (Pass B). Merged onto the static catalog — catalog wins on matching id or pattern. Capped by the project's max derived regex rules (default 20). Off skips derive and uses the static catalog only.",
-        affected_scope="Triage regex scan of MEDIUM/LOW (and overflow CRITICAL/HIGH) files; deep-scan prompt catalog",
+        description="After Java flow verification, derive extra regex rules from project methods that wrap a typed sink (Pass A, no LLM) and optionally one LLM pass for stack-specific source/sink APIs (Pass B). Merged onto the static catalog — catalog wins on matching id or pattern. Capped by the project's max derived regex rules (default 50). Off skips derive and uses the static catalog only. A rule the model proposes is untrusted: only a fixed set of fields is kept, each is validated and flattened to plain text, and its pattern must pass a structural check (no nested or overlapping repeats, no alternation inside a repeat, no backreferences, no whole-file patterns) or it is dropped and counted in the discovery summary. Derived rules are never part of the model's system prompt: they reach it as a short, labelled data block in each request, and the set used by a scan is hashed into the scan's versions.",
+        affected_scope="Triage regex scan of MEDIUM/LOW (and overflow CRITICAL/HIGH) files; a labelled data block in the deep-scan request (not the system prompt)",
         source="pipeline/derive_rules.py, sast_scan_agent.py node_derive_runtime_rules",
     ),
     ScanLimitation(
@@ -187,6 +187,15 @@ SCAN_LIMITATIONS: tuple[ScanLimitation, ...] = (
         description="A deep-scan finding the model marked false_positive with confidence <= 0.2 (confidence = how sure the model is this is exploitable) is dropped before being written — a near-zero exploit-likelihood dismissal adds no review value. Applies across every rule, not just the noisy-catalog-rule allowlist. Findings with higher confidence, or marked true_positive, are never affected regardless of this setting.",
         affected_scope="Deep LLM file scan findings (kind=llm) with verdict=false_positive and confidence <= 0.2",
         source="llm_file_scan.py should_publish_finding(suppress_low_confidence_false_positives=...), FALSE_POSITIVE_SUPPRESS_CONFIDENCE_CEILING",
+    ),
+    ScanLimitation(
+        id="secret-masking",
+        enabled_by_default=True,
+        category="security-pattern",
+        title="Secret Values Are Masked Before Code Reaches the AI",
+        description="Credential values in code are replaced by a placeholder (the variable name, quotes and line numbers stay) before any prompt is sent to a model, and again before findings are stored: known key shapes (cloud/VCS/payment tokens, JWTs, bearer tokens, private-key blocks, passwords in connection URLs), quoted literals assigned to credential-named variables, and unquoted key=value configuration lines. The model still sees that a hardcoded literal exists and can report it; it never receives the value. Turning this off sends and stores raw secret values. A password that is a plain dictionary word in an unquoted config line (password=changeme) is not detected.",
+        affected_scope="Every LLM prompt, stored finding snippets/matched text/reasoning, and the scan log",
+        source="sast_engine/secret_mask.py; llm_client.call_llm; app/services/finding_rows.py",
     ),
     ScanLimitation(
         id="vendored-minified-files-skipped",
@@ -315,6 +324,11 @@ SCAN_LIMITATIONS: tuple[ScanLimitation, ...] = (
         source="sast_engine/pipeline/sbom_scan.py llm_enrich_components",
     ),
 )
+
+
+def limitation_defaults() -> dict[str, bool]:
+    """Each limitation's default state, by id."""
+    return {lim.id: lim.enabled_by_default for lim in SCAN_LIMITATIONS}
 
 
 def limitations_as_dicts() -> list[dict[str, str | bool | None]]:

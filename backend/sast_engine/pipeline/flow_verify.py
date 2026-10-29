@@ -25,7 +25,7 @@ from llm_client import (
     stage_has_budget,
 )
 
-from pipeline import explanation_check, reachability
+from pipeline import explanation_check, prompt_injection, reachability
 from pipeline.finding_facts import prepare_findings
 from pipeline.call_graph import Flow, FLOW_VERIFY_CAP, flow_to_dict
 from pipeline.llm_file_scan import (
@@ -68,6 +68,7 @@ _FLOW_SYSTEM = (
     "give a verdict_reason.\n"
     "- When several flows are shown, every finding must carry the flow_id it "
     "belongs to; shared hops are listed once and referenced by id.\n\n"
+    + prompt_injection.UNTRUSTED_CONTENT_NOTICE + "\n\n"
     "Respond with the JSON object described under Output format only. No prose, "
     "no markdown fences."
 )

@@ -166,7 +166,7 @@ def test_deep_scan_budget_exhaustion_leaves_regex_hits_unresolved(
     assert hit["file_path"] == "a.py"
 
 
-def test_a_failed_deep_scan_call_that_is_not_the_budget_writes_nothing_extra(
+def test_a_failed_deep_scan_call_that_is_not_the_budget_is_recorded_as_llm_call_failed(
     tmp_path, llm_file_scan, rules
 ):
     (tmp_path / "a.py").write_text("password = 'hunter2'\n", encoding="utf-8")
@@ -178,9 +178,12 @@ def test_a_failed_deep_scan_call_that_is_not_the_budget_writes_nothing_extra(
         repo_root=tmp_path, rel_path="a.py", rules=rules,
         call_llm_fn=broken, chunk_workers=1,
     )
-    assert result["findings"] == []
-    assert result["unverified_count"] == 0
+    # The chunk got no review, so its regex hits are kept as undecided work
+    # (never a clean file) with the reason that says why.
     assert result["chunk_errors"]
+    assert result["failed_chunks"] == 1
+    assert result["unverified_count"] == len(result["findings"]) >= 1
+    assert {f["unresolved_reason"] for f in result["findings"]} == {"llm_call_failed"}
 
 
 # --- triage and group confirm -----------------------------------------------

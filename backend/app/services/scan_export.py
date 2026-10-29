@@ -65,6 +65,7 @@ from app.models import ISSUE_CLASSES, UNVERIFIED_VERDICT, Finding, Project, Scan
 from app.services.gates import build_gate_summary
 from app.services.git_workspace import redact_git_url
 from app.services.module_path import to_module_path
+from app.services import secret_masking
 from app.services.occurrence import semantic_signature
 from app.services.severity import severity_basis_text
 
@@ -665,7 +666,9 @@ def _location_paths_display(finding: Finding, *, max_paths: int = 8) -> str:
 
 
 def _location_code(finding: Finding) -> str:
-    return (finding.snippet or "").strip()
+    # Masked again on the way out: a scan stored before `secret-masking` (or with
+    # it off) still must not put a credential value into a report (LLM02).
+    return secret_masking.mask_text((finding.snippet or "").strip())
 
 
 def _location_block(finding: Finding) -> str:
@@ -1794,7 +1797,7 @@ def _labelled_block(
 
 def _code_box(label: str, snippet: str, *, styles: Any, width: float) -> Table:
     wrap_at = _code_wrap_chars(width - 6 * mm)
-    lines = (snippet or "").replace("\t", "  ").splitlines() or [""]
+    lines = secret_masking.mask_text(snippet or "").replace("\t", "  ").splitlines() or [""]
     wrapped: list[str] = []
     for line in lines:
         while len(line) > wrap_at:
@@ -1837,7 +1840,7 @@ def _code_box(label: str, snippet: str, *, styles: Any, width: float) -> Table:
 def _code_boxes(label: str, snippet: str, *, styles: Any, width: float) -> list[Any]:
     """Split long code into page-safe chunks. Chunk labels carry (n/total) so a
     split reads as continuation rather than as separate evidence."""
-    capped = _truncate_text(snippet or "", _PDF_CODE_MAX)
+    capped = _truncate_text(secret_masking.mask_text(snippet or ""), _PDF_CODE_MAX)
     lines = capped.replace("\t", "  ").splitlines() or [""]
     if len(lines) <= _PDF_CODE_LINES_PER_CHUNK:
         return [_code_box(label, "\n".join(lines), styles=styles, width=width)]

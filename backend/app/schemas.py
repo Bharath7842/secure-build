@@ -348,6 +348,17 @@ class ScanCreate(BaseModel):
     fallback_llm_provider: str | None = None  # after Bedrock cutoff (ignored if primary is ollama)
     fallback_llm_model: str | None = None
 
+    # An unknown provider used to fail only once the scan was running.
+    @field_validator("llm_provider")
+    @classmethod
+    def _known_llm_provider(cls, value):
+        return _check_choice("llm_provider", value, SAST_LLM_PROVIDERS)
+
+    @field_validator("fallback_llm_provider")
+    @classmethod
+    def _known_fallback_provider(cls, value):
+        return _check_choice("fallback_llm_provider", value, SAST_FALLBACK_PROVIDERS)
+
 
 class ScanTriggerOut(BaseModel):
     scan_id: str

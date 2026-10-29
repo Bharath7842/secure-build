@@ -15,9 +15,26 @@ from app.defaults.scan_limitations import SCAN_LIMITATIONS
 from app.models import FileSnapshot, Finding, FindingReview, FindingReviewEvent, LlmResultCache, Project, Scan
 from app.routers.git_auth import consume_pending_connection
 from app.schemas import ProjectCreate, ProjectDeleteOut, ProjectOut, ProjectUpdate
-from app.services import scan_log
+from app.services import llm_policy, scan_log
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+_LLM_FIELDS = ("llm_provider", "llm_model", "llm_base_url", "fallback_llm_provider", "fallback_llm_model")
+
+
+def _enforce_llm_policy(db: Session, values: dict) -> None:
+    """422 when the project's LLM endpoint or model is not allowed (LLM03)."""
+    try:
+        llm_policy.check_config(
+            provider=values.get("llm_provider"),
+            model=values.get("llm_model"),
+            base_url=values.get("llm_base_url"),
+            fallback_provider=values.get("fallback_llm_provider"),
+            fallback_model=values.get("fallback_llm_model"),
+            policy=llm_policy.load_policy(db),
+        )
+    except llm_policy.LlmPolicyError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _get_project_or_404(db: Session, project_id: str, principal: Principal) -> Project:
@@ -63,6 +80,7 @@ def create_project(
     data = payload.model_dump()
     data["scan_mode"] = "full"
     data["llm_api_key"] = _plain_secret(data.get("llm_api_key"))
+    _enforce_llm_policy(db, data)
     connection_id = data.pop("git_connection_id", None)
     _apply_reference_sources(data)
     project = Project(**data, created_by_user_id=principal.user_id)
@@ -109,6 +127,10 @@ def update_project(
     project = _get_project_or_404(db, project_id, principal)
     updates = payload.model_dump(exclude_unset=True)
     updates["scan_mode"] = "full"
+    if any(field in updates for field in _LLM_FIELDS):
+        # Only when an LLM field changes: an unrelated edit of a project saved
+        # under an older policy is not blocked by it.
+        _enforce_llm_policy(db, {f: updates.get(f, getattr(project, f, None)) for f in _LLM_FIELDS})
     if "llm_api_key" in updates:
         # Omitted keeps the stored key; "" (or null) clears it.
         updates["llm_api_key"] = _plain_secret(updates["llm_api_key"])

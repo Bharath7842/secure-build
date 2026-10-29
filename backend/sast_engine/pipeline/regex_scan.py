@@ -150,6 +150,15 @@ def build_dependency_index(
     return index
 
 
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f  ]+")
+
+
+def clean_text(value: Any, limit: int) -> str:
+    """One line of plain text: control characters and line breaks become spaces,
+    runs of whitespace collapse, and the result is cut at `limit` characters."""
+    return " ".join(_CONTROL_CHARS.sub(" ", str(value or "")).split())[:limit]
+
+
 def normalize_cwe(value: Any) -> str:
     """A rule's CWE as a 'CWE-<n>' string. LLM-derived rules often give the
     bare number (`"cwe": 89`), which every consumer that `.upper()`s or
@@ -421,6 +430,13 @@ def _read_text(repo_root: Path, rel_path: str) -> Optional[str]:
         return None
 
 
+# A file longer than this is not regex-scanned (LLM04/LLM10). Python's `re` cannot
+# be interrupted, so the size of the text a pattern can be run over is the bound on
+# what one bad pattern can cost; real source files are far smaller, and this only
+# catches generated, data and minified files. It is logged, never silent.
+MAX_REGEX_SCAN_CHARS = 5_000_000
+
+
 def scan_text_by_rule(
     text: str,
     rule: "RegexRule",
@@ -488,6 +504,11 @@ def scan_one_file(
     t0 = time.perf_counter()
     text = _read_text(repo_root, rel_path)
     read_error = text is None
+    skipped_oversize = text is not None and len(text) > MAX_REGEX_SCAN_CHARS
+    if skipped_oversize:
+        print(f"  [regex] {rel_path} is {len(text):,} characters, over the "
+              f"{MAX_REGEX_SCAN_CHARS:,} limit: not regex-scanned", flush=True)
+        text = None
     applicable_rules = [
         r for r in rules if r.applies_to(file_lang, active_frameworks, dependency_index)
     ]
@@ -516,6 +537,7 @@ def scan_one_file(
         "clean_rule_count": clean_rule_count,
         "applicable_rule_count": len(applicable_rules),
         "read_error": read_error,
+        **({"skipped_oversize": True} if skipped_oversize else {}),
     }
 
 
@@ -751,9 +773,14 @@ def rules_for_prompt(
     highest severity.
     """
     priority = priority_rule_ids or set()
+    # Rules derived from the scanned repository never enter this list: it is
+    # rendered into the *system* prompt, which a repository must not be able to
+    # write to (LLM04). They reach the model as a fenced data block in the user
+    # turn instead — see `derived_rules_for_prompt`.
     applicable = [
         r for r in rules
-        if r.applies_to(file_lang, active_frameworks, dependency_index)
+        if not r.derived
+        and r.applies_to(file_lang, active_frameworks, dependency_index)
         and r.id not in _SQL_CONCAT_CATALOG_IDS
     ]
     applicable.sort(
@@ -772,4 +799,40 @@ def rules_for_prompt(
             "issue_class": r.issue_class,
         }
         for r in applicable
+    ]
+
+
+# How many derived rules one prompt lists, and how long each entry may be. They
+# ride in the user turn (not the cacheable system prompt) on every call, so the
+# list is kept short.
+DERIVED_PROMPT_MAX_RULES = 15
+
+
+def derived_rules_for_prompt(
+    rules: List[RegexRule],
+    file_lang: Optional[str],
+    active_frameworks: Optional[Set[str]] = None,
+    *,
+    dependency_index: Optional[Dict[str, List[Optional[str]]]] = None,
+    max_rules: int = DERIVED_PROMPT_MAX_RULES,
+) -> List[Dict[str, Any]]:
+    """The rules this scan derived from the repository that apply to a file, as
+    one-line plain-text entries for the user turn: most severe first, then by id,
+    so the list is identical across reruns. Every text field is flattened to one
+    line and capped — a derived rule is data about the project, never wording the
+    model should treat as an instruction."""
+    applicable = [
+        r for r in rules
+        if r.derived and r.applies_to(file_lang, active_frameworks, dependency_index)
+    ]
+    applicable.sort(key=lambda r: (_SEVERITY_ORDER.get(r.severity, 9), r.id))
+    return [
+        {
+            "id": clean_text(r.id, 80),
+            "title": clean_text(r.title, 100),
+            "description": clean_text(r.description, 200),
+            "cwe": clean_text(r.cwe, 20),
+            "severity": clean_text(r.severity, 10),
+        }
+        for r in applicable[:max(0, max_rules)]
     ]

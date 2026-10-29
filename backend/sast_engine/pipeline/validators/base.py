@@ -37,6 +37,7 @@ occurrence (its parse, its binding, its constant value). Accuracy review gate 2
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple
@@ -125,6 +126,20 @@ class ValidatorContext:
     _logging: Any = field(default=None, repr=False, compare=False)
     _exceptions: Any = field(default=None, repr=False, compare=False)
     _translation: Any = field(default=None, repr=False, compare=False)
+    _security: Any = field(default=None, repr=False, compare=False)
+    # Deep-scan workers ask for the summary at once; the repository is walked once.
+    _security_lock: Any = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def security_summary(self, exclude_paths: Any = ()) -> str:
+        """The repository's global security configuration (Spring Security
+        rules, web.xml constraints, route guards), read on first use, without
+        the entries of `exclude_paths` — for a web entry point's deep scan."""
+        from .. import neighborhood
+
+        with self._security_lock:
+            if self._security is None:
+                self._security = neighborhood.security_entries(self.repo_root)
+        return neighborhood.render_security_summary(self._security, exclude_paths=exclude_paths)
 
     def custom_translation_pipeline(self) -> Any:
         """Files declaring a custom translation compiler / handler / parser (SAST-03-080)."""

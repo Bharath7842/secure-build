@@ -29,6 +29,7 @@ from typing import Callable
 from app.config import settings
 from app.defaults.scan_limitations import SCAN_LIMITATIONS
 from app.models import Project, Scan
+from app.services import llm_policy
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,8 @@ def _load_agent_module():
 
 def llm_usage_options(project: Project, scan: Scan | None = None) -> dict:
     """Keyword arguments for the engine's init_usage carrying this scan's
-    openai_compat endpoint/key and its claude_cli session. The key comes from
+    openai_compat endpoint/key, its claude_cli session and whether prompts get
+    their secret values masked (`secret-masking`). The key comes from
     the project (never snapshotted); the base URL prefers the scan's
     snapshot so a re-run matches what the scan originally used."""
     base_url = (
@@ -121,7 +123,27 @@ def llm_usage_options(project: Project, scan: Scan | None = None) -> dict:
     if getattr(scan, "id", None):
         options["claude_cli"] = claude_cli_session(scan)
         options["openai_cli"] = openai_cli_session(scan)
-    return {"provider_options": options}
+    limitations_config = getattr(project, "limitations_config", None) or {}
+    # Last line of defence for LLM03: a scan row or project saved before the
+    # endpoint/model policy existed (or under a looser one) is checked again here.
+    policy = llm_policy.load_policy()
+    provider = getattr(scan, "llm_provider", None) if scan is not None else getattr(project, "llm_provider", None)
+    if provider:  # a scan that does not use an LLM has no provider
+        llm_policy.check_config(
+            provider=provider,
+            model=getattr(scan, "llm_model", None) if scan is not None else getattr(project, "llm_model", None),
+            base_url=base_url,
+            fallback_provider=getattr(scan, "fallback_llm_provider", None) if scan is not None
+            else getattr(project, "fallback_llm_provider", None),
+            fallback_model=getattr(scan, "fallback_llm_model", None) if scan is not None
+            else getattr(project, "fallback_llm_model", None),
+            policy=policy,
+        )
+    return {
+        "provider_options": options,
+        "mask_secrets": bool(limitations_config.get("secret-masking", _LIMITATION_DEFAULTS["secret-masking"])),
+        "endpoint_policy": llm_policy.engine_policy(policy),
+    }
 
 
 def claude_cli_session(scan: Scan) -> dict:

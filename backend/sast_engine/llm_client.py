@@ -21,6 +21,9 @@ import boto3
 import requests
 from botocore.config import Config as BotoConfig
 
+import endpoint_policy
+import secret_mask
+
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 BEDROCK_MODEL_ID = os.environ.get(
     "BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"
@@ -30,12 +33,24 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "granite-code:3b-instruct")
 OLLAMA_REQUEST_TIMEOUT = int(os.environ.get("OLLAMA_REQUEST_TIMEOUT", "600"))
 OLLAMA_NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "8192"))
+# Ollama models whose names start with one of these run with reasoning off
+# (`think: false`): they would otherwise spend the output budget thinking.
+OLLAMA_NO_THINK_PREFIXES = tuple(
+    p.strip().lower()
+    for p in os.environ.get("OLLAMA_NO_THINK_PREFIXES", "qwen3").split(",")
+    if p.strip()
+)
 
 BEDROCK_INPUT_PRICE_PER_MTOK = float(os.environ.get("BEDROCK_INPUT_PRICE_PER_MTOK", "1.00"))
 BEDROCK_OUTPUT_PRICE_PER_MTOK = float(os.environ.get("BEDROCK_OUTPUT_PRICE_PER_MTOK", "5.00"))
 # Claude Sonnet is priced above the Haiku defaults above.
 BEDROCK_SONNET_INPUT_PRICE_PER_MTOK = float(os.environ.get("BEDROCK_SONNET_INPUT_PRICE_PER_MTOK", "3.00"))
 BEDROCK_SONNET_OUTPUT_PRICE_PER_MTOK = float(os.environ.get("BEDROCK_SONNET_OUTPUT_PRICE_PER_MTOK", "15.00"))
+# Opus is priced above Sonnet. A model id that names Opus used to fall through to
+# the Haiku rates, so the spend cutoff would have under-counted it five-fold or
+# more (LLM03/LLM10): these are the safe-side defaults.
+BEDROCK_OPUS_INPUT_PRICE_PER_MTOK = float(os.environ.get("BEDROCK_OPUS_INPUT_PRICE_PER_MTOK", "15.00"))
+BEDROCK_OPUS_OUTPUT_PRICE_PER_MTOK = float(os.environ.get("BEDROCK_OPUS_OUTPUT_PRICE_PER_MTOK", "75.00"))
 
 _USAGE_LOCK = threading.Lock()
 OLLAMA_INPUT_PRICE_PER_MTOK = float(os.environ.get("OLLAMA_INPUT_PRICE_PER_MTOK", "0.00"))
@@ -104,6 +119,15 @@ DEFAULT_FALLBACK_LLM_MODEL = os.environ.get("FALLBACK_LLM_MODEL", "")
 # Per-scan provider settings (base_url / api_key per provider, data policy).
 # Underscore-prefixed like the result cache: never part of usage_cost_summary.
 PROVIDER_OPTIONS_USAGE_KEY = "_provider_options"
+
+# Secret values are replaced by a placeholder in every prompt before it is cached
+# or sent (LLM02, secret_mask.py). On unless the scan's usage dict says otherwise
+# (the `secret-masking` project limitation); without a usage dict it is always on.
+MASK_SECRETS_USAGE_KEY = "mask_secrets"
+
+# Where prompts may be sent (LLM03, endpoint_policy.py): {"allowed_hosts": [...],
+# "allow_loopback": bool}. Absent = the default policy (public https or loopback).
+ENDPOINT_POLICY_USAGE_KEY = "_endpoint_policy"
 
 
 # --- concurrency: one process-wide cap on in-flight provider calls ----------
@@ -326,6 +350,8 @@ def _price_per_mtok(provider: str, model: Optional[str] = None) -> Tuple[float, 
         return OPENAI_COMPAT_INPUT_PRICE_PER_MTOK, OPENAI_COMPAT_OUTPUT_PRICE_PER_MTOK
     if name == PROVIDER_OPENAI_CLI:
         return OPENAI_CLI_INPUT_PRICE_PER_MTOK, OPENAI_CLI_OUTPUT_PRICE_PER_MTOK
+    if "opus" in (model or "").lower():
+        return BEDROCK_OPUS_INPUT_PRICE_PER_MTOK, BEDROCK_OPUS_OUTPUT_PRICE_PER_MTOK
     if "sonnet" in (model or "").lower():
         return BEDROCK_SONNET_INPUT_PRICE_PER_MTOK, BEDROCK_SONNET_OUTPUT_PRICE_PER_MTOK
     return BEDROCK_INPUT_PRICE_PER_MTOK, BEDROCK_OUTPUT_PRICE_PER_MTOK
@@ -369,6 +395,31 @@ def _default_model_for(provider: str) -> str:
     return BEDROCK_MODEL_ID
 
 
+def assert_endpoint_allowed(url: str, usage: Optional[Dict[str, Any]]) -> None:
+    """Refuse to send a prompt to an endpoint the scan's policy does not allow
+    (LLM03). The address is resolved again here, right before the request, so a
+    host that was fine when the project was configured but now points at a
+    private or metadata address is stopped."""
+    policy = (usage or {}).get(ENDPOINT_POLICY_USAGE_KEY) or {}
+    reason = endpoint_policy.check_endpoint(
+        url,
+        allowed_hosts=policy.get("allowed_hosts") or (),
+        allow_loopback=bool(policy.get("allow_loopback", True)),
+    )
+    if reason:
+        bump_counter(usage, "endpoint_policy", "denied")
+        raise _NonRetryableHttpError(f"LLM endpoint refused: {reason}")
+
+
+def _refuse_redirect(resp: "requests.Response", label: str) -> None:
+    """A redirect would resend the prompt to a host nobody approved."""
+    code = getattr(resp, "status_code", None)
+    if isinstance(code, int) and 300 <= code < 400:
+        raise _NonRetryableHttpError(
+            f"{label} endpoint answered HTTP {resp.status_code}: redirects are not followed"
+        )
+
+
 def provider_base_url(usage: Optional[Dict[str, Any]], provider: str) -> str:
     options = ((usage or {}).get(PROVIDER_OPTIONS_USAGE_KEY) or {}).get(provider) or {}
     if options.get("base_url"):
@@ -388,9 +439,13 @@ def init_usage(
     fallback_model: Optional[str] = None,
     cost_cutoff_usd: Optional[float] = None,
     provider_options: Optional[Dict[str, Dict[str, Any]]] = None,
+    mask_secrets: bool = True,
+    endpoint_policy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """`provider_options` maps provider name -> {"base_url", "api_key"} for
-    this scan (falling back to env)."""
+    this scan (falling back to env). `mask_secrets` False turns off the
+    prompt-level secret masking for this scan. `endpoint_policy` carries the
+    server's approved hosts to the HTTP providers."""
     provider = (provider or DEFAULT_LLM_PROVIDER or "bedrock").strip().lower()
     model = model or _default_model_for(provider)
     # Ollama / Claude CLI primary: nothing billed per call, so no cutoff.
@@ -424,7 +479,13 @@ def init_usage(
         "fallback_provider": fb_provider,
         "fallback_model": fb_model,
         "fallback_switched": False,
+        MASK_SECRETS_USAGE_KEY: bool(mask_secrets),
     }
+    if endpoint_policy:
+        usage[ENDPOINT_POLICY_USAGE_KEY] = {
+            "allowed_hosts": list(endpoint_policy.get("allowed_hosts") or []),
+            "allow_loopback": bool(endpoint_policy.get("allow_loopback", True)),
+        }
     if provider_options:
         usage[PROVIDER_OPTIONS_USAGE_KEY] = {
             str(name).strip().lower(): dict(opts or {}) for name, opts in provider_options.items()
@@ -549,6 +610,9 @@ COUNTER_SECTIONS = (
     "explanation_contradictions",
     "group_confirm_coverage",
     "facts_coverage",
+    "prompt_injection",
+    "secret_masking",
+    "endpoint_policy",
 )
 MAX_RECORDS_PER_SECTION = 500
 
@@ -791,6 +855,19 @@ def usage_cost_summary(usage: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _mask_prompts(usage: Optional[Dict[str, Any]], system: str, user: str) -> Tuple[str, str]:
+    """Both prompts with secret values replaced (before the result-cache key is
+    computed, so cached entries and keys never hold one). Counted per call."""
+    if usage is not None and not usage.get(MASK_SECRETS_USAGE_KEY, True):
+        return system, user
+    system, n_system = secret_mask.mask_text(system)
+    user, n_user = secret_mask.mask_text(user)
+    if n_system + n_user:
+        bump_counter(usage, "secret_masking", "values_masked", n_system + n_user)
+        bump_counter(usage, "secret_masking", "calls_with_secrets")
+    return system, user
+
+
 def call_llm(
     system: str,
     user: str,
@@ -809,6 +886,7 @@ def call_llm(
     recorded token counts (zero on a result-cache hit) — the only reliable
     per-call figure when parallel workers share one usage dict."""
     provider, model = _resolve_provider_for_call(usage, provider, model, step)
+    system, user = _mask_prompts(usage, system, user)
     record_system_prompt(usage, step, system)
     if provider not in KNOWN_PROVIDERS:
         # Used to fall through to Bedrock silently — a typo'd provider would
@@ -980,7 +1058,9 @@ def call_llm(
 #   "6": grouped confirmation shows one occurrence per variant of identical
 #        code and applies its decision to the whole variant; one-sentence
 #        reasons, one fix per pattern.
-RESULT_CACHE_VERSION = "6"
+#   "7": every SAST system prompt carries the untrusted-repository-content
+#        notice and code fences are sized to the code (LLM01 guardrails).
+RESULT_CACHE_VERSION = "7"
 # The cache object rides on the shared scan usage dict — the one object every
 # LLM-calling stage already threads through — rather than a new parameter on
 # every call site. It must expose get(key) -> {text, input_tokens,
@@ -1166,15 +1246,16 @@ def _call_ollama(
     }
     if json_mode:
         payload_body["format"] = "json"
+    if model.lower().startswith(OLLAMA_NO_THINK_PREFIXES):
+        payload_body["think"] = False
     last_exc: Optional[Exception] = None
     timeout = int(os.environ.get("OLLAMA_REQUEST_TIMEOUT", str(OLLAMA_REQUEST_TIMEOUT)))
+    url = f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat"
+    assert_endpoint_allowed(url, usage)
     for attempt in range(retries):
         try:
-            resp = requests.post(
-                f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat",
-                json=payload_body,
-                timeout=timeout,
-            )
+            resp = requests.post(url, json=payload_body, timeout=timeout, allow_redirects=False)
+            _refuse_redirect(resp, "ollama")
             resp.raise_for_status()
             payload = resp.json()
             text = (payload.get("message") or {}).get("content", "")
@@ -1239,6 +1320,7 @@ def _call_openai_compat(
     bad model name or key won't fix itself), except a 400 caused by
     `response_format`, which is retried once without it."""
     url = f"{(base_url or OPENAI_COMPAT_BASE_URL).rstrip('/')}/chat/completions"
+    assert_endpoint_allowed(url, usage)
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -1263,7 +1345,10 @@ def _call_openai_compat(
         if use_response_format:
             payload_body["response_format"] = {"type": "json_object"}
         try:
-            resp = requests.post(url, json=payload_body, headers=headers, timeout=timeout)
+            resp = requests.post(
+                url, json=payload_body, headers=headers, timeout=timeout, allow_redirects=False,
+            )
+            _refuse_redirect(resp, "openai_compat")
             if resp.status_code == 400 and use_response_format and "response_format" in (resp.text or ""):
                 with _RESPONSE_FORMAT_LOCK:
                     _RESPONSE_FORMAT_UNSUPPORTED.add(url)
