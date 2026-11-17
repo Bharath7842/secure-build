@@ -25,9 +25,9 @@ export default function ScanForm({ project, scanType = "sast", onSubmit }: ScanF
   const [gitUrl, setGitUrl] = useState("");
   const [repoPath, setRepoPath] = useState("");
   const [branch, setBranch] = useState("");
-  // LLM scanning is always on for SAST scans now — no UI toggle. SCA/SBOM
-  // never use it regardless (see isLlmFree below).
-  const useLlm = true;
+  // SAST scans use the LLM by default; unticking it runs a regex-only scan
+  // (no tokens spent). SCA/SBOM never use it regardless (see isLlmFree below).
+  const [useLlm, setUseLlm] = useState(true);
   const { presets, sastOptions } = useModelCatalog();
   const [llmPreset, setLlmPreset] = useState<LlmPresetId>("bedrock-haiku");
 
@@ -154,6 +154,26 @@ export default function ScanForm({ project, scanType = "sast", onSubmit }: ScanF
           best-effort license/cost classification — no LLM is used for this scan type.
         </div>
       ) : null}
+
+      {!isLlmFree && (
+        <label className="flex items-start gap-2 text-sm text-[var(--ink)]">
+          <input
+            type="checkbox"
+            checked={useLlm}
+            onChange={(event) => setUseLlm(event.target.checked)}
+            className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[var(--accent)] focus:ring-[var(--accent)]/30"
+            aria-describedby="scan-use-llm-hint"
+          />
+          <span>
+            Use an LLM for this scan
+            <span id="scan-use-llm-hint" className="block text-xs text-[var(--muted)]">
+              {useLlm
+                ? "The LLM reviews the riskiest files and confirms regex findings."
+                : "Regex-only: every file goes through the rule catalog and no tokens are spent. Findings stay unverified, and no LLM-only findings or data-flow checks are produced."}
+            </span>
+          </span>
+        </label>
+      )}
 
       {!isLlmFree && useLlm && (
         <>

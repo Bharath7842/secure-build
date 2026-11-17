@@ -1351,6 +1351,49 @@ def test_run_real_scan_threads_llm_endpoint(monkeypatch, project_tree, tmp_path_
     assert usage["fallback_provider"] == "none"
 
 
+def test_no_llm_scan_sends_every_file_to_the_regex_tier(monkeypatch, project_tree, tmp_path_factory):
+    """use_llm=False skips the deep scan, which is not regex-scanned: the
+    bridge must empty it and keep triage regex-only, or the top CRITICAL/HIGH
+    files get no findings at all."""
+    monkeypatch.setenv("SAST_AST_CACHE_DIR", str(tmp_path_factory.mktemp("ast_cache")))
+    monkeypatch.setattr(settings, "sast_framework_path", str(Path(__file__).resolve().parents[1] / "sast_engine"))
+    import sys
+
+    sys.modules.pop("sast_scan_agent", None)
+    from app.models import Project
+    from app.services import agent_bridge
+
+    real_agent = agent_bridge._load_agent_module()
+    captured = []
+    monkeypatch.setattr(real_agent, "invoke_graph", lambda graph, state, **_k: captured.append(state) or {})
+    monkeypatch.setattr(agent_bridge, "_load_agent_module", lambda: real_agent)
+    # The endpoint policy is read from the DB, which this unit test has none of.
+    monkeypatch.setattr(agent_bridge.llm_policy, "load_policy", lambda db=None: {"allowed_hosts": [], "allowed_models": [], "allow_loopback": False})
+
+    class FakeScan:
+        llm_provider = None
+        llm_model = None
+        fallback_llm_provider = None
+        fallback_llm_model = None
+        metadata_json = {"use_llm": False}
+
+    project = Project(
+        name="no-llm", default_git_url="https://example.com/r.git", languages=["Java"],
+        limitations_config={"triage-mode-llm-confirm": True},
+    )
+    agent_bridge.run_real_scan(project=project, workspace=project_tree, changed_paths=None, scan_id=None, scan=FakeScan())
+    state = captured[0]
+    assert state["use_llm"] is False
+    assert state["deep_scan_file_cap"] == 0
+    assert state["triage_mode"] == real_agent.llm_file_scan.TRIAGE_MODE_REGEX_ONLY
+    assert state["confirm_triage_groups"] is False
+
+    captured.clear()
+    FakeScan.metadata_json = {"use_llm": True}
+    agent_bridge.run_real_scan(project=project, workspace=project_tree, changed_paths=None, scan_id=None, scan=FakeScan())
+    assert "deep_scan_file_cap" not in captured[0]
+
+
 def test_tier_banners_name_the_risk_levels_each_tier_holds(agent, capsys):
     """With deep-scan-critical-only, HIGH files are triaged — the banner must
     say so instead of a fixed "MEDIUM/LOW"."""

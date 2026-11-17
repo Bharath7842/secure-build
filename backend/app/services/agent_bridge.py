@@ -307,6 +307,15 @@ def run_real_scan(
     # unchanged file chunk, flow slice or hit set) is answered from the
     # project's cache instead of the provider. `metadata.bypass_llm_cache`
     # on the scan request forces every call live, e.g. to measure a cold run.
+    if not use_llm:
+        # A no-LLM scan skips the deep-scan tier outright, and that tier is not
+        # regex-scanned either, so its files (the top CRITICAL/HIGH ones) would
+        # get no findings at all. Empty it so every file goes through the
+        # regex triage tier, and keep triage regex-only (llm_triage would skip
+        # the tier without an LLM).
+        initial_state["deep_scan_file_cap"] = 0
+        initial_state["triage_mode"] = agent.llm_file_scan.TRIAGE_MODE_REGEX_ONLY
+
     project_id = getattr(project, "id", None)
     if use_llm and result_cache is not None:
         initial_state["usage"][agent.RESULT_CACHE_USAGE_KEY] = result_cache
