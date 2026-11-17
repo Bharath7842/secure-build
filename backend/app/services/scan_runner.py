@@ -621,7 +621,7 @@ def _make_findings_writer(scan_id: str):
 
 
 def _make_reachability_updates_writer(scan_id: str):
-    """Like `_make_verdict_updates_writer`, for Joern paths that
+    """Like `_make_verdict_updates_writer`, for the call-graph evidence
     node_corroborate_flows attaches to already-persisted findings: updates
     `reachability` and `confidence` in place, keyed the same way."""
 
@@ -657,7 +657,7 @@ def _make_reachability_updates_writer(scan_id: str):
                             )
                 session.commit()
             if changed:
-                scan_log.log(scan_id, f"  Attached code property graph dataflow evidence to {changed} finding(s) in {file_path}.")
+                scan_log.log(scan_id, f"  Attached call-graph reachability evidence to {changed} finding(s) in {file_path}.")
         finally:
             session.close()
 

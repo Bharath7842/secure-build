@@ -210,10 +210,11 @@ class Finding(Base):
     ai_fix: Mapped[str | None] = mapped_column(Text, nullable=True)
     kind: Mapped[str | None] = mapped_column(String(40), nullable=True)  # taint|secrets|sca|regex
     flow_path: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    # Joern source->sink path reaching this finding's sink (sast_engine
+    # Source->sink evidence reaching this finding's sink (sast_engine
     # pipeline/reachability.py): {status, sink_kind, source, sink, taint_path,
-    # sanitizers, guards}. Evidence only — never set on a finding Joern found
-    # no path to.
+    # sanitizers, guards}. Current scans attach a call-graph chain
+    # (entry_reachable); older rows may hold a code-property-graph path
+    # (path / sanitized_path). Evidence only — never a reason to drop a finding.
     reachability: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     verdict: Mapped[str | None] = mapped_column(String(40), nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)

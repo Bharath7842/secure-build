@@ -1,8 +1,10 @@
-"""pipeline/reachability.py — Joern paths as evidence for other tiers' findings,
-the corroborate_flows node, grouped-confirmation prompts and the DB writer.
+"""pipeline/reachability.py — call-graph chains as evidence for other tiers'
+findings, the corroborate_flows node, grouped-confirmation prompts and the DB
+writer.
 
-Uses the real flows.sc fixtures from tests/fixtures/joern/ (see test_joern.py
-for the sources they were captured from; line numbers matter)."""
+Expression-level paths (status "path" / "sanitized_path") come only from scans
+made before the code-property-graph stage was removed; the tests below build
+that legacy evidence by hand to keep the code that still reads it covered."""
 
 import json
 import sys
@@ -19,7 +21,6 @@ from app.services.agent_bridge import _load_agent_module  # noqa: E402
 from app.services.scan_runner import _make_findings_writer, _make_reachability_updates_writer  # noqa: E402
 
 _ENGINE_DIR = Path(__file__).resolve().parents[1] / "sast_engine"
-_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "joern"
 
 DAO = "src/main/java/com/x/UserDao.java"
 EXTRA = "src/main/java/com/x/ExtraController.java"
@@ -37,36 +38,35 @@ def rc(agent):
     return sys.modules["pipeline.reachability"]
 
 
-def _fixture(name: str) -> dict:
-    return json.loads((_FIXTURES / name).read_text(encoding="utf-8"))
+def _legacy(status="path", sink_kind="sql", steps=3, sink_file=DAO, sink_line=8, code="@RequestParam String id"):
+    path = [{"file": "src/main/java/com/x/UserController.java", "line": 7, "method": "get", "code": code}] + [
+        {"file": sink_file, "line": sink_line, "method": "m", "code": f"step{i}"} for i in range(steps - 1)
+    ]
+    return {"status": status, "sink_kind": sink_kind, "sink_code": "stmt.executeQuery(sql)",
+            "source": {k: path[0][k] for k in ("file", "line", "code")},
+            "sink": {"file": sink_file, "line": sink_line, "code": "stmt.executeQuery(sql)"},
+            "taint_path": path, "steps_total": steps, "sanitizers": [], "guards": []}
 
 
 def _index(rc):
-    return rc.build_sink_index([_fixture("flows_java_sqli.json"), _fixture("flows_java_extra.json"), None])
+    return {
+        (DAO, 8): [_legacy()],
+        (EXTRA, 32): [_legacy(sink_file=EXTRA, sink_line=32)],
+        (EXTRA, 38): [_legacy("sanitized_path", sink_file=EXTRA, sink_line=38)],
+    }
 
 
-def test_every_taint_spec_kind_maps_to_cwes(rc):
-    spec = json.loads((_ENGINE_DIR / "joern" / "taint_spec.json").read_text(encoding="utf-8"))
-    assert set(spec["kind_order"]) <= set(rc.SINK_KIND_CWES)
-
-
-def test_index_keys_on_sink_line_and_marks_sanitized_paths(rc):
-    index = _index(rc)
-    (ev,) = index[(DAO, 8)]
-    assert ev["status"] == rc.STATUS_PATH and ev["sink_kind"] == "sql"
-    assert ev["source"] == {"file": "src/main/java/com/x/UserController.java", "line": 7,
-                            "code": "@RequestParam String id"}
-    assert ev["taint_path"][0]["code"] == "@RequestParam String id"
-    assert index[(EXTRA, 38)][0]["status"] == rc.STATUS_SANITIZED
-    assert index[(EXTRA, 32)][0]["status"] == rc.STATUS_PATH
-    assert index[(EXTRA, 32)][0]["guards"]
+def test_every_call_graph_sink_kind_maps_to_cwes(rc):
+    cg = sys.modules["pipeline.call_graph"]
+    assert set(cg._SINK_SEVERITY) <= set(rc.SINK_KIND_CWES)
 
 
 def test_long_paths_keep_source_and_sink(rc):
-    elements = [{"file": "a.py", "line": i, "method": "m", "code": f"v{i}"} for i in range(1, 31)]
-    ev = rc.evidence_from_raw({"sink_kind": "sql", "elements": elements})
-    assert len(ev["taint_path"]) == rc.MAX_PATH_STEPS and ev["steps_total"] == 30
-    assert ev["taint_path"][0]["code"] == "v1" and ev["taint_path"][-1]["code"] == "v30"
+    path = [{"file": "a.py", "line": i, "method": "m", "code": f"v{i}"} for i in range(1, 31)]
+    compact = rc._compact(path)
+    assert len(compact) == rc.MAX_PATH_STEPS
+    assert compact[0]["code"] == "v1" and compact[-1]["code"] == "v30"
+    ev = {**_legacy(), "taint_path": compact, "steps_total": 30}
     assert "18 intermediate step(s) omitted" in rc.render_evidence(ev)
 
 
@@ -79,10 +79,6 @@ def test_match_needs_same_file_nearby_line_and_fitting_cwe(rc):
     assert rc.match({**base, "cwe": "CWE-79"}, index) is None  # wrong sink kind
     assert rc.match({**base, "cwe": ""}, index) is None
     assert rc.match({**base, "file_path": "./" + DAO}, index) is not None
-    # Log injection at L16 must not vouch for the response-body finding at L17
-    # and vice versa: kinds are matched through the CWE.
-    assert rc.match({"file_path": EXTRA, "line": 16, "cwe": "CWE-117"}, index)["sink_kind"] == "log"
-    assert rc.match({"file_path": EXTRA, "line": 16, "cwe": "CWE-209"}, index)["sink_kind"] == "response_body"
 
 
 def test_unsanitized_evidence_wins(rc):
@@ -137,8 +133,8 @@ def test_corroborate_node_annotates_tiers_and_persists(agent, rc):
     report_counts = agent._reachability_counts(
         state["scan_results"]["files"] + state["triage_scan_results"]["files"]
     )
-    assert report_counts == {"corroborated": 2, "sanitized": 0, "entry_reachable": 0,
-                             "by_kind": {"llm": 1, "regex": 1}}
+    # Legacy path evidence is attached but is no longer a reported category.
+    assert report_counts == {"entry_reachable": 0, "by_kind": {}}
 
 
 def _call_graph_flow(cg, sink_file="src/main/java/com/x/FooDao.java", sink_line=14):
@@ -156,7 +152,7 @@ def _call_graph_flow(cg, sink_file="src/main/java/com/x/FooDao.java", sink_line=
 
 def test_call_graph_flows_are_weaker_evidence_that_never_boosts(agent, rc):
     cg = sys.modules["pipeline.call_graph"]
-    index = rc.build_sink_index([], [_call_graph_flow(cg)])
+    index = rc.build_sink_index([_call_graph_flow(cg)])
     finding = {"file_path": "src/main/java/com/x/FooDao.java", "line": 14, "cwe": "CWE-89",
                "verdict": "true_positive", "confidence": 0.6}
     ev = rc.match(finding, index)
@@ -169,27 +165,28 @@ def test_call_graph_flows_are_weaker_evidence_that_never_boosts(agent, rc):
     assert "Method level only" in text and "FooDao.find -> stmt.executeQuery(sql)" in text
 
 
-def test_joern_path_beats_call_graph_chain_at_the_same_sink(agent, rc):
+def test_legacy_path_beats_call_graph_chain_at_the_same_sink(agent, rc):
     cg = sys.modules["pipeline.call_graph"]
-    index = rc.build_sink_index([_fixture("flows_java_sqli.json")], [_call_graph_flow(cg, DAO, 8)])
+    index = rc.build_sink_index([_call_graph_flow(cg, DAO, 8)])
+    index[(DAO, 8)].append(_legacy())
     assert {e["status"] for e in index[(DAO, 8)]} == {rc.STATUS_PATH, rc.STATUS_ENTRY_REACHABLE}
     assert rc.match({"file_path": DAO, "line": 8, "cwe": "CWE-89"}, index)["status"] == rc.STATUS_PATH
     assert rc.evidence_rank(None) > rc.evidence_rank({"status": rc.STATUS_ENTRY_REACHABLE}) \
         > rc.evidence_rank({"status": rc.STATUS_SANITIZED}) > rc.evidence_rank({"status": rc.STATUS_PATH})
 
 
-def test_corroborate_works_without_joern_from_the_call_graph_alone(agent, rc):
+def test_corroborate_works_from_the_call_graph_alone(agent, rc):
     cg = sys.modules["pipeline.call_graph"]
     regex = {"rule_id": "sqli-concat", "line": 15, "cwe": "CWE-89", "verdict": "unverified", "kind": "regex"}
     state = {
         "_tracer": agent.AgentTrace(verbose=False),
-        "reachability_index": rc.build_sink_index([], [_call_graph_flow(cg)]),
+        "reachability_index": rc.build_sink_index([_call_graph_flow(cg)]),
         "triage_scan_results": {"files": [{"file_path": "src/main/java/com/x/FooDao.java", "findings": [regex]}]},
     }
     agent.node_corroborate_flows(state)
     assert regex["reachability"]["status"] == rc.STATUS_ENTRY_REACHABLE
     counts = agent._reachability_counts(state["triage_scan_results"]["files"])
-    assert counts["entry_reachable"] == 1 and counts["corroborated"] == 0
+    assert counts["entry_reachable"] == 1
 
 
 def test_corroborate_node_is_a_noop_without_an_index(agent):
@@ -232,7 +229,7 @@ def test_group_confirm_prompt_carries_evidence_and_floor(agent, rc, tmp_path):
     # decision covers both.
     assert "m1 | B.java:2" in user
     assert "Evidence for m1" in user
-    assert "Dataflow evidence (Joern, sql sink)" in user and "@RequestParam String id" in user
+    assert "Dataflow evidence (sql sink)" in user and "@RequestParam String id" in user
     # Group verdict applies to both; only the reached one gets the floor.
     assert plain["confidence"] == 0.5
     assert reached["confidence"] == rc.REACHABLE_CONFIDENCE_FLOOR
@@ -242,29 +239,6 @@ def test_group_confirm_prompt_carries_evidence_and_floor(agent, rc, tmp_path):
     entry = {"group_index": 0, "members": [plain], "rule": None, "text_for": lambda path: "a\nb\n"}
     system, user = lfs.build_group_confirm_prompt(entry=entry, shown=[0])
     assert "Dataflow evidence" not in user
-
-
-def test_joern_flow_findings_carry_their_path(agent, rc, tmp_path):
-    jf = sys.modules["pipeline.joern_flows"]
-    fv = sys.modules["pipeline.flow_verify"]
-    controller = tmp_path / "src/main/java/com/x/UserController.java"
-    controller.parent.mkdir(parents=True)
-    controller.write_text("\n".join(f"// {i}" for i in range(1, 12)), encoding="utf-8")
-    (tmp_path / DAO).write_text("\n".join(f"// {i}" for i in range(1, 12)), encoding="utf-8")
-    flows, _ = jf.flows_from_joern([_fixture("flows_java_sqli.json")], tmp_path, cap=5)
-    (flow,) = flows
-
-    findings = fv._findings_for_flow(
-        flow,
-        [{"verdict": "true_positive", "cwe": "CWE-89", "title": "SQLi", "confidence": 0.6,
-          "line": 8, "verdict_reason": "concat", "severity": "HIGH"}],
-        suppress_no_cwe=True, suppress_http_findings=False,
-        suppress_low_confidence_false_positives=False,
-    )
-    (finding,) = findings
-    assert finding["reachability"]["status"] == rc.STATUS_PATH
-    assert finding["reachability"]["taint_path"][0]["code"] == "@RequestParam String id"
-    assert finding["confidence"] == rc.REACHABLE_CONFIDENCE_FLOOR
 
 
 def test_reachability_writer_updates_rows_in_place(tmp_path):
@@ -312,7 +286,6 @@ def test_discover_flows_indexes_call_graph_flows_past_the_verify_cap(agent, rc, 
         "_tracer": agent.AgentTrace(verbose=False),
         "call_graph": {"_graph": FakeGraph(), "_graph_lang": "java"},
         "flow_verify_cap": 1,
-        "joern_dataflow": False,
     })
     assert len(out["flow_candidates"]) == 1  # the LLM still gets only the cap
     assert seen_caps == [sys.maxsize]

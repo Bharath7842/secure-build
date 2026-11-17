@@ -1454,7 +1454,7 @@ def test_untouched_project_runs_every_sast_toggle_at_its_catalog_default(monkeyp
     state = captured[0]
     assert state["catalog_prefilter"] is True
     assert state["suppress_http_findings"] is True
-    assert state["inter_file_flow"] and state["joern_dataflow"] and state["derive_runtime_rules"]
+    assert state["inter_file_flow"] and state["derive_runtime_rules"]
     assert state["triage_mode"] == real_agent.llm_file_scan.TRIAGE_MODE_REGEX_ONLY
     assert state["deep_scan_critical_only"] is False
     # the two additive pre-scan LLM passes have no project setting: on whenever use_llm is

@@ -873,6 +873,27 @@ _SYSTEM_HEAD = (
     "that as missing token validation (CWE-345, A07) and name which of iss/aud is "
     "unchecked. An issuer-location helper validates the issuer but not the "
     "audience. Do not report it when a validator for each is visibly configured.\n"
+    "- Secret values in the code you are shown are replaced by `«REDACTED:len=N»`. "
+    "That marker means a real literal sits at that spot in the repository (N is its "
+    "length) — it is NOT a template placeholder and not a reason to skip the line. "
+    "A redacted literal assigned to a token-signing or encryption key (jwt.secret, "
+    "app.jwtSecret, a `signWith`/`setSigningKey`/`SecretKeySpec`/`Algorithm.HMAC256` "
+    "argument, a `${jwt.secret:<fallback>}` default) is a committed signing key: "
+    "report it as its own finding (CWE-798, A02/A07) naming the property or "
+    "variable and the file — anyone with the source can mint valid tokens. Do not "
+    "fold it into a finding about how tokens are validated, and never ask for the "
+    "value.\n"
+    "- WebSocket / STOMP: `registerStompEndpoints`, `@EnableWebSocketMessageBroker` "
+    "and `WebSocketConfigurer` raise TWO separate questions. (1) Which origins may "
+    "connect (`setAllowedOrigins(\"*\")` / `setAllowedOriginPatterns`) — cross-site "
+    "WebSocket hijacking. (2) Who may CONNECT and SUBSCRIBE: with no inbound "
+    "`ChannelInterceptor` that authenticates the CONNECT frame and authorises "
+    "SUBSCRIBE, no `simpSubscribeDestMatchers`/`MessageMatcherDelegatingAuthorizationManager` "
+    "rule and no per-destination check, any client can subscribe to every "
+    "`/topic/**` or `/queue/**` destination and receive other users' messages "
+    "(missing authentication/authorisation, CWE-306 / CWE-862, A01). Report each as "
+    "its own finding; an origin allow-list does not authenticate a subscriber, and "
+    "HTTP security rules on `/ws/**` do not protect the destinations behind it.\n"
     "- For a Dockerfile, CI workflow or cloud template, the findings are often an "
     "ABSENCE: a Dockerfile with no USER instruction (runs as root); a GitHub Actions "
     "workflow with no `permissions:` block or with third-party actions pinned to a "
@@ -892,6 +913,33 @@ _SYSTEM_HEAD = (
     "features that apply file-wide or app-wide (e.g. a CSRF filter configured once "
     "for the whole app) are the one case where checking the skeleton/whole file for "
     "any configuration of that feature is the right scope.\n"
+    "- TOKEN PURPOSE: when code issues or accepts tokens of more than one purpose "
+    "(access, refresh, ID, password-reset, email-verification, invitation), check "
+    "that the validator on each path requires the purpose it is for. A refresh "
+    "token must not authenticate an API call and an access token must not be "
+    "accepted by the refresh endpoint. If both are signed with the same key and "
+    "the validating code reads no `typ`/`type`/`token_type`/`token_use` claim (or "
+    "separate audience/key) and the filter or decoder only checks signature and "
+    "expiry, a long-lived refresh token works as an access token (CWE-345 / "
+    "CWE-287, A07). Name the issuing and the validating sites; the 'Authentication "
+    "lifecycle' context, when shown, lists the issuing side from other files.\n"
+    "- ACCOUNT STATE: authentication is not finished until the account's CURRENT "
+    "state is checked. When a request is authenticated from a token, session or "
+    "remember-me cookie alone — the filter builds the principal from claims and "
+    "never loads the user and checks locked/disabled/suspended/expired/deleted — "
+    "or a refresh endpoint re-issues tokens without that check, a locked or "
+    "disabled user keeps access until the token expires (CWE-613 / CWE-287, A07). "
+    "Report it only when the codebase has such a state (a locked/enabled flag, a "
+    "status enum, a failed-attempt counter); an `isEnabled()` that is never "
+    "consulted by the path under review is the finding.\n"
+    "- STATE TRANSITIONS: for an entity with a workflow status (registration, "
+    "approval, order, invitation, KYC), check every handler that changes it. A "
+    "terminal or approved state must not be reachable again through approve / "
+    "reject / reopen / resubmit unless the handler compares the STORED current "
+    "status against an allowed-transition rule on the server; a handler that "
+    "overwrites status unconditionally, or trusts a status sent by the client, "
+    "lets a decided record be reopened or an approved one be re-decided (CWE-841 "
+    "/ CWE-639 / CWE-285, A04/A01). Name the handler and the missing guard.\n"
     "- Use the catalog to calibrate severity/CWE/OWASP vocabulary, but do not limit "
     "yourself to it — flag anything else that is a genuine vulnerability.\n"
     "- Report the line number exactly as shown in the numbered code. Never invent a "
@@ -1112,9 +1160,19 @@ def _repo_security_for(paths_and_texts: Sequence[Tuple[str, str]], usage: Option
     scan has a validator context; entries from the files themselves are left
     out (the prompt shows them already)."""
     ctx = (usage or {}).get(VALIDATOR_CONTEXT_USAGE_KEY)
-    if ctx is None or not any(neighborhood.is_web_entry_file(p, t) for p, t in paths_and_texts):
+    if ctx is None:
         return ""
-    return ctx.security_summary(exclude_paths={p for p, _t in paths_and_texts})
+    exclude = {p for p, _t in paths_and_texts}
+    parts: List[str] = []
+    if any(neighborhood.is_web_entry_file(p, t) for p, t in paths_and_texts):
+        parts.append(ctx.security_summary(exclude_paths=exclude))
+    # Token purpose, account state and workflow status are decided across files:
+    # a file that validates tokens / loads the user / changes a status is shown
+    # what the other files issue and declare.
+    if any(neighborhood.is_auth_lifecycle_file(p, t) for p, t in paths_and_texts):
+        parts.append("Authentication lifecycle (from other files):\n"
+                     + ctx.auth_lifecycle_summary(exclude_paths=exclude))
+    return "\n".join(part for part in parts if part.strip() and not part.endswith(":\n"))
 
 
 def build_prompt(
@@ -1249,6 +1307,49 @@ def _unresolved_verdict_reason(raw: Any, reason: str) -> str:
     return f"The model returned an unrecognised verdict: {' '.join(text.split())[:VERDICT_REASON_MAX_CHARS]}"
 
 
+# --- model output is data, not markup (LLM05) ---------------------------------
+#
+# Everything a model returns ends up in a database, a web page, a PDF, a workbook
+# and XML. These are the engine-side limits: control characters, terminal escape
+# sequences and bidirectional overrides never reach a stored field, lengths are
+# capped, and the identifiers other code keys on (rule id, CWE) have a format.
+_ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|[@-Z\\-_])")
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+MODEL_REASON_MAX_CHARS = 1000
+MODEL_FIX_MAX_CHARS = 2000
+MAX_FINDINGS_PER_RESPONSE = 50
+_RULE_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")  # Finding.rule_id is String(80)
+_CWE_TEXT_RE = re.compile(r"(?i)\bcwe[-_ ]?0*(\d{1,5})\b|^\s*0*(\d{1,5})\s*$")
+
+
+def sanitize_model_text(value: Any, limit: int, *, usage: Optional[Dict[str, Any]] = None) -> str:
+    """`value` as stored text: terminal escapes, control characters and bidi
+    overrides removed (newlines and tabs kept), trimmed and cut at `limit`."""
+    text = str(value or "")
+    unified = text.replace("\r\n", "\n").replace("\r", "\n")
+    cleaned = _CONTROL_RE.sub("", _ANSI_RE.sub("", unified)).strip()
+    if cleaned != unified.strip():
+        bump_counter(usage, "output_validation", "text_sanitized")
+    return cleaned[:limit]
+
+
+def normalize_model_cwe(raw: Any) -> Optional[str]:
+    """`CWE-<n>` from what a model wrote ("CWE-89", "89", "CWE-089: SQL injection"),
+    or None when there is no CWE number in it."""
+    match = _CWE_TEXT_RE.search(str(raw or ""))
+    number = (match.group(1) or match.group(2)) if match else None
+    return f"CWE-{int(number)}" if number else None
+
+
+def cap_findings(items: Sequence[Any], usage: Optional[Dict[str, Any]], limit: int = MAX_FINDINGS_PER_RESPONSE) -> List[Any]:
+    """At most `limit` findings from one model answer: a runaway or hostile
+    response cannot flood the store."""
+    if len(items) > limit:
+        bump_counter(usage, "output_validation", "findings_truncated", len(items) - limit)
+        return list(items[:limit])
+    return list(items)
+
+
 def _normalize_confidence(raw: Any, verdict: Optional[str]) -> Optional[float]:
     if verdict not in ("true_positive", "false_positive"):
         return None  # an unresolved verdict has no confidence to invent
@@ -1334,7 +1435,7 @@ def normalize_finding(
     except (TypeError, ValueError):
         return None
 
-    snippet = str(raw.get("snippet") or "")
+    snippet = sanitize_model_text(raw.get("snippet"), 800, usage=usage)
     if source_lines is not None:
         line = reanchor_line(source_lines, line, snippet, chunk_start, chunk_end)
     else:
@@ -1346,22 +1447,31 @@ def normalize_finding(
     if severity not in _VALID_SEVERITIES:
         severity = "MEDIUM"
     rule_id = str(raw.get("rule_id") or "llm-extra").strip() or "llm-extra"
+    if not _RULE_ID_RE.match(rule_id):
+        bump_counter(usage, "output_validation", "rule_id_replaced")
+        rule_id = "llm-extra"
     meta = (rule_meta or {}).get(rule_id) or {}
-    cwe = str(raw.get("cwe") or "").strip() or meta.get("cwe") or None
+    cwe = normalize_model_cwe(raw.get("cwe"))
+    if cwe is None and str(raw.get("cwe") or "").strip():
+        bump_counter(usage, "output_validation", "cwe_invalid")
+    cwe = cwe or normalize_model_cwe(meta.get("cwe")) or None
     owasp_category = str(raw.get("owasp_category") or "").strip()
     if owasp_category not in OWASP_TOP_10_2021:
         owasp_category = (
             (rule_owasp or {}).get(rule_id) or meta.get("owasp") or owasp_for_rule(cwe, None)
         )
-    title = str(raw.get("title") or "").strip() or meta.get("title") or "Untitled finding"
-    reason = str(raw.get("verdict_reason") or "").strip() or "No reason provided by the model."
+    title = sanitize_model_text(raw.get("title"), 500, usage=usage) or meta.get("title") or "Untitled finding"
+    reason = (
+        sanitize_model_text(raw.get("verdict_reason"), MODEL_REASON_MAX_CHARS, usage=usage)
+        or "No reason provided by the model."
+    )
     if verdict is None:
         # Not a decision: unresolved, never a dismissal. The raw answer goes in
         # the reason so a reviewer can see what the model actually said.
         verdict = VERDICT_UNVERIFIED
         reason = _unresolved_verdict_reason(raw.get("verdict"), unresolved_reason or "")
-    ai_fix = raw.get("ai_fix")
-    ai_fix = str(ai_fix).strip() if verdict == "true_positive" and ai_fix else None
+    ai_fix = sanitize_model_text(raw.get("ai_fix"), MODEL_FIX_MAX_CHARS, usage=usage) if verdict == "true_positive" else ""
+    ai_fix = ai_fix or None
 
     kind = str(raw.get("kind") or kind).strip() or "llm"
     finding_out = {
@@ -1374,13 +1484,13 @@ def normalize_finding(
         "severity": severity,
         "cwe": cwe,
         "rule_id": rule_id,
-        "title": title[:500],
+        "title": title,
         "file_path": file_path,
         "line": line,
-        "source": str(raw.get("source") or "").strip()[:300],
-        "sink": str(raw.get("sink") or "").strip()[:300],
-        "data_flow": str(raw.get("data_flow") or "").strip()[:600],
-        "snippet": snippet[:800],
+        "source": sanitize_model_text(raw.get("source"), 300, usage=usage),
+        "sink": sanitize_model_text(raw.get("sink"), 300, usage=usage),
+        "data_flow": sanitize_model_text(raw.get("data_flow"), 600, usage=usage),
+        "snippet": snippet,
         "verdict_reason": reason,
         "ai_fix": ai_fix,
         "kind": kind,
@@ -2052,7 +2162,7 @@ def scan_chunk(
 
     cache_hit = last_call_was_cache_hit()  # same thread, right after the call parsed above
     findings: List[Dict[str, Any]] = []
-    for item in items:
+    for item in cap_findings(items, usage):
         norm = normalize_finding(
             item, file_path=file_path,
             chunk_start=chunk["start_line"], chunk_end=chunk["end_line"],
@@ -2340,7 +2450,7 @@ def scan_file_batch(
     cache_hit = last_call_was_cache_hit()
     by_path: Dict[str, List[Dict[str, Any]]] = {p: [] for p in paths}
     unrouted = 0
-    for item in items:
+    for item in cap_findings(items, usage, MAX_FINDINGS_PER_RESPONSE * max(1, len(paths))):
         path = _route_batch_item(item, paths)
         if path is None:
             unrouted += 1
@@ -2957,7 +3067,7 @@ def _triage_finding(
     if verdict not in ("true_positive", "false_positive"):
         verdict = VERDICT_UNVERIFIED
     override = str(item.get("severity") or "").strip().upper()
-    ai_fix = item.get("ai_fix")
+    ai_fix = sanitize_model_text(item.get("ai_fix"), MODEL_FIX_MAX_CHARS)
     return {
         **base,
         "severity": override if override in _VALID_SEVERITIES else severity,
@@ -2965,11 +3075,11 @@ def _triage_finding(
         "snippet": cand["matched_text"],
         "verdict": verdict,
         "verdict_reason": (
-            str(item.get("verdict_reason") or item.get("reason") or "").strip()
+            sanitize_model_text(item.get("verdict_reason") or item.get("reason"), MODEL_REASON_MAX_CHARS)
             or "No reason provided by the model."
         ),
         "confidence": _normalize_confidence(item.get("confidence"), verdict),
-        "ai_fix": str(ai_fix).strip() if verdict == "true_positive" and ai_fix else None,
+        "ai_fix": ai_fix if verdict == "true_positive" and ai_fix else None,
     }
 
 
@@ -3490,7 +3600,7 @@ def group_unverified_findings(
                 finding.get("verdict") == VERDICT_UNVERIFIED
                 and str(finding.get("severity") or "").upper() in wanted_severities
             ):
-                # Regex and Joern-query findings are built per file and carry
+                # Regex findings are built per file and carry
                 # no path of their own; confirmation needs it for the excerpt,
                 # the occurrence list and the DB update key.
                 if not finding.get("file_path") and file_result.get("file_path"):
@@ -3561,9 +3671,12 @@ def _confirm_result_from_item(
             "unresolved_reason": problem or "evidence_missing",
         }
     confidence = _normalize_confidence(item.get("confidence"), verdict)
-    reason = str(item.get("verdict_reason") or "").strip() or "No reason provided by the model."
-    ai_fix = item.get("ai_fix")
-    ai_fix = str(ai_fix).strip() if verdict == "true_positive" and ai_fix else None
+    reason = (
+        sanitize_model_text(item.get("verdict_reason"), MODEL_REASON_MAX_CHARS, usage=usage)
+        or "No reason provided by the model."
+    )
+    ai_fix = sanitize_model_text(item.get("ai_fix"), MODEL_FIX_MAX_CHARS, usage=usage) if verdict == "true_positive" else ""
+    ai_fix = ai_fix or None
     return {
         "verdict": verdict, "confidence": confidence,
         "verdict_reason": reason, "ai_fix": ai_fix, "error": None,

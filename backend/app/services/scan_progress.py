@@ -30,7 +30,8 @@ PROGRESS_MARKERS: list[tuple[str, int]] = [
     ("### Scanning CRITICAL/HIGH files", 85),
     ("### Scanning MEDIUM/LOW files", 97),
     ("### Grouping MEDIUM/LOW findings", 98),
-    # Banners from before the graph builder's name was hidden, kept for persisted logs.
+    # Banners of the removed code-property-graph stages (including the older ones
+    # that named the tool), kept so persisted logs still resolve.
     ("### Building Joern code property graph", 72),
     ("### Running Joern queries", 97),
     # Pre-rename labels, kept so scans started before the CRITICAL/HIGH vs

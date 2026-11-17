@@ -197,16 +197,6 @@ class Settings(BaseSettings):
     # Clear per-scan verify/stack cache before each scan (0 = reuse verify cache — much faster)
     sast_refresh_cache: bool = False
     hybrid_mode: bool = False  # env HYBRID_MODE=1 enables hybrid when scan metadata omits flag
-    # Joern (pipeline/joern_runner.py). Empty joern_home = use `joern` on PATH;
-    # a missing install just skips the Joern stages. Heap is the main knob on
-    # large repos — CPG builds for a few thousand Java files want 4-8 GB.
-    joern_home: str = ""
-    joern_timeout_sec: int = 900
-    joern_java_opts: str = "-Xmx4g"
-    # JDK used only for Joern (empty = JAVA_HOME / PATH). On Apple Silicon this
-    # must be an arm64 JDK, or JS/TS CPG builds fail (jssrc2cpg looks for an
-    # x86 astgen binary that an arm64 Joern install doesn't include).
-    joern_java_home: str = ""
     run_semgrep: bool = True
     run_regex_scan: bool = True
     semgrep_rules: str = "p/owasp-top-ten,p/java,p/python,p/javascript"

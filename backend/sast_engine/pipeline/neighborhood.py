@@ -388,3 +388,134 @@ def render_security_summary(
         out.append(row)
         used += len(row) + 1
     return "\n".join(out)
+
+
+# --- authentication lifecycle (token purpose, account state, workflow status) ---
+#
+# Three logic bugs live between files, not in one: a refresh token accepted as an
+# access token (the issuer is in one class, the validating filter in another), a
+# locked user who keeps access (the status flag is on the user entity, the check
+# is missing in the filter), and an approved registration that can be re-opened
+# (the status enum is in one file, the handler in another). The deep scan sees one
+# file, so it is shown what the OTHER files declare. Context only: it never decides.
+
+AUTH_SUMMARY_MAX_CHARS = 1_800
+_AUTH_SUFFIXES = (".java", ".kt", ".ts", ".js", ".py")
+_MAX_AUTH_FILES = 6
+_MAX_AUTH_LINES_PER_FILE = 3
+
+_TOKEN_ISSUE_RE = re.compile(
+    r"\bJwts\s*\.\s*builder\b|\bJWT\s*\.\s*create\b|\bjwt\s*\.\s*(?:sign|encode)\s*\(|\bJwtEncoder\b"
+    r"|\b(?:generate|create|issue|build|sign|mint)\w*Token\s*\(|\bdef\s+(?:create|issue|generate)_\w*token\b",
+    re.I,
+)
+_TOKEN_TYPE_RE = re.compile(
+    r"""["'](?:typ|type|token_type|tokenType|token_use|tokenUse|purpose)["']\s*[,:=)]|\.type\s*\(|\bsetHeaderParam\b""",
+)
+_TOKEN_ISSUE_ONLY_RE = re.compile(r"refresh|access|expir", re.I)
+_STATE_WORD_RE = re.compile(
+    r"\b(?:LOCKED|DISABLED|SUSPENDED|BLOCKED|DEACTIVATED|BANNED|APPROVED|REJECTED|DENIED|PENDING|CANCELLED|CLOSED)\b",
+    re.I,
+)
+_ACCOUNT_STATE_RE = re.compile(
+    r"\bisAccountNonLocked\b|\bisAccountNonExpired\b|\bisEnabled\s*\(|\baccountNonLocked\b"
+    r"|\b(?:is_?locked|locked_?(?:at|until)|failed_?(?:login_?)?attempts|is_?active|account_?status)\b",
+    re.I,
+)
+_TRANSITION_RE = re.compile(
+    r"\bset(?:Status|State)\s*\(|\.(?:status|state)\s*=(?!=)|\b(?:update|change)(?:Status|State)\b"
+    r"|\b(?:approve|reject|reopen|resubmit|cancel)\w*\s*\(",
+    re.I,
+)
+_AUTH_FILE_RE = re.compile(
+    r"refresh[_-]?token|\bparseClaimsJws\b|\bJwtDecoder\b|\bjwt\s*\.\s*(?:verify|decode)\b"
+    r"|\bOncePerRequestFilter\b|\bloadUserByUsername\b|\bUserDetailsService\b|\bAuthenticationProvider\b",
+    re.I,
+)
+
+
+def is_auth_lifecycle_file(rel_path: str, text: str) -> bool:
+    """A file that validates or issues tokens, loads the user for authentication,
+    or changes a workflow status — where one of the three cross-file checks
+    (token purpose, account state, status transition) is decided."""
+    if not rel_path.lower().endswith(_AUTH_SUFFIXES):
+        return False
+    head = text[:_JAVA_PEEK_CHARS]
+    if _AUTH_FILE_RE.search(head):
+        return True
+    return len({m.upper() for m in _STATE_WORD_RE.findall(head)}) >= 2 and bool(_TRANSITION_RE.search(head))
+
+
+def _lines_matching(text: str, patterns: Sequence["re.Pattern[str]"]) -> List[Tuple[int, str]]:
+    out: List[Tuple[int, str]] = []
+    for n, line in enumerate(text.splitlines(), start=1):
+        if _code_line(line) and any(p.search(line) for p in patterns):
+            out.append((n, " ".join(line.split())))
+    return out
+
+
+def auth_lifecycle_entries(repo_root: Optional[Path]) -> List[Tuple[str, str, int, str]]:
+    """(kind, path, line, text) for token-issuing sites (`token`) and for account /
+    workflow state declarations (`state`) across the repository, sorted. Test code
+    is ignored; bounded in files and in lines per file."""
+    if repo_root is None or not Path(repo_root).is_dir():
+        return []
+    repo_root = Path(repo_root)
+    entries: List[Tuple[str, str, int, str]] = []
+    token_files = state_files = seen = 0
+    for rel in _walk(repo_root):
+        if not rel.lower().endswith(_AUTH_SUFFIXES):
+            continue
+        seen += 1
+        if seen > _MAX_JAVA_FILES or (token_files >= _MAX_AUTH_FILES and state_files >= _MAX_AUTH_FILES):
+            break
+        head = _read(repo_root, rel, _JAVA_PEEK_CHARS)
+        if not head:
+            continue
+        if token_files < _MAX_AUTH_FILES and _TOKEN_ISSUE_RE.search(head):
+            # The issuing lines, then the lines that say what kind of token it is.
+            found = _lines_matching(head, [_TOKEN_ISSUE_RE])[:2] + _lines_matching(head, [_TOKEN_TYPE_RE])[:2]
+            if found:
+                token_files += 1
+                for n, text in sorted(set(found)):
+                    entries.append(("token", rel, n, text))
+        distinct_states = {m.upper() for m in _STATE_WORD_RE.findall(head)}
+        if state_files < _MAX_AUTH_FILES and (len(distinct_states) >= 2 or _ACCOUNT_STATE_RE.search(head)):
+            patterns = [_ACCOUNT_STATE_RE]
+            if len(distinct_states) >= 2:
+                patterns.append(_STATE_WORD_RE)
+            found = _lines_matching(head, patterns)[:_MAX_AUTH_LINES_PER_FILE]
+            if found:
+                state_files += 1
+                for n, text in found:
+                    entries.append(("state", rel, n, text))
+    return sorted(entries)
+
+
+def render_auth_lifecycle_summary(
+    entries: Sequence[Tuple[str, str, int, str]], *, exclude_paths: Collection[str] = (),
+    max_chars: int = AUTH_SUMMARY_MAX_CHARS,
+) -> str:
+    """Two short lists — where tokens are issued (and whether a type claim is set),
+    and which account/workflow states exist — leaving out the files a prompt
+    already shows, within `max_chars`."""
+    titles = {
+        "token": "Token issuance in other files (a line naming a type/purpose claim means one is set):",
+        "state": "Account and workflow states declared in other files:",
+    }
+    out: List[str] = []
+    used = 0
+    for kind in ("token", "state"):
+        rows = [e for e in entries if e[0] == kind and e[1] not in exclude_paths]
+        if not rows:
+            continue
+        out.append(titles[kind])
+        used += len(titles[kind]) + 1
+        for index, (_k, path, line, text) in enumerate(rows):
+            row = f"{path}:{line}: {_cut(text, SECURITY_LINE_MAX_CHARS)}"
+            if used + len(row) + 1 > max_chars:
+                out.append(f"… ({len(rows) - index} more line(s) not shown)")
+                break
+            out.append(row)
+            used += len(row) + 1
+    return "\n".join(out)

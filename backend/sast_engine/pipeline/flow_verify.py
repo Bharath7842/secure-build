@@ -4,8 +4,7 @@ The graph has no argument-level taint, so the slice is the only precision
 mechanism: every hop's *complete* method body is sent. Oversized methods skip
 the flow rather than hide a call site. The one exception is a slice over
 FLOW_SLICE_CHAR_BUDGET in total: its *intermediate* hops are condensed to the
-signature plus a window around the call into the next hop (and any Joern path
-line), while the entry and sink hops always stay whole.
+signature plus a window around the call into the next hop, while the entry and sink hops always stay whole.
 
 Flows that share hop methods are verified together (up to FLOWS_PER_CALL per
 call), so a method common to several flows — typically a DAO/repository sink
@@ -25,22 +24,24 @@ from llm_client import (
     stage_has_budget,
 )
 
-from pipeline import explanation_check, prompt_injection, reachability
+from pipeline import explanation_check, prompt_injection
 from pipeline.finding_facts import prepare_findings
 from pipeline.call_graph import Flow, FLOW_VERIFY_CAP, flow_to_dict
 from pipeline.llm_file_scan import (
     DROP,
+    MAX_FINDINGS_PER_RESPONSE,
     SINGLE_CALL_CHAR_BUDGET,
     _RESPONSE_SCHEMA,
     _retry_match,
     apply_publish_decision,
+    cap_findings,
     normalize_finding,
     publish_decision,
 )
 
 # Total slice size above which intermediate hops are condensed.
 FLOW_SLICE_CHAR_BUDGET = 32_000
-# Lines kept either side of a condensed hop's call line / Joern path line.
+# Lines kept either side of a condensed hop's call line.
 CONDENSED_HOP_WINDOW = 8
 # Flows sharing at least one hop are batched into one call, up to this many
 # flows and FLOW_GROUP_CHAR_BUDGET characters of (deduplicated) hop code.
@@ -121,15 +122,6 @@ def _condensed_body(hop: Any, keep_lines: List[int]) -> str:
     return "\n".join(out)
 
 
-def _taint_lines_for_hop(flow: Flow, hop: Any) -> List[int]:
-    return [
-        int(step.get("line") or -1)
-        for step in flow.taint_path
-        if step.get("file") == hop.file
-        and hop.start_line <= int(step.get("line") or -1) <= hop.end_line
-    ]
-
-
 def build_hop_blocks(flow: Flow) -> Optional[List[Tuple[Tuple[str, str, int], str]]]:
     """[(hop_key, rendered block)] in hop order, or None if any single hop
     exceeds SINGLE_CALL_CHAR_BUDGET (the flow is skipped, never truncated)."""
@@ -141,7 +133,7 @@ def build_hop_blocks(flow: Flow) -> Optional[List[Tuple[Tuple[str, str, int], st
     for i, hop in enumerate(flow.hops):
         condense = total > FLOW_SLICE_CHAR_BUDGET and 0 < i < last
         if condense:
-            body = _condensed_body(hop, [hop.line] + _taint_lines_for_hop(flow, hop))
+            body = _condensed_body(hop, [hop.line])
             condense = len(body) < len(hop.body)
         if not condense:
             body = _numbered_body(hop.body, hop.start_line)
@@ -156,51 +148,6 @@ def build_flow_slice(flow: Flow) -> Optional[str]:
     if blocks is None:
         return None
     return "\n\n".join(text for _key, text in blocks)
-
-
-_TAINT_PATH_MAX_STEPS = 40
-
-
-def build_taint_path_note(flow: Flow) -> str:
-    """Expression-level path for Joern flows; empty for method-level flows.
-
-    Joern proved the value travels along these expressions, so the model's job
-    narrows to whether any step sanitizes it — it no longer has to guess
-    which argument carries the input.
-    """
-    if not flow.taint_path:
-        return ""
-    steps = flow.taint_path
-    if len(steps) > _TAINT_PATH_MAX_STEPS:
-        half = _TAINT_PATH_MAX_STEPS // 2
-        steps = steps[:half] + [{"file": "...", "line": -1, "code": "..."}] + steps[-half:]
-    lines = [
-        f"  {s.get('file')}:L{s.get('line')}  {s.get('code')}" if s.get("line", -1) > 0
-        else "  ..."
-        for s in steps
-    ]
-    note = (
-        "Dataflow path (Joern; each line is an expression the untrusted value "
-        "flows through, in order — decide whether any step sanitizes it):\n"
-        + "\n".join(lines)
-        + "\n"
-    )
-    if flow.guards:
-        note += (
-            "Conditions this path is control-dependent on (Joern CDG — a check here "
-            "that rejects bad input before the sink breaks the flow; a null/empty "
-            "check does not):\n"
-            + "\n".join(f"  {g.get('file')}:L{g.get('line')}  {g.get('code')}" for g in flow.guards)
-            + "\n"
-        )
-    if flow.sanitizers:
-        note += (
-            "Known sanitizer calls on the path (confirm each actually neutralises "
-            "this sink kind and covers the value that reaches it):\n"
-            + "\n".join(f"  {s.get('file')}:L{s.get('line')}  {s.get('code')}" for s in flow.sanitizers)
-            + "\n"
-        )
-    return note + "\n"
 
 
 def build_other_sources_note(flow: Flow) -> str:
@@ -232,7 +179,6 @@ def build_flow_user_prompt(flow: Flow, slice_text: str) -> str:
         f"Entry tier: {flow.entry_tier}\n"
         f"Files: {files}\n"
         f"{source_note}\n\n"
-        f"{build_taint_path_note(flow)}"
         f"{build_other_sources_note(flow)}"
         f"{slice_text}\n"
     )
@@ -265,7 +211,7 @@ def build_flow_group_user_prompt(
             f"F{n}: {chain}  ({' → '.join(h.method for h in flow.hops)}; "
             f"entry tier {flow.entry_tier}; source is {_source_note(flow)})"
         )
-        note = build_taint_path_note(flow) + build_other_sources_note(flow)
+        note = build_other_sources_note(flow)
         if note:
             flow_lines.append(f"  F{n} " + note.rstrip())
     return (
@@ -330,7 +276,8 @@ def _call_and_parse(
             items, parse_err = parse_llm_json_array(raw)
     except Exception as exc:  # noqa: BLE001
         return [], f"{type(exc).__name__}: {exc}"
-    return items, parse_err
+    # One answer never carries more findings than a call can reasonably have (LLM05).
+    return cap_findings(items, usage, MAX_FINDINGS_PER_RESPONSE * FLOWS_PER_CALL), parse_err
 
 
 def _findings_for_flow(
@@ -352,9 +299,6 @@ def _findings_for_flow(
     flow_path = _flow_path_payload(flow)
     affected = list(flow.files)
     data_flow = _data_flow_line(flow)
-    # Joern flows carry the expression-level path; keep it as evidence rather
-    # than only showing it to the model.
-    evidence = reachability.evidence_from_flow(flow) if flow.taint_path else None
 
     for raw_item in items:
         if isinstance(raw_item, dict):
@@ -384,9 +328,6 @@ def _findings_for_flow(
             finding["source"] = flow.hops[0].label
         if not finding.get("sink"):
             finding["sink"] = sink.label
-        if evidence is not None:
-            finding["reachability"] = evidence
-            reachability.apply_confidence(finding)
         # Occurrence facts and validators need the sink file as a whole (the
         # hop bodies are method slices); without a loader the finding simply
         # has none, and is judged exactly as before.

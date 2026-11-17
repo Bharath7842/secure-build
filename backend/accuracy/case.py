@@ -31,13 +31,11 @@ PINNED_PROVIDER = "bedrock"
 PINNED_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 # Engine knobs every case runs with unless it overrides them: sequential and
-# local-only (no Joern, no derived rules, no call graph) so a case's LLM calls are
+# local-only (no derived rules, no call graph) so a case's LLM calls are
 # few and deterministic.
 DEFAULT_LIMITATIONS: dict[str, bool] = {
     "inter-file-call-graph": False,
     "runtime-derived-regex": False,
-    "joern-dataflow": False,
-    "joern-scan-queries": False,
     "parallel-scan-stages": False,
 }
 # Without this a tiny repo backfills every MEDIUM/LOW file into the deep scan.

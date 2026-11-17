@@ -72,7 +72,7 @@ import llm_client  # noqa: E402
 from llm_client import RESULT_CACHE_USAGE_KEY, init_usage, usage_cost_summary  # noqa: E402
 import ast_struct  # noqa: E402
 from pipeline import call_graph, call_graph_python, dep_classify, dependency_scan, derive_rules, flow_verify, llm_file_scan, regex_scan, rg_prefilter, risk_rerank  # noqa: E402
-from pipeline import joern_findings, joern_flows, joern_runner, occurrence, reachability  # noqa: E402
+from pipeline import occurrence, reachability  # noqa: E402
 from pipeline import sql_semantics  # noqa: E402
 from pipeline.validators import VALIDATOR_CONTEXT_USAGE_KEY, ValidatorContext  # noqa: E402
 
@@ -197,6 +197,7 @@ STACK_PROFILES: Dict[str, Dict[str, Any]] = {
             (r"(^|/)src/main/java/.*/(controller|controllers|web|rest)/", "HIGH",     "user input entry point (controller layer)", "source"),
             (r"(^|/)src/main/java/.*(ExceptionHandler|ControllerAdvice)\w*\.java$", "HIGH", "exception handler / controller advice (builds HTTP responses from exception data, regardless of package)", "source"),
             (r"(^|/)src/main/java/.*(SecurityConfig|WebSecurityConfig|SecurityFilterChain)\w*\.java$", "CRITICAL", "Spring Security configuration (CSRF/CORS/authorization rules, regardless of package)", "source"),
+            (r"(^|/)src/main/java/.*(WebSocket|Websocket|Stomp)\w*\.java$", "CRITICAL", "WebSocket / STOMP configuration (allowed origins, who may connect and subscribe, regardless of package)", "source"),
             (r"(^|/)src/main/java/.*/(service|services)/",        "HIGH",     "business logic",                      "source"),
             (r"(^|/)src/main/java/.*/(repository|repositories|dao)/", "CRITICAL", "database queries (injection surface)", "source"),
             (r"(^|/)src/main/java/.*/(security|auth)/",           "CRITICAL", "authentication / authorization logic", "source"),
@@ -322,8 +323,6 @@ STEP_LABELS = {
     8: "Scanning MEDIUM/LOW files",
     9: "Grouping MEDIUM/LOW findings",
     10: "Generating report",
-    11: "Building code property graph",
-    12: "Running code property graph queries",
 }
 
 DEFAULT_RECURSION_LIMIT = 500
@@ -458,22 +457,7 @@ class SastState(TypedDict, total=False):
     call_graph: Dict[str, Any]
     flow_candidates: List[Dict[str, Any]]
     flow_scan_results: Dict[str, Any]
-    # Joern (pipeline/joern_runner.py). Both default True and are no-ops when
-    # Joern isn't installed. joern_dataflow feeds Joern source->sink paths into
-    # discover_flows/verify_flow_slices (so it also needs inter_file_flow and
-    # use_llm); joern_scan_queries runs joern/queries.sc and writes its hits as
-    # unverified kind=joern findings. scan_limitations ids "joern-dataflow" /
-    # "joern-scan-queries".
-    joern_dataflow: bool
-    joern_scan_queries: bool
-    joern_timeout_sec: int
-    joern_max_languages: int
-    # Caller-owned scratch dir for CPGs (agent_bridge deletes it in a finally,
-    # so a crashed scan can't leak multi-GB graphs). A temp dir otherwise.
-    joern_work_dir: str
-    joern: Dict[str, Any]                # node_build_joern_cpg output (holds the session)
-    joern_scan_results: Dict[str, Any]   # node_joern_scan output
-    # Every flows.sc path and every call-graph flow keyed by (sink file, sink
+    # Every call-graph flow keyed by (sink file, sink
     # line), before the verify cap and the deep-scanned-file drop
     # (pipeline/reachability.py). Read by node_corroborate_flows to attach
     # paths to other tiers' findings.
@@ -507,7 +491,7 @@ class SastState(TypedDict, total=False):
     verdict_updates_writer: Optional[Callable[[str, List[Dict[str, Any]]], None]]
     # Injected by the caller — called once per file with
     # {rule_id, line, reachability, confidence} updates when
-    # node_corroborate_flows attaches a Joern path to already-persisted rows.
+    # node_corroborate_flows attaches call-graph evidence to already-persisted rows.
     reachability_updates_writer: Optional[Callable[[str, List[Dict[str, Any]]], None]]
     # Called after map_modules_and_risk (discovery without report) and again
     # after generate_report (full discovery) so the UI can show Discovery
@@ -1371,7 +1355,11 @@ _EJB_INTERFACE_RE = re.compile(
     r"\binterface\s+\w+\s+extends\s+[\w.,\s]*?\b(?:EJBHome|EJBLocalHome|EJBObject|EJBLocalObject)\b"
     r"|@(?:Remote|Local)\b(?:\s*\([^)]*\))?\s*(?:public\s+)?interface\b"
 )
-_ENTRY_CLASS_RE = re.compile(r"@(?:Path|RestController|WebService|WebServlet)\b|\bextends\s+HttpServlet\b")
+_ENTRY_CLASS_RE = re.compile(
+    r"@(?:Path|RestController|WebService|WebServlet|EnableWebSocketMessageBroker|EnableWebSocket)\b"
+    r"|\bextends\s+HttpServlet\b|\bimplements\s+WebSocketMessageBrokerConfigurer\b"
+    r"|\bimplements\s+WebSocketConfigurer\b"
+)
 _SERVLET_FILTER_RE = re.compile(r"\bimplements\s+(?:[\w.<>]+\s*,\s*)*(?:javax\.servlet\.|jakarta\.servlet\.)?Filter\b")
 
 
@@ -1677,17 +1665,6 @@ def _resolve_active_surfaces(state: SastState, rules_path: Path):
     )
 
 
-def _staged_verdict_writer(writer, stage: str):
-    """`writer` with every update tagged as decided by `stage` (decision history)."""
-    if writer is None:
-        return None
-
-    def write(file_path: str, updates: List[Dict[str, Any]]) -> None:
-        writer(file_path, [{**update, "decision_stage": stage} for update in updates])
-
-    return write
-
-
 def _findings_writer(state: SastState):
     """`state["findings_writer"]`, stamped with each finding's occurrence
     identity (sink expression, enclosing method, ordinal) on the way through.
@@ -1741,94 +1718,9 @@ def _tree_sitter_graph_enabled(state: SastState) -> bool:
     return call_graph.is_java_stack(state) or call_graph_python.is_python_stack(state)
 
 
-def _joern_session(state: SastState) -> Optional[joern_runner.JoernSession]:
-    session = (state.get("joern") or {}).get("_session")
-    return session if session is not None and session.cpgs else None
-
-
-def _joern_dataflow_enabled(state: SastState) -> bool:
-    return (
-        state.get("joern_dataflow", True) is not False
-        and state.get("inter_file_flow") is not False
-        and bool(state.get("use_llm", True))
-        and _joern_session(state) is not None
-    )
-
-
 def _inter_file_enabled(state: SastState) -> bool:
-    """Flow verification runs when either graph can produce flows — Joern
-    covers languages (JS/TS, C, Go, ...) the tree-sitter graph doesn't."""
-    return _tree_sitter_graph_enabled(state) or _joern_dataflow_enabled(state)
-
-
-# ===========================================================================
-# STEP 4b — node_build_joern_cpg
-#   Builds one Joern CPG per dominant language (pipeline/joern_runner.py),
-#   shared by discover_flows (flows.sc) and joern_scan (queries.sc). Skipped
-#   with a log line — never an error — when Joern isn't installed.
-# ===========================================================================
-
-def node_build_joern_cpg(state: SastState) -> dict:
-    tracer: AgentTrace = state["_tracer"]
-    want_flows = (
-        state.get("joern_dataflow", True) is not False
-        and state.get("inter_file_flow") is not False
-        and bool(state.get("use_llm", True))
-    )
-    want_queries = state.get("joern_scan_queries", True) is not False
-    if not (want_flows or want_queries):
-        tracer.log(11, "build_joern_cpg", "Skipping code property graph — disabled for this scan",
-                    narrative="Code property graph dataflow and queries are both off for this run.")
-        return {"joern": {"status": "disabled"}}
-    if not joern_runner.joern_available():
-        tracer.log(11, "build_joern_cpg", "Skipping code property graph — graph tooling not found",
-                    detail="graph tooling is not installed or not configured on this host",
-                    narrative="Code property graph tooling is not installed on this host, so the scan uses the built-in "
-                              "call graph only.")
-        return {"joern": {"status": "unavailable"}}
-
-    paths = [f.get("path") or "" for f in (state.get("scan") or {}).get("files", [])]
-    languages = joern_runner.languages_for_scan(
-        paths, max_languages=state.get("joern_max_languages", joern_runner.DEFAULT_MAX_LANGUAGES),
-    )
-    if not languages:
-        tracer.log(11, "build_joern_cpg", "Skipping code property graph — no supported language",
-                    narrative="No source language in this repo is supported by the code property graph builder.")
-        return {"joern": {"status": "no_language"}}
-
-    root = _resolve_scan_root(state)
-    work_dir = state.get("joern_work_dir")
-    tracer.log(11, "build_joern_cpg",
-                f"Building code property graph(s) for: {', '.join(languages)}",
-                narrative=f"Building code property graph(s) for {', '.join(languages)} — "
-                          f"this parses the whole repo once and can take a few minutes on large codebases...")
-    session = joern_runner.start_session(
-        root, languages,
-        work_dir=Path(work_dir) if work_dir else None,
-        timeout=state.get("joern_timeout_sec"),
-    )
-    summary = session.summary()
-    failed_note = _hide_tool_name("; ".join(f"{k}: {v}" for k, v in summary["failed"].items()))
-    tracer.log(11, "build_joern_cpg",
-                f"Code property graph ready for {summary['languages'] or 'no language'} "
-                f"in {summary['cpg_seconds']}s",
-                detail=f"failed: {failed_note}" if failed_note else None,
-                narrative=(f"Code property graph built for {', '.join(summary['languages'])} "
-                           f"({summary['cpg_seconds']}s)."
-                           if summary["languages"] else
-                           "A code property graph could not be built for this repo, so the scan continues "
-                           "with the built-in call graph only.")
-                          + (f" Failed: {failed_note}." if failed_note else ""))
-    status = "ready" if session.cpgs else "failed"
-    if not session.cpgs:
-        session.cleanup()
-    return {"joern": {"status": status, **summary, "_session": session if session.cpgs else None}}
-
-
-def _hide_tool_name(text: str) -> str:
-    """Strip the graph builder's name from error text that reaches the scan log."""
-    text = text.replace("JOERN_JAVA_OPTS", "the graph builder's JVM options")
-    return re.sub(r"(?i)joern(?:-parse)?", "graph builder", text)
+    """Flow verification runs when the tree-sitter call graph can produce flows."""
+    return _tree_sitter_graph_enabled(state)
 
 
 def _emit_partial_report(state: SastState, tier: str, files: List[Dict[str, Any]]) -> None:
@@ -2025,26 +1917,12 @@ def node_build_call_graph(state: SastState) -> dict:
     return {"call_graph": summary, "module_plan": module_plan}
 
 
-def _merge_flows(joern: List[Any], tree_sitter: List[Any], cap: int) -> List[Any]:
-    """Joern flows first (expression-level taint, higher precision), but up to
-    a third of the cap stays reserved for tree-sitter flows Joern didn't also
-    find — that graph models sinks Joern can't see, notably Spring Data
-    repository interfaces whose implementation only exists at runtime."""
-    joern_sinks = {(f.hops[-1].file, f.hops[-1].line) for f in joern}
-    extra = [f for f in tree_sitter if (f.hops[-1].file, f.hops[-1].line) not in joern_sinks]
-    reserved = min(len(extra), cap // 3) if joern else len(extra)
-    take_joern = joern[: max(0, cap - reserved)]
-    merged = take_joern + extra[: max(0, cap - len(take_joern))]
-    return merged[: max(0, cap)]
-
-
 def node_discover_flows(state: SastState) -> dict:
     tracer: AgentTrace = state["_tracer"]
     packed = state.get("call_graph") or {}
     graph = packed.get("_graph")
     graph_lang = packed.get("_graph_lang")
-    use_joern = _joern_dataflow_enabled(state)
-    if graph is None and not use_joern:
+    if graph is None:
         tracer.log(6, "discover_flows", "No call graph — skipping flow discovery",
                     narrative="No call graph was built, so there are no inter-file flows to walk.")
         return {"flow_candidates": [], "call_graph": packed}
@@ -2068,68 +1946,19 @@ def node_discover_flows(state: SastState) -> dict:
         packed["entry_tier"] = graph.entry_tier
         ts_total = len(ts_distinct)
 
-    raws: List[Any] = []
-    jn_flows: List[Any] = []
-    jn_total = 0
-    if use_joern:
-        session = _joern_session(state)
-        tracer.log(6, "discover_flows",
-                    f"Running dataflow analysis over {len(session.cpgs)} code property graph(s)",
-                    narrative="Asking the code property graph for source→sink dataflow paths (request input reaching "
-                              "SQL, command, file, XSS, SSRF, deserialization sinks)...")
-        raws = [
-            joern_runner.run_flows(b.cpg_path, timeout=state.get("joern_timeout_sec"))
-            for b in session.cpgs
-        ]
-        failed = sum(1 for r in raws if r is None)
-        # flows.sc writes after each sink kind, so a timeout still returns
-        # the kinds it finished (most severe first) marked complete=false.
-        partial = sum(1 for r in raws if r is not None and r.get("complete") is False)
-        deep_paths = set((state.get("module_plan") or {}).get("deep_scan_paths") or [])
-        jn_flows, jn_total = joern_flows.flows_from_joern(
-            raws, _resolve_scan_root(state), cap=cap, deep_scanned_paths=deep_paths,
-        )
-        jn_paths = sum(len((r or {}).get("flows") or []) for r in raws)
-        joern_state = dict(state.get("joern") or {})
-        joern_state.update({"flows_found": jn_paths, "flow_sinks": jn_total,
-                            "flow_script_failures": failed, "flow_script_partial": partial})
-        tracer.log(6, "discover_flows",
-                    f"Code property graph found {jn_paths} dataflow path(s) to {jn_total} distinct sink(s) "
-                    f"needing verification"
-                    + (f" ({failed} graph script failure(s))" if failed else "")
-                    + (f" ({partial} graph(s) stopped early — lower-priority sink kinds skipped)"
-                       if partial else ""),
-                    narrative=f"Code property graph found {jn_paths} source→sink dataflow path(s) reaching "
-                              f"{jn_total} distinct sink(s) to verify (single-file paths in deep-scanned "
-                              f"files excluded)."
-                              + (" The dataflow script failed on some graphs; continuing "
-                                 "with what it returned." if failed else "")
-                              + (" The graph analysis ran out of time before the lowest-priority sink kinds "
-                                 "(logging, response bodies) on some graphs; the injection-class "
-                                 "kinds it finished are kept." if partial else ""))
-
-    flows = _merge_flows(jn_flows, ts_flows, cap)
+    flows = ts_flows
     packed["_flows"] = flows
     candidates = [call_graph.flow_to_dict(f) for f in flows]
-    total_found = ts_total + jn_total
-    sent_joern = sum(1 for f in flows if f.entry_tier == joern_flows.ENTRY_TIER)
-    flows_note = (
-        f"Found {total_found} flow(s) ({jn_total} from the code property graph, {ts_total} from the call graph) — "
-        f"sending the top {len(flows)} ({sent_joern} from the code property graph) to the LLM."
-        if total_found > len(flows)
-        else f"Found {len(flows)} flow(s) ({sent_joern} from the code property graph, "
-             f"{len(flows) - sent_joern} from the call graph)."
-    )
     tracer.log(6, "discover_flows",
                 f"Discovered {len(flows)} flow(s) (entry_tier={packed.get('entry_tier') or 'none'}, "
-                f"cap={cap}, max_hop_depth={max_hop_depth}, total_found={total_found}, cpg={jn_total})",
-                narrative=flows_note)
+                f"cap={cap}, max_hop_depth={max_hop_depth}, total_found={ts_total})",
+                narrative=(f"Found {ts_total} flow(s) from the call graph — sending the top {len(flows)} to the LLM."
+                           if ts_total > len(flows)
+                           else f"Found {len(flows)} flow(s) from the call graph."))
     out: Dict[str, Any] = {"flow_candidates": candidates, "call_graph": packed}
-    if use_joern:
-        out["joern"] = joern_state
-    # From raws, before flows_from_joern caps and drops paths: a dropped
-    # single-file Joern path is still evidence for the deep-scan finding there.
-    out["reachability_index"] = reachability.build_sink_index(raws, ts_all)
+    # Uncapped, before the verify cap: flows past it are still evidence for
+    # the finding at the same sink.
+    out["reachability_index"] = reachability.build_sink_index(ts_all)
     return out
 
 
@@ -2643,91 +2472,6 @@ def node_scan_triage_files(state: SastState) -> dict:
 
 
 # ===========================================================================
-# STEP 8b — node_joern_scan
-#   Runs joern/queries.sc over each CPG and writes hits as unverified
-#   kind=joern findings, then LLM-confirms them in groups. Confirmation is
-#   done here rather than by node_group/confirm_triage_groups because those
-#   only act when triage_mode is regex_only, and API scans default to
-#   llm_triage — Joern hits would otherwise stay unverified forever.
-# ===========================================================================
-
-def node_joern_scan(state: SastState) -> dict:
-    tracer: AgentTrace = state["_tracer"]
-    empty = {**dict(_EMPTY_SCAN_RESULTS), "unverified_count": 0}
-    if state.get("joern_scan_queries", True) is False:
-        return {"joern_scan_results": empty}
-    session = _joern_session(state)
-    if session is None:
-        return {"joern_scan_results": empty}
-
-    root = _resolve_scan_root(state)
-    tracer.log(12, "joern_scan", f"Running code property graph queries over {len(session.cpgs)} graph(s)",
-                narrative="Running code property graph structural queries (unhardened XML parsers, trust-all TLS, "
-                          "non-literal format strings, weak crypto, hardcoded credentials, ...)...")
-    raws = [joern_runner.run_queries(b.cpg_path, timeout=state.get("joern_timeout_sec")) for b in session.cpgs]
-    failed = sum(1 for r in raws if r is None)
-    file_results, skipped = joern_findings.file_results_from_hits(raws, root)
-    rules = joern_findings.rules_for_hits(raws)
-    hit_count = sum(len(r["findings"]) for r in file_results)
-
-    writer = _findings_writer(state)
-    if writer is not None:
-        for r in file_results:
-            writer(r["file_path"], r["findings"])
-
-    skipped_note = ", ".join(f"{k}={v}" for k, v in skipped.items() if v)
-    tracer.log(12, "joern_scan",
-                f"Code property graph queries: {hit_count} hit(s) in {len(file_results)} file(s)"
-                + (f" ({failed} script failure(s))" if failed else ""),
-                detail=f"rules={sorted(r.id for r in rules)}; skipped {skipped_note or 'none'}",
-                narrative=f"Code property graph queries matched {hit_count} location(s) in {len(file_results)} file(s) "
-                          f"— recorded as unverified."
-                          + (f" Skipped generated/vendored files: {skipped_note}." if skipped_note else ""))
-
-    confirm_result: Dict[str, Any] = {}
-    usage = None
-    if hit_count and state.get("use_llm", True) and state.get("confirm_triage_groups"):
-        (_, _, _, _, _, stack_context, usage) = _scan_context(state)
-        confirm_result = llm_file_scan.group_confirm_unverified_findings(
-            file_results=file_results, repo_root=root, rules=rules,
-            stack_context=stack_context, usage=usage,
-            llm_provider=state.get("llm_provider"), llm_model=state.get("llm_model"),
-            group_cap=state.get("triage_confirm_group_cap", llm_file_scan.TRIAGE_CONFIRM_GROUP_CAP),
-            groups_per_call=state.get("triage_confirm_groups_per_call", llm_file_scan.DEFAULT_GROUPS_PER_CALL),
-            verdict_updates_writer=_staged_verdict_writer(state.get("verdict_updates_writer"), "joern_confirm"),
-            occurrence_validators=state.get("occurrence_validators", True),
-        )
-        tracer.log(12, "joern_scan",
-                    f"Confirmed {confirm_result['confirm_group_count']} code property graph group(s): "
-                    f"{confirm_result['tp_group_count']} TP, {confirm_result['fp_group_count']} FP, "
-                    f"{confirm_result['error_group_count']} error(s)",
-                    narrative=f"LLM-reviewed {confirm_result['confirm_group_count']} code property graph pattern group(s) — "
-                              f"{confirm_result['tp_group_count']} true positive, "
-                              f"{confirm_result['fp_group_count']} false positive.")
-
-    for r in file_results:
-        findings = r["findings"]
-        r["tp_count"] = sum(1 for f in findings if f.get("verdict") == "true_positive")
-        r["fp_count"] = sum(1 for f in findings if f.get("verdict") == "false_positive")
-        r["unverified_count"] = sum(1 for f in findings if f.get("verdict") == llm_file_scan.VERDICT_UNVERIFIED)
-    results = {
-        "files_scanned": len(file_results),
-        "files": file_results,
-        "tp_count": sum(r["tp_count"] for r in file_results),
-        "fp_count": sum(r["fp_count"] for r in file_results),
-        "unverified_count": sum(r["unverified_count"] for r in file_results),
-        "hit_count": hit_count,
-        "script_failures": failed,
-        "skipped": skipped,
-        "confirm_result": {k: v for k, v in confirm_result.items() if not k.startswith("_")},
-    }
-    out: Dict[str, Any] = {"joern_scan_results": results}
-    if usage is not None:
-        out["usage"] = usage
-    return out
-
-
-# ===========================================================================
 # STEP 9 — node_group_triage_findings
 #   Groups unverified findings (MEDIUM/LOW plus any CRITICAL/HIGH overflow
 #   routed into this tier) by construct and reports the collapse — no LLM
@@ -2736,16 +2480,15 @@ def node_joern_scan(state: SastState) -> dict:
 # ===========================================================================
 
 def node_corroborate_flows(state: SastState) -> dict:
-    """Attach Joern taint paths and call-graph chains to deep-scan, triage and
-    Joern-query findings at a matching sink (pipeline/reachability.py), before
-    triage groups are confirmed so the path reaches that prompt. Evidence only
-    adds: no finding is dropped or lowered for having no path."""
+    """Attach call-graph chains to deep-scan and triage findings at a matching
+    sink (pipeline/reachability.py), before triage groups are confirmed so the
+    chain reaches that prompt. Evidence only adds: no finding is dropped or
+    lowered for having no chain."""
     tracer: AgentTrace = state["_tracer"]
     index = state.get("reachability_index") or {}
     if not index:
         return {}
-    tiers = (("scan_results", "deep scan"), ("triage_scan_results", "triage"),
-             ("joern_scan_results", "code property graph queries"))
+    tiers = (("scan_results", "deep scan"), ("triage_scan_results", "triage"))
     writer = state.get("reachability_updates_writer")
     counts: Dict[str, int] = {}
     by_status: Counter = Counter()
@@ -2765,17 +2508,12 @@ def node_corroborate_flows(state: SastState) -> dict:
             for path, items in updates.items():
                 writer(path, items)
     by_tier = ", ".join(f"{label}={n}" for label, n in counts.items())
-    joern_n = by_status[reachability.STATUS_PATH] + by_status[reachability.STATUS_SANITIZED]
-    sanitized = by_status[reachability.STATUS_SANITIZED]
     chain_n = by_status[reachability.STATUS_ENTRY_REACHABLE]
     tracer.log(9, "corroborate_flows",
-                f"Reachability evidence on {sum(counts.values())} finding(s): {joern_n} code property graph path(s) "
-                f"({sanitized} sanitized), {chain_n} call-graph chain(s)"
+                f"Reachability evidence on {sum(counts.values())} finding(s): {chain_n} call-graph chain(s)"
                 + (f" — {by_tier}" if by_tier else ""),
                 narrative=f"Attached source-to-sink evidence to {sum(counts.values())} finding(s) from other "
-                          f"scan tiers: {joern_n} with a code property graph dataflow path"
-                          + (f" ({sanitized} through a sanitizer)" if sanitized else "")
-                          + f", {chain_n} with a call-graph chain from an entry point.")
+                          f"scan tiers: {chain_n} with a call-graph chain from an entry point.")
     return out
 
 
@@ -2886,14 +2624,12 @@ def node_confirm_triage_groups(state: SastState) -> dict:
 # ===========================================================================
 
 _REACH_COUNT_KEYS = {
-    reachability.STATUS_PATH: "corroborated",
-    reachability.STATUS_SANITIZED: "sanitized",
     reachability.STATUS_ENTRY_REACHABLE: "entry_reachable",
 }
 
 
 def _reachability_counts(file_results: List[Dict[str, Any]]) -> Dict[str, Any]:
-    out: Dict[str, Any] = {"corroborated": 0, "sanitized": 0, "entry_reachable": 0, "by_kind": {}}
+    out: Dict[str, Any] = {"entry_reachable": 0, "by_kind": {}}
     for file_result in file_results:
         for finding in file_result.get("findings") or []:
             status = (finding.get("reachability") or {}).get("status")
@@ -2910,25 +2646,12 @@ def node_generate_report(state: SastState) -> dict:
     deep_files = list((state.get("scan_results") or {}).get("files") or [])
     triage_files = list((state.get("triage_scan_results") or {}).get("files") or [])
     flow_files = list((state.get("flow_scan_results") or {}).get("files") or [])
-    joern_files = list((state.get("joern_scan_results") or {}).get("files") or [])
     report = llm_file_scan.build_report_from_file_results(
-        deep_files + triage_files + flow_files + joern_files
+        deep_files + triage_files + flow_files
     )
-    reach = _reachability_counts(deep_files + triage_files + flow_files + joern_files)
-    if reach["corroborated"] or reach["sanitized"] or reach["entry_reachable"]:
+    reach = _reachability_counts(deep_files + triage_files + flow_files)
+    if reach["entry_reachable"]:
         report["reachability"] = reach
-    joern_state = state.get("joern") or {}
-    # Only when a CPG build was actually attempted — a host without Joern
-    # keeps exactly the report shape it had before Joern support existed.
-    if joern_state.get("status") in ("ready", "failed"):
-        report["joern"] = {
-            **{k: v for k, v in joern_state.items() if not k.startswith("_")},
-            "query_hits": (state.get("joern_scan_results") or {}).get("hit_count", 0),
-        }
-    session = joern_state.get("_session")
-    if session is not None and not state.get("joern_work_dir"):
-        # Caller-owned work dirs are cleaned by the caller (agent_bridge).
-        session.cleanup()
     unverified = report.get("unverified_count") or 0
     unverified_note = f", {unverified} unverified" if unverified else ""
 
@@ -3054,10 +2777,9 @@ def persist_to_disk(state: SastState) -> Dict[str, Any]:
 # Parallel stages (build_graph(parallel=True))
 #   After derive_runtime_rules nothing downstream needs another stage's output
 #   until group_triage_findings: the deep scan, regex triage and the flow work
-#   (discover -> verify -> Joern queries) run side by side. The flow work is
-#   one node because LangGraph runs in supersteps — a chain of nodes would
-#   wait at every step for the slowest stage — and because discover_flows and
-#   joern_scan share one Joern session, which must not see concurrent queries.
+#   (discover -> verify) run side by side. The flow work is one node because
+#   LangGraph runs in supersteps — a chain of nodes would wait at every step
+#   for the slowest stage.
 # ===========================================================================
 
 STAGE_FINISHED = "Stage finished: "  # app/services/scan_progress.py keys on this
@@ -3075,10 +2797,10 @@ def node_fan_out(state: SastState) -> dict:
 
 
 def node_flows_branch(state: SastState) -> dict:
-    """discover_flows -> verify_flow_slices -> joern_scan, in order, as one node."""
+    """discover_flows -> verify_flow_slices, in order, as one node."""
     local = dict(state)
     out: Dict[str, Any] = {}
-    for node in (node_discover_flows, node_verify_flow_slices, node_joern_scan):
+    for node in (node_discover_flows, node_verify_flow_slices):
         update = node(local) or {}
         local.update(update)
         out.update(update)
@@ -3105,7 +2827,7 @@ def _staged(stage: str, node: Callable[[SastState], dict]) -> Callable[[SastStat
 # can stop after (--stop-after) to inspect what the scan has worked out so far.
 STOP_AFTER_STAGES = (
     "scan_directory", "analyze_tech_stack", "categorize_files", "map_modules_and_risk",
-    "build_joern_cpg", "build_call_graph", "derive_runtime_rules",
+    "build_call_graph", "derive_runtime_rules",
 )
 
 
@@ -3121,7 +2843,6 @@ def build_graph(parallel: bool = False, stop_after: Optional[str] = None):
             "analyze_tech_stack": node_analyze_tech_stack,
             "categorize_files": node_categorize_files,
             "map_modules_and_risk": node_map_modules_and_risk,
-            "build_joern_cpg": node_build_joern_cpg,
             "build_call_graph": node_build_call_graph,
             "derive_runtime_rules": node_derive_runtime_rules,
         }
@@ -3142,14 +2863,12 @@ def build_graph(parallel: bool = False, stop_after: Optional[str] = None):
     graph.add_node("group_triage_findings", node_group_triage_findings)
     graph.add_node("confirm_triage_groups", node_confirm_triage_groups)
     graph.add_node("generate_report", node_generate_report)
-    graph.add_node("build_joern_cpg", node_build_joern_cpg)
 
     graph.add_edge(START, "scan_directory")
     graph.add_edge("scan_directory", "analyze_tech_stack")
     graph.add_edge("analyze_tech_stack", "categorize_files")
     graph.add_edge("categorize_files", "map_modules_and_risk")
-    graph.add_edge("map_modules_and_risk", "build_joern_cpg")
-    graph.add_edge("build_joern_cpg", "build_call_graph")
+    graph.add_edge("map_modules_and_risk", "build_call_graph")
     graph.add_edge("build_call_graph", "derive_runtime_rules")
     if parallel:
         graph.add_node("fan_out", node_fan_out)
@@ -3165,13 +2884,11 @@ def build_graph(parallel: bool = False, stop_after: Optional[str] = None):
         graph.add_node("verify_flow_slices", node_verify_flow_slices)
         graph.add_node("scan_deep_files", node_scan_deep_files)
         graph.add_node("scan_triage_files", node_scan_triage_files)
-        graph.add_node("joern_scan", node_joern_scan)
         graph.add_edge("derive_runtime_rules", "discover_flows")
         graph.add_edge("discover_flows", "verify_flow_slices")
         graph.add_edge("verify_flow_slices", "scan_deep_files")
         graph.add_edge("scan_deep_files", "scan_triage_files")
-        graph.add_edge("scan_triage_files", "joern_scan")
-        graph.add_edge("joern_scan", "corroborate_flows")
+        graph.add_edge("scan_triage_files", "corroborate_flows")
     graph.add_edge("corroborate_flows", "group_triage_findings")
     graph.add_edge("group_triage_findings", "confirm_triage_groups")
     graph.add_edge("confirm_triage_groups", "generate_report")
@@ -3269,15 +2986,6 @@ def main() -> None:
     parser.add_argument("--flow-max-depth", type=int, default=None,
                          help="Override max call-graph hops (source to sink) when walking "
                               f"inter-file flows (default: {call_graph.MAX_HOP_DEPTH})")
-    parser.add_argument("--no-joern", action="store_true",
-                         help="Skip Joern entirely (no CPG, no Joern dataflow, no Joern queries)")
-    parser.add_argument("--no-joern-dataflow", action="store_true",
-                         help="Build the Joern CPG but don't feed its dataflow paths into flow verification")
-    parser.add_argument("--no-joern-queries", action="store_true",
-                         help="Build the Joern CPG but skip joern/queries.sc findings")
-    parser.add_argument("--joern-timeout", type=int, default=None,
-                         help=f"Per-Joern-subprocess timeout in seconds (default "
-                              f"{joern_runner.DEFAULT_TIMEOUT_SEC}, or JOERN_TIMEOUT_SEC)")
     parser.add_argument("--no-classify-deps", action="store_true",
                          help="Skip the LLM pass that labels dependencies no framework signature matched")
     parser.add_argument("--no-rerank-leftovers", action="store_true",
@@ -3337,14 +3045,10 @@ def main() -> None:
         "derive_runtime_rules": not args.no_derived_regex,
         "classify_unrecognized_deps": not args.no_classify_deps,
         "rerank_leftover_files": not args.no_rerank_leftovers,
-        "joern_dataflow": not (args.no_joern or args.no_joern_dataflow),
-        "joern_scan_queries": not (args.no_joern or args.no_joern_queries),
         "catalog_prefilter": args.catalog_prefilter,
         "parallel_stages": not args.sequential,
         "_tracer": tracer,
     }
-    if args.joern_timeout is not None:
-        initial_state["joern_timeout_sec"] = args.joern_timeout
     if args.flow_verify_cap is not None:
         initial_state["flow_verify_cap"] = args.flow_verify_cap
     if args.flow_max_depth is not None:

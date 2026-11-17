@@ -58,7 +58,7 @@ def normalize_expression(text: Any) -> str:
 def sink_expression(finding: Dict[str, Any], line_text: str = "") -> str:
     """The code that makes this finding the finding it is.
 
-    Pattern-based findings (regex, Joern queries, SCA) use the literal match.
+    Pattern-based findings (regex, SCA, and legacy code-graph query rows) use the literal match.
     LLM findings use the `sink` the model named, falling back to the flagged
     source line (not `snippet`: finalize_findings swaps that for a multi-line
     context window, which would tie identity to the neighbouring code)."""

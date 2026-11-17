@@ -5,9 +5,9 @@
 never needs boto3 / langgraph installed.
 
 Pipeline: scan_directory -> analyze_tech_stack -> categorize_files ->
-map_modules_and_risk -> build_joern_cpg -> build_call_graph -> derive_runtime_rules
+map_modules_and_risk -> build_call_graph -> derive_runtime_rules
 -> discover_flows -> verify_flow_slices -> scan_deep_files -> scan_triage_files
--> joern_scan -> group_triage_findings -> confirm_triage_groups
+-> corroborate_flows -> group_triage_findings -> confirm_triage_groups
 -> generate_report.
 
 `scan_deep_files` runs the full LLM scan over CRITICAL/HIGH files;
@@ -19,9 +19,7 @@ import importlib
 import importlib.util
 import logging
 import os
-import shutil
 import sys
-import tempfile
 import uuid
 from pathlib import Path
 from typing import Callable
@@ -69,12 +67,6 @@ def _sync_env_from_settings() -> None:
     if settings.codex_cli_path:
         os.environ.setdefault("CODEX_CLI_PATH", settings.codex_cli_path)
     os.environ.setdefault("CODEX_CLI_REQUEST_TIMEOUT", str(settings.codex_cli_request_timeout))
-    if settings.joern_home:
-        os.environ.setdefault("JOERN_HOME", settings.joern_home)
-    os.environ.setdefault("JOERN_TIMEOUT_SEC", str(settings.joern_timeout_sec))
-    os.environ.setdefault("JOERN_JAVA_OPTS", settings.joern_java_opts)
-    if settings.joern_java_home:
-        os.environ.setdefault("JOERN_JAVA_HOME", settings.joern_java_home)
 
 
 def _load_agent_module():
@@ -241,8 +233,6 @@ def run_real_scan(
     occurrence_validators = enabled("occurrence-validators")
     inter_file_flow = use_llm and enabled("inter-file-call-graph")
     derive_runtime_rules = enabled("runtime-derived-regex")
-    joern_dataflow = enabled("joern-dataflow")
-    joern_scan_queries = enabled("joern-scan-queries")
     deep_scan_critical_only = enabled("deep-scan-critical-only")
     triage_mode = (
         agent.llm_file_scan.TRIAGE_MODE_LLM
@@ -280,8 +270,6 @@ def run_real_scan(
         "occurrence_validators": occurrence_validators,
         "inter_file_flow": inter_file_flow,
         "derive_runtime_rules": derive_runtime_rules,
-        "joern_dataflow": joern_dataflow,
-        "joern_scan_queries": joern_scan_queries,
         "deep_scan_critical_only": deep_scan_critical_only,
         "triage_mode": triage_mode,
         "catalog_prefilter": catalog_prefilter,
@@ -326,10 +314,6 @@ def run_real_scan(
     if state_overrides:
         initial_state.update(state_overrides)
 
-    # Joern CPGs can run to gigabytes; own the scratch dir here so it is
-    # removed even when the graph raises partway through.
-    joern_work_dir = Path(tempfile.mkdtemp(prefix="sast-joern-"))
-    initial_state["joern_work_dir"] = str(joern_work_dir)
     if parallel_stages and scan_id:
         from app.services import scan_log
 
@@ -339,10 +323,7 @@ def run_real_scan(
             lambda stage: scan_log.capture(scan_id, prefix=f"[[stage:{stage}]] ")
         )
     graph = agent.build_graph(parallel=parallel_stages)
-    try:
-        final_state = agent.invoke_graph(graph, initial_state)
-    finally:
-        shutil.rmtree(joern_work_dir, ignore_errors=True)
+    final_state = agent.invoke_graph(graph, initial_state)
 
     scan_summary = dict(final_state.get("scan") or {})
     scan_summary.pop("files", None)  # per-file list lives in module_plan.files instead

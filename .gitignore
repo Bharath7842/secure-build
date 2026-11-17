@@ -18,12 +18,9 @@ frontend/.env.local
 # Runtime data (DBs, scan logs, workspaces, screenshots)
 data/
 
-# Joern console workspaces (CPG copies made by importCpg in whatever directory
-# joern ran from). joern_runner now runs Joern inside the scan's temp dir; these
-# catch manual runs and leftovers from before that.
+# Leftover console workspaces from the removed Joern stage.
 backend/workspace/
 backend/sast_engine/workspace/
-backend/sast_engine/joern/workspace/
 
 # Scratch/debug artifacts from local scan runs (see CLAUDE.md)
 sast_output/

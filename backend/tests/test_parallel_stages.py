@@ -54,7 +54,6 @@ def _run(agent, root, *, parallel, stage_log=None):
         # No deep-scan slots: every file goes to the regex triage tier, so
         # both graphs produce real findings without an LLM.
         "deep_scan_file_cap": 0, "backfill_deep_scan": False,
-        "joern_dataflow": False, "joern_scan_queries": False,
         "usage": agent.init_usage(None, None),
         "findings_writer": lambda path, findings: written.extend((path, f["rule_id"], f["line"]) for f in findings),
         "parallel_stages": parallel,
@@ -79,7 +78,7 @@ def test_parallel_graph_shape(agent):
     graph = agent.build_graph(parallel=True).get_graph()
     nodes = set(graph.nodes)
     assert {"fan_out", "flows", "scan_deep_files", "scan_triage_files"} <= nodes
-    assert not {"discover_flows", "verify_flow_slices", "joern_scan"} & nodes
+    assert not {"discover_flows", "verify_flow_slices"} & nodes
     edges = {(e.source, e.target) for e in graph.edges}
     for branch in ("flows", "scan_deep_files", "scan_triage_files"):
         assert ("fan_out", branch) in edges

@@ -1,8 +1,8 @@
 """The append-only machine decision history of a finding (SAST-00-050).
 
 Every verdict the scanner gives an occurrence — the first one when the finding
-is written, and each later change by group confirmation, the Joern confirm, the
-reconcile sweep or the reachability confidence floor — is one `FindingDecision`
+is written, and each later change by group confirmation, the (removed) code-graph
+confirm, the reconcile sweep or the reachability confidence floor — is one `FindingDecision`
 row. Nothing here updates or deletes: the module exposes inserts only (a test
 holds it to that), and the model refuses UPDATE/DELETE through the ORM.
 

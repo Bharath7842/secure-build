@@ -131,7 +131,7 @@ API scans (limitation `parallel-scan-stages`, default on) and the CLI (unless
 joining for grouping and confirmation:
 
 ```
-derive_runtime_rules -> fan_out -> flows (discover -> verify -> Joern queries)
+derive_runtime_rules -> fan_out -> flows (discover -> verify)
                                 -> scan_deep_files
                                 -> scan_triage_files
                      -> corroborate_flows -> group_triage_findings -> confirm_triage_groups
@@ -149,31 +149,29 @@ calls back off with jitter. Each stage's log lines are prefixed
 
 `pipeline/reachability.py` turns flow discovery into evidence for findings
 from the *other* tiers. `discover_flows` indexes every path by its sink
-(file, line) as `state["reachability_index"]` — every `flows.sc` path and every
-call-graph flow, taken **before** the verify cap and before single-file Joern
-paths in deep-scanned files are dropped, so evidence the flow stage didn't
-spend LLM calls on isn't lost. `corroborate_flows` runs right after the
-stages join. It matches deep-scan, regex-triage and Joern-query findings to a
+(file, line) as `state["reachability_index"]` — every call-graph flow, taken
+**before** the verify cap, so evidence the flow stage didn't spend LLM calls
+on isn't lost. `corroborate_flows` runs right after the
+stages join. It matches deep-scan and regex-triage findings to a
 sink in the same file within ±2 lines whose kind fits the finding's CWE
 (`SINK_KIND_CWES`; a finding with no CWE never matches), and stores the best
 match on `finding["reachability"]` (persisted as `Finding.reachability`).
 
 | status | from | meaning | effect |
 |---|---|---|---|
-| `path` | Joern | this request value reaches the sink's argument | a `true_positive` is raised to 0.9 confidence |
-| `sanitized_path` | Joern | as above, through a taint-spec sanitizer | attached only |
 | `entry_reachable` | call graph | an entry point calls down to the sink's method; doesn't show which value | attached only |
 
-Evidence only adds. A finding with no path is never dropped and its
-confidence is never lowered, because neither analysis models every
+`path` and `sanitized_path` appear only on scans made before the
+code-property-graph stage was removed; they are still read (UI, exports,
+confirmation prompts) but never produced.
+
+Evidence only adds. A finding with no chain is never dropped and its
+confidence is never lowered, because the call graph doesn't model every
 framework's sources. Because corroboration runs before
 `confirm_triage_groups`, grouped confirmation picks the occurrence with the
 strongest evidence as the group's representative and adds the path to that
-prompt (`render_evidence`). The 0.9 floor is applied again after the verdict,
-per occurrence. Joern `kind=flow` findings carry their own path from
-`flow_verify`. Without Joern, the call graph alone still produces
-`entry_reachable` evidence on Java/Python repos. With neither, the node is a
-no-op. The UI shows the path on the finding card, and the PDF/Excel exports
+prompt (`render_evidence`). The call graph produces `entry_reachable`
+evidence on Java/Python repos; without a call graph the node is a no-op. The UI shows the path on the finding card, and the PDF/Excel exports
 add it to the data-flow text.
 
 ## Per-occurrence decisions
@@ -192,74 +190,6 @@ CWE-89 findings are decided from the statement they point at (`pipeline/sql_sema
 ## Log and output sinks
 
 Log forging, stdout-as-XSS and Angular render context are decided from the resolved call (`pipeline/output_sinks.py` classifies the receiver: logger, process stream, HTTP response writer, other, unknown), by validators that never dismiss on a name. `log_call_boundary` reads the logger call's own arguments (the regex only generates candidates), `log_value_domain` proves constant/numeric/enum arguments cannot forge a line, `log_exception_provenance` (`pipeline/exception_provenance.py`) works out what text a caught exception can carry from the catch types, the repository's construction sites and a small JDK table, and `log_layout` (`pipeline/logging_config.py`) reads the repository's logback/log4j/JUL configuration to see whether the appender neutralises CR/LF (a missing configuration is a note, not a gap). `servlet_output_sink` makes XSS require a real response writer and a request-derived value; `angular_render_context` follows a translation or component property into its template. Answers can be scoped to a CWE (`applies_to_cwe`), and counters are under `usage_summary.validators` and `usage_summary.exception_summaries`. The `.jsp` scriptlets are read through `pipeline/jsp_scriptlets.py`. See the root `CLAUDE.md` § Log and output sinks.
-
-## Joern (optional)
-
-When [Joern](https://joern.io) is installed (`joern` / `joern-parse` on
-`PATH`, or `JOERN_HOME` pointing at the install dir; JDK 17+), two extra
-graph nodes use it. Without Joern both nodes log one line and do nothing, and
-the scan behaves exactly as before.
-
-- **`build_joern_cpg`** (after risk mapping) — `pipeline/joern_runner.py`
-  builds one code property graph per dominant language (`joern-parse` handles
-  one frontend per CPG; up to 3 languages with at least 3 files each; tests,
-  vendored and build dirs excluded). The CPGs are shared by both uses below,
-  so the parse cost is paid once.
-- **Dataflow → flow verification** (`discover_flows`) — `joern/flows.sc`
-  runs `reachableByFlows` from request inputs (Spring/JAX-RS entry params,
-  servlet accessors, `request.args`, `req.body`, ...) to the sinks in
-  `joern/taint_spec.json` (SQL, command, eval, file, SSRF, XSS, redirect,
-  deserialization, XXE, LDAP, reflection, plus Joern-only response header,
-  Spring `ResponseEntity` body and logger sinks). Framework-injected entry
-  params (`HttpServletResponse`, `Model`, `Principal`, ...;
-  `non_source_param_types`) are not sources. `pipeline/joern_flows.py` turns
-  each path into the same `Flow` the tree-sitter call graph produces, plus
-  `Flow.taint_path` (each expression the value passes through), which
-  `flow_verify` adds to the LLM prompt. Each flow also carries the CPG's
-  control dependence — `Flow.guards`, the conditions the path's nodes depend
-  on, e.g. an `if (!id.matches("\\d+")) return` before the sink — and
-  `Flow.sanitizers`, the taint-spec `sanitizers` calls the value passes
-  through (scoped per sink kind: `parseInt` counts for SQL, not XSS). Both
-  only annotate: no flow is dropped for them; the prompt lists them and
-  sanitized flows rank last. `authenticated` comes from `@PreAuthorize`/
-  `@Secured`/`@RolesAllowed` on the source method. Sink kinds run one at a
-  time in `kind_order` (most severe first), `maxFlows` applies per kind, and
-  the output file is rewritten after each kind, so a timeout returns the
-  finished kinds (`complete: false`) instead of nothing. Header, response-body
-  and log flows rank behind every other kind. Joern flows rank first, with up to a
-  third of `FLOW_VERIFY_CAP` reserved for tree-sitter flows Joern didn't also
-  find (e.g. Spring Data repository sinks). Flows reaching the same sink
-  (file, line, kind) collapse to the best-ranked one, which lists the other
-  entry points in its prompt (`call_graph.collapse_flows_by_sink`), so one
-  sink costs one verification. Single-file Joern flows in files
-  the deep scan already reviewed are not re-verified, though they still feed
-  reachability evidence (above). Because Joern isn't limited to
-  Java/Python, this also gives JS/TS, C/C++, Go, PHP, ... repos flow
-  verification.
-- **`joern_scan`** (after regex triage) — `joern/queries.sc` runs structural
-  queries a regex can't express (XML parser built with no hardening call in
-  the same method, trust-all TrustManager/HostnameVerifier, non-literal C
-  format string, unbounded libc copies, weak hash/cipher, cookie without
-  Secure/HttpOnly, `shell=True`, Flask `debug=True`, hardcoded credentials).
-  `pipeline/joern_findings.py` writes the hits as `kind=joern`,
-  `verdict=unverified` findings and confirms them with the same grouped LLM
-  confirmation regex hits use. This node runs the confirmation itself because
-  `group/confirm_triage_groups` are skipped under `llm_triage`.
-
-Every Joern failure (missing binary, timeout, bad exit, unreadable JSON)
-degrades to "no Joern results" (or, for `flows.sc`, the kinds finished
-before it) and never fails the scan. Joern runs with the session's temp dir
-as its working directory, because `importCpg` copies each CPG into
-`./workspace/` — run from the backend directory, those copies used to pile up
-in `backend/workspace/` forever. Per-project
-toggles are `joern-dataflow` and `joern-scan-queries` in
-`app/defaults/scan_limitations.py`. CLI flags are `--no-joern`,
-`--no-joern-dataflow`, `--no-joern-queries` and `--joern-timeout`. Backend
-settings are `JOERN_HOME`, `JOERN_TIMEOUT_SEC` (default 900) and
-`JOERN_JAVA_OPTS` (default `-Xmx4g`). Built against Joern 4.0.653. The
-scripts use the `io.shiftleft`/`io.joern.dataflowengineoss` APIs, so
-re-check them after a major Joern upgrade (`pytest -m live
-tests/test_joern.py`).
 
 ## Ripgrep catalog prefilter
 
@@ -325,7 +255,6 @@ dict stored on `Scan.metadata_json`.
 python sast_scan_agent.py --path /path/to/project
 python sast_scan_agent.py --path /path/to/project --no-llm
 python sast_scan_agent.py --path /path/to/project --llm-provider ollama --llm-model granite-code:3b-instruct
-python sast_scan_agent.py --path /path/to/project --no-joern
 python sast_scan_agent.py --path /path/to/project --sequential   # one stage at a time
 python sast_scan_agent.py --path /path/to/project --llm-provider openai_compat \
     --llm-base-url http://localhost:8000/v1 --llm-model Qwen/Qwen2.5-Coder-32B-Instruct

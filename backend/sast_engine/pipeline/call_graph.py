@@ -122,11 +122,6 @@ _SINK_SEVERITY = {
     "reflect": 2,
     "files": 3,
     "redirect": 3,
-    # Joern-only kinds (joern/taint_spec.json). Real but lower-impact, and far
-    # more numerous on a typical web app — see joern_flows._LOW_VALUE_KINDS.
-    "header": 3,
-    "response_body": 3,
-    "log": 4,
 }
 
 # (receiver FQCNs, method names, sink kind). An empty method set means any
@@ -376,16 +371,6 @@ class Flow:
     authenticated: bool
     files: List[str]
     unresolved: List[str] = field(default_factory=list)
-    # Expression-level dataflow path ({file, line, method, code} per step).
-    # Only Joern flows (pipeline/joern_flows.py) carry one; this graph is
-    # method-level and leaves it empty.
-    taint_path: List[Dict[str, Any]] = field(default_factory=list)
-    # Joern only, like taint_path ({file, line, code} each): conditions the
-    # path's nodes are control-dependent on, and sanitizer calls (taint_spec
-    # "sanitizers") the value passes through. Context for the verifier — a
-    # flow is never dropped for having either.
-    guards: List[Dict[str, Any]] = field(default_factory=list)
-    sanitizers: List[Dict[str, Any]] = field(default_factory=list)
     # Entry points of flows collapsed into this one because they reach the
     # same sink ({file, line, method, label} each; collapse_flows_by_sink).
     other_sources: List[Dict[str, Any]] = field(default_factory=list)
@@ -1810,8 +1795,5 @@ def flow_to_dict(flow: Flow) -> Dict[str, Any]:
             }
             for h in flow.hops
         ],
-        "taint_path": list(flow.taint_path),
-        "guards": list(flow.guards),
-        "sanitizers": list(flow.sanitizers),
         "other_sources": list(flow.other_sources),
     }

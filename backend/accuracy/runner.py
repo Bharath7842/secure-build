@@ -212,24 +212,16 @@ def _refusing_provider(unrecorded: list[str]):
 
 @contextmanager
 def _isolated_environment() -> Iterator[None]:
-    """No cloud credentials, no Joern, for the duration of a replayed run."""
+    """No cloud credentials for the duration of a replayed run."""
     saved = {k: v for k, v in os.environ.items() if k.startswith(_CLOUD_ENV_PREFIXES)}
-    saved_joern = os.environ.get("JOERN_HOME")
-    empty = tempfile.mkdtemp(prefix="no-joern-")
     for key in saved:
         del os.environ[key]
     os.environ["AWS_EC2_METADATA_DISABLED"] = "true"
-    os.environ["JOERN_HOME"] = empty
     try:
         yield
     finally:
         os.environ.pop("AWS_EC2_METADATA_DISABLED", None)
         os.environ.update(saved)
-        if saved_joern is None:
-            os.environ.pop("JOERN_HOME", None)
-        else:
-            os.environ["JOERN_HOME"] = saved_joern
-        shutil.rmtree(empty, ignore_errors=True)
 
 
 def _summarize(finding: Any) -> dict[str, Any]:

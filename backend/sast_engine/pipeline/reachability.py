@@ -1,22 +1,21 @@
-"""reachability.py — source->sink paths as evidence for other tiers' findings.
+"""reachability.py — source->sink chains as evidence for other tiers' findings.
 
-flows.sc reports every source→sink path it finds, but only the top
-FLOW_VERIFY_CAP become verified flows, and single-file paths in deep-scanned
-files are dropped before verification (joern_flows.flows_from_joern). The
-tree-sitter call graph likewise caps its flows. This module keeps *all* of
-them as a sink index so a regex, deep-scan or Joern-query finding at a sink
-line can carry the path that reaches it.
+The tree-sitter call graph caps its flows at FLOW_VERIFY_CAP before
+verification. This module keeps *all* of them as a
+sink index so a regex or deep-scan finding at a sink line can carry the chain
+that reaches it.
 
-Two strengths of evidence:
-- Joern (STATUS_PATH / STATUS_SANITIZED): an expression-level taint path — this
-  request value reaches this argument.
-- Call graph (STATUS_ENTRY_REACHABLE): a method-level chain — an entry point
-  calls down to the method holding this sink. It doesn't show which value
-  reaches the argument, so it is context, never a confidence boost.
+Evidence (STATUS_ENTRY_REACHABLE): a method-level chain — an entry point calls
+down to the method holding this sink. It doesn't show which value reaches the
+argument, so it is context, never a confidence boost.
 
-Evidence only ever adds: a finding with no path keeps its verdict and its
-confidence, because neither analysis models every framework's sources. An
-unsanitized Joern path raises a true positive's confidence to
+STATUS_PATH / STATUS_SANITIZED are legacy: expression-level taint paths that
+an earlier, since-removed code-property-graph stage attached. New scans never
+produce them; they stay defined because persisted rows carry them and the
+reconcile sweep, the confirmation prompt and the exports still read them.
+
+Evidence only ever adds: a finding with no chain keeps its verdict and its
+confidence. A legacy unsanitized path raises a true positive's confidence to
 REACHABLE_CONFIDENCE_FLOOR; anything weaker is attached but raises nothing.
 """
 
@@ -25,15 +24,14 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Tuple
 
-# No pipeline imports: llm_file_scan imports this module, and joern_flows ->
-# call_graph -> llm_file_scan would make that a cycle. _norm and _locations
-# mirror joern_flows' helpers of the same name.
+# No pipeline imports: llm_file_scan imports this module, and call_graph ->
+# llm_file_scan would make that a cycle.
 
 STATUS_PATH = "path"
 STATUS_SANITIZED = "sanitized_path"
 STATUS_ENTRY_REACHABLE = "entry_reachable"
-# Lower sorts first: a value-level path beats one through a sanitizer, which
-# beats a method-level call chain.
+# Lower sorts first: a (legacy) value-level path beats one through a sanitizer,
+# which beats a method-level call chain.
 _STATUS_RANK = {STATUS_PATH: 0, STATUS_SANITIZED: 1, STATUS_ENTRY_REACHABLE: 2}
 REACHABLE_CONFIDENCE_FLOOR = 0.9
 LINE_TOLERANCE = 2
@@ -42,8 +40,7 @@ LINE_TOLERANCE = 2
 MAX_PATH_STEPS = 12
 _HEAD_STEPS = 3
 
-# taint_spec.json sink kind -> CWEs a finding at that sink can describe.
-# tests/test_reachability.py checks every kind in kind_order has an entry.
+# call-graph sink kind -> CWEs a finding at that sink can describe.
 SINK_KIND_CWES: Dict[str, FrozenSet[str]] = {
     "sql": frozenset({"89"}),
     "jpa": frozenset({"89", "564"}),
@@ -58,9 +55,6 @@ SINK_KIND_CWES: Dict[str, FrozenSet[str]] = {
     "reflect": frozenset({"470"}),
     "files": frozenset({"22", "23", "36", "73"}),
     "redirect": frozenset({"601"}),
-    "header": frozenset({"113", "644"}),
-    "response_body": frozenset({"79", "209"}),
-    "log": frozenset({"117", "93"}),
 }
 
 _CWE_RE = re.compile(r"\d+")
@@ -72,76 +66,16 @@ def _norm(path: str) -> str:
     return path.replace("\\", "/").lstrip("./")
 
 
-def _locations(raw: Any) -> List[Dict[str, Any]]:
-    return [
-        {"file": _norm(str(item.get("file") or "")), "line": int(item.get("line") or -1),
-         "code": str(item.get("code") or "")[:200]}
-        for item in (raw or []) if isinstance(item, dict)
-    ]
-
-
 def cwe_number(cwe: Any) -> Optional[str]:
     """"CWE-89", "89", "CWE-89: SQL Injection" -> "89"."""
     m = _CWE_RE.search(str(cwe or ""))
     return m.group(0) if m else None
 
 
-def _step(element: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "file": _norm(str(element.get("file") or "")),
-        "line": int(element.get("line") or -1),
-        "method": str(element.get("method") or ""),
-        "code": str(element.get("code") or "")[:200],
-    }
-
-
 def _compact(path: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if len(path) <= MAX_PATH_STEPS:
         return path
     return path[:_HEAD_STEPS] + path[-(MAX_PATH_STEPS - _HEAD_STEPS):]
-
-
-def evidence_from_raw(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """One flows.sc flow -> an evidence dict, or None when it has no usable
-    file/line (Joern's synthetic <empty>/<unknown> nodes)."""
-    elements = [
-        e for e in (raw.get("elements") or [])
-        if isinstance(e, dict) and e.get("file") and not str(e.get("file")).startswith("<")
-    ]
-    path = [_step(e) for e in elements]
-    path = [s for s in path if s["file"] and s["line"] > 0]
-    if not path:
-        return None
-    sanitizers = _locations(raw.get("sanitizers"))
-    return {
-        "status": STATUS_SANITIZED if sanitizers else STATUS_PATH,
-        "sink_kind": str(raw.get("sink_kind") or "unknown"),
-        "sink_code": str(raw.get("sink_code") or path[-1]["code"])[:200],
-        "source": {k: path[0][k] for k in ("file", "line", "code")},
-        "sink": {k: path[-1][k] for k in ("file", "line", "code")},
-        "taint_path": _compact(path),
-        "steps_total": len(path),
-        "sanitizers": sanitizers,
-        "guards": _locations(raw.get("guards")),
-    }
-
-
-def evidence_from_flow(flow: Any) -> Optional[Dict[str, Any]]:
-    """Evidence for a verified Joern Flow (call_graph.Flow with taint_path)."""
-    path = [s for s in (flow.taint_path or []) if s.get("file") and int(s.get("line") or -1) > 0]
-    if not path:
-        return None
-    return {
-        "status": STATUS_SANITIZED if flow.sanitizers else STATUS_PATH,
-        "sink_kind": flow.sink_kind,
-        "sink_code": flow.hops[-1].label if flow.hops else path[-1].get("code", ""),
-        "source": {k: path[0].get(k) for k in ("file", "line", "code")},
-        "sink": {k: path[-1].get(k) for k in ("file", "line", "code")},
-        "taint_path": _compact(list(path)),
-        "steps_total": len(path),
-        "sanitizers": list(flow.sanitizers or []),
-        "guards": list(flow.guards or []),
-    }
 
 
 def evidence_from_call_graph_flow(flow: Any) -> Optional[Dict[str, Any]]:
@@ -180,25 +114,17 @@ def _add(index: SinkIndex, seen: set, ev: Optional[Dict[str, Any]]) -> None:
     index.setdefault(key, []).append(ev)
 
 
-def build_sink_index(
-    raw_results: Iterable[Optional[Dict[str, Any]]] = (),
-    call_graph_flows: Iterable[Any] = (),
-) -> SinkIndex:
-    """Index every flows.sc path (one result per CPG) and every call-graph
-    flow by (sink file, sink line)."""
+def build_sink_index(call_graph_flows: Iterable[Any] = ()) -> SinkIndex:
+    """Index every call-graph flow by (sink file, sink line)."""
     index: SinkIndex = {}
     seen: set = set()
-    for result in raw_results:
-        for raw in (result or {}).get("flows") or []:
-            if isinstance(raw, dict):
-                _add(index, seen, evidence_from_raw(raw))
     for flow in call_graph_flows:
         _add(index, seen, evidence_from_call_graph_flow(flow))
     return index
 
 
 def evidence_rank(evidence: Optional[Dict[str, Any]]) -> int:
-    """0 = Joern path, 1 = sanitized Joern path, 2 = call-graph chain, 9 = none."""
+    """0 = legacy path, 1 = legacy sanitized path, 2 = call-graph chain, 9 = none."""
     return _STATUS_RANK.get((evidence or {}).get("status"), 9)
 
 
@@ -260,7 +186,7 @@ def corroborate_file_results(
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Attach evidence to every matching finding in a tier's `files` list, in
     place, and raise confidence where apply_confidence allows. Findings that
-    already carry evidence (Joern flow findings) are left alone.
+    already carry evidence are left alone.
 
     Returns {file_path: [{rule_id, line, reachability, confidence}]} for the
     findings that changed, ready for a DB update writer."""
@@ -304,7 +230,7 @@ def render_evidence(evidence: Dict[str, Any]) -> str:
         f"  {s.get('code', '')}  ({s.get('file', '')}:{s.get('line', '')})" for s in steps
     )
     lines = [
-        f"Dataflow evidence (Joern, {evidence.get('sink_kind')} sink) — a request-controlled "
+        f"Dataflow evidence ({evidence.get('sink_kind')} sink) — a request-controlled "
         "value reaches this location along this path. It proves reachability for this "
         "occurrence only; a listed sanitizer or guard may still make it safe:",
         chain + (f"\n  ... {elided} intermediate step(s) omitted" if elided > 0 else ""),

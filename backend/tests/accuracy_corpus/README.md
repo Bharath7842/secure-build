@@ -36,7 +36,7 @@ review's `#` number in `seed_findings` for traceability only.
 | `adjudication` | `adjudicated` once a **second reviewer** agrees with the expectation, else `dev_label_only`. Release gates count only `adjudicated` cases (SAST-00-100) |
 | `xfail` | a known gap: the epic that will fix it. Reported, never failing; the run fails the day the case starts passing, so the marker goes with the fix |
 | `allow_absent` | a negative may also pass by the rule not firing at all |
-| `limitations`, `state_overrides` | engine knobs on top of the corpus defaults (sequential, no Joern, no derived rules, no call graph, no backfill into the deep scan) |
+| `limitations`, `state_overrides` | engine knobs on top of the corpus defaults (sequential, no derived rules, no call graph, no backfill into the deep scan) |
 | `expected` | list of `{rule_id and/or cwe, file, sink_line (±2), verdict, issue_class?, unresolved_reason?, reason_tag?}`. `reason_tag` is a word that must appear in the finding's `verdict_reason` |
 | `scripted` | what the scripted recorder answers (below) |
 

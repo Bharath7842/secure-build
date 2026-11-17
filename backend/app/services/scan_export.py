@@ -520,6 +520,7 @@ def _cwe_display(finding: Finding) -> str:
 
 
 _PDF_ISSUE_GROUPS_MAX = 40
+_PDF_ISSUE_DETAIL_MAX = 12  # issue groups of one CWE that get their own evidence block
 
 
 def _issue_groups_text(groups: list[Finding]) -> str:
@@ -588,7 +589,7 @@ _REACHABILITY_RANK = {"path": 0, "sanitized_path": 1, "entry_reachable": 2}
 
 
 def _reachability_text(finding: Finding) -> str:
-    """The Joern source->sink path attached to this finding, one step per line."""
+    """The source->sink evidence attached to this finding, one step per line."""
     evidence = finding.reachability or {}
     steps = evidence.get("taint_path") or []
     if not steps:
@@ -639,6 +640,22 @@ def _truncate_text(text: str, limit: int) -> str:
     if len(raw) <= limit:
         return raw
     return raw[: max(0, limit - 20)].rstrip() + "\n… [truncated]"
+
+
+FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def protect_workbook_text(workbook: Any) -> None:
+    """Store every string cell that would start a formula as text, quote-prefixed, so
+    opening the report cannot run something a scanned repository or a model wrote
+    (a title of `=HYPERLINK(...)`, a package named `@SUM(...)`). Done once on the
+    finished workbook, so no sheet builder has to remember it (LLM05)."""
+    for sheet in workbook.worksheets:
+        for row in sheet.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, str) and cell.value.startswith(FORMULA_PREFIXES):
+                    cell.data_type = "s"
+                    cell.quotePrefix = True
 
 
 def _excel_scalar(value: Any) -> Any:
@@ -1142,6 +1159,18 @@ class CweFinding:
         return getattr(self.__dict__["_representative"], name)
 
 
+def _unit_title(lead: Finding, groups: list[Finding], key: str, representative: Finding) -> str:
+    """The heading of a CWE unit. When its groups are about different things, the
+    lead group's title alone would present the others (an IDOR under "company
+    takeover") as that issue, so say how many other issues share the CWE."""
+    title = lead.title or representative.title or "Untitled finding"
+    distinct = {" ".join((g.title or "").lower().split()) for g in groups} - {""}
+    if len(distinct) <= 1:
+        return title
+    others = len(distinct) - 1
+    return f"{title} (+{others} other {'issue' if others == 1 else 'issues'} sharing {key})"
+
+
 def cwe_findings(grouped: list[Finding]) -> list["CweFinding"]:
     """The final findings of a scan: `group_findings_by_issue` output collapsed
     to one per (verdict bucket, CWE). This is what the headline counts count and
@@ -1188,7 +1217,7 @@ def cwe_findings(grouped: list[Finding]) -> list["CweFinding"]:
         covered = [g.review_coverage for g in ordered if getattr(g, "review_coverage", None)]
         out.append(CweFinding(
             representative,
-            title=lead.title or representative.title,
+            title=_unit_title(lead, ordered, key, representative),
             occurrence_count=sum(_occurrences(g) for g in ordered),
             affected_files=paths,
             affected_lines=[{"file_path": p, "line": n} for p, n in locations] or None,
@@ -1257,12 +1286,18 @@ def _build_summary_sheet(sheet: Any, project: Project, scan: Scan, gate: dict, c
     sheet["A1"].font = title_font
     sheet.merge_cells("A1:B1")
 
-    gate_failed = bool(gate.get("gate_failed"))
-    sheet["A2"] = "QUALITY GATE FAILED" if gate_failed else "QUALITY GATE PASSED"
+    gate_label, gate_hex, gate_note = _gate_presentation(gate)
+    sheet["A2"] = gate_label
     sheet["A2"].font = Font(name="Calibri", size=12, bold=True, color="FFFFFF")
-    sheet["A2"].fill = PatternFill("solid", fgColor="B91C1C" if gate_failed else "047857")
+    sheet["A2"].fill = PatternFill("solid", fgColor=gate_hex.lstrip("#").upper())
     sheet["A2"].alignment = Alignment(horizontal="center")
     sheet.merge_cells("A2:B2")
+    if gate_note:
+        sheet["A3"] = gate_note
+        sheet["A3"].font = Font(name="Calibri", size=10, italic=True, color="64748B")
+        sheet["A3"].alignment = Alignment(wrap_text=True, vertical="top")
+        sheet.merge_cells("A3:B3")
+        sheet.row_dimensions[3].height = 42
 
     meta_rows: list[tuple[str, Any]] = [
         ("Project", project.name),
@@ -1656,6 +1691,7 @@ def _build_excel_sbom_report(project: Project, scan: Scan) -> bytes:
     _build_sbom_summary_sheet(summary, project, scan, data)
     _build_sbom_components_sheet(wb.create_sheet("Components"), data["components"])
     buf = io.BytesIO()
+    protect_workbook_text(wb)
     wb.save(buf)
     return buf.getvalue()
 
@@ -1667,6 +1703,7 @@ def _build_excel_sca_report(project: Project, scan: Scan, findings: list[Finding
     _build_sca_summary_sheet(summary, project, scan, findings)
     _build_sca_findings_sheet(wb.create_sheet("Findings"), findings)
     buf = io.BytesIO()
+    protect_workbook_text(wb)
     wb.save(buf)
     return buf.getvalue()
 
@@ -1696,6 +1733,7 @@ def build_excel_report(project: Project, scan: Scan, findings: list[Finding]) ->
     _build_findings_sheet(wb.create_sheet("Issue Groups"), findings)
 
     buf = io.BytesIO()
+    protect_workbook_text(wb)
     wb.save(buf)
     return buf.getvalue()
 
@@ -1911,16 +1949,6 @@ def _finding_story_block(
         verdict_bg = colors.HexColor("#334155")   # dark slate — outside the contract
 
     title = finding.title or "Untitled finding"
-    description = _description_text(finding)
-    taint_flow = _taint_flow_text(finding)
-    recommendation = _recommendation_text(finding)
-    example_fix = _example_fix_text(finding)
-    if not recommendation and finding.ai_fix and not example_fix:
-        recommendation = (finding.ai_fix or "").strip()
-    risk = _risk_text(finding)
-    location_paths = _location_paths(finding)
-    location_code = _location_code(finding)
-
     sev_w, verdict_w = 26 * mm, 34 * mm
     title_w = max(40 * mm, inner_width - sev_w - verdict_w - 4 * mm)
     header = Table(
@@ -1991,30 +2019,61 @@ def _finding_story_block(
         strips.append(_labelled_block("Severity", severity_text, styles=styles, width=inner_width,
                                       label_color="#334155"))
 
-    if description:
-        strips.append(_labelled_block("Description", description, styles=styles,
-                                      width=prose_width, label_color="#1e3a5f"))
-    if risk and risk != description:
-        strips.append(_labelled_block("Risk", risk, styles=styles, width=prose_width,
-                                      label_color="#991b1b", accent="#fef2f2"))
-    if taint_flow:
-        strips.append(_labelled_block("Data flow", taint_flow, styles=styles,
-                                      width=inner_width, label_color="#0369a1", accent="#f0f9ff"))
-    if location_paths:
-        strips.append(_labelled_block("Affected location(s)", _location_paths_display(finding),
-                                      styles=styles, width=inner_width, label_color="#334155"))
-    if location_code:
-        strips.extend(_code_boxes("Code context", location_code, styles=styles, width=inner_width))
-    if recommendation:
-        strips.append(_labelled_block("Recommendation", recommendation, styles=styles,
-                                      width=prose_width, label_color="#065f46", accent="#ecfdf5"))
-    if example_fix:
-        strips.extend(_code_boxes("Example fix", example_fix, styles=styles, width=inner_width))
+    def evidence_strips(item: Finding) -> list[Any]:
+        """The evidence and the fix of ONE issue group, from that group's own fields."""
+        out_strips: list[Any] = []
+        item_description = _description_text(item)
+        item_recommendation = _recommendation_text(item)
+        item_example_fix = _example_fix_text(item)
+        if not item_recommendation and item.ai_fix and not item_example_fix:
+            item_recommendation = (item.ai_fix or "").strip()
+        item_risk = _risk_text(item)
+        item_flow = _taint_flow_text(item)
+        item_code = _location_code(item)
+        if item_description:
+            out_strips.append(_labelled_block("Description", item_description, styles=styles,
+                                              width=prose_width, label_color="#1e3a5f"))
+        if item_risk and item_risk != item_description:
+            out_strips.append(_labelled_block("Risk", item_risk, styles=styles, width=prose_width,
+                                              label_color="#991b1b", accent="#fef2f2"))
+        if item_flow:
+            out_strips.append(_labelled_block("Data flow", item_flow, styles=styles,
+                                              width=inner_width, label_color="#0369a1", accent="#f0f9ff"))
+        if _location_paths(item):
+            out_strips.append(_labelled_block("Affected location(s)", _location_paths_display(item),
+                                              styles=styles, width=inner_width, label_color="#334155"))
+        if item_code:
+            out_strips.extend(_code_boxes("Code context", item_code, styles=styles, width=inner_width))
+        if item_recommendation:
+            out_strips.append(_labelled_block("Recommendation", item_recommendation, styles=styles,
+                                              width=prose_width, label_color="#065f46", accent="#ecfdf5"))
+        if item_example_fix:
+            out_strips.extend(_code_boxes("Example fix", item_example_fix, styles=styles, width=inner_width))
+        return out_strips
+
     issue_groups = getattr(finding, "issue_groups", None) or []
     if len(issue_groups) > 1:
+        # One CWE can hold unrelated issues (an IDOR and an account takeover are both
+        # CWE-639; two different secrets written to a log are both CWE-532). The
+        # headline counts stay per CWE, but the representative's description, code
+        # and fix must not stand in for the others: each group gets its own.
         strips.append(_labelled_block(
             f"Issue groups ({len(issue_groups)})", _issue_groups_text(issue_groups),
             styles=styles, width=inner_width, label_color="#334155"))
+        for n, group in enumerate(issue_groups[:_PDF_ISSUE_DETAIL_MAX], start=1):
+            strips.append(_labelled_block(
+                f"Issue {n} of {len(issue_groups)} · {_severity_bucket(group.severity).upper()}",
+                group.title or "Untitled finding", styles=styles, width=inner_width,
+                label_color="#334155"))
+            strips.extend(evidence_strips(group))
+        if len(issue_groups) > _PDF_ISSUE_DETAIL_MAX:
+            strips.append(_labelled_block(
+                "More issue groups",
+                f"{len(issue_groups) - _PDF_ISSUE_DETAIL_MAX} further group(s) are listed above; "
+                "their full evidence is in the Excel \"Issue Groups\" sheet.",
+                styles=styles, width=inner_width, label_color="#64748b"))
+    else:
+        strips.extend(evidence_strips(finding))
     occurrence_ids = _occurrence_ids(finding)
     if occurrence_ids:
         shown = ", ".join(occurrence_ids[:6])
@@ -2044,11 +2103,30 @@ def _finding_story_block(
 # PDF — summary page
 # =============================================================================
 
+def _gate_presentation(gate: dict) -> tuple[str, str, str]:
+    """(label, background hex, note) for the summary banner. A scan whose project sets
+    no gate limits was never checked, so it must not read "PASSED" next to a list of
+    confirmed Critical and High findings."""
+    status = gate.get("gate_status") or (
+        "failed" if gate.get("gate_failed") else "passed" if gate.get("gate_policy_set", True) else "not_evaluated"
+    )
+    if status == "failed":
+        return "QUALITY GATE FAILED", "#b91c1c", str(gate.get("gate_reason") or "")
+    if status == "passed":
+        return "QUALITY GATE PASSED", "#047857", ""
+    blocking = gate.get("gate_blocking") or {}
+    parts = [f"{n} confirmed {sev.title()}" for sev, n in blocking.items() if n]
+    note = "No gate limits are set for this project, so these findings were not checked against a gate."
+    if parts:
+        note = f"{', '.join(parts)} group(s) reported. " + note
+    return "QUALITY GATE NOT EVALUATED", "#475569", note
+
+
 def _gate_banner(gate: dict, styles: Any, width: float) -> Table:
-    failed = bool(gate.get("gate_failed"))
-    label = "QUALITY GATE FAILED" if failed else "QUALITY GATE PASSED"
-    bg = colors.HexColor("#b91c1c") if failed else colors.HexColor("#047857")
-    banner = Table([[Paragraph(f"<b>{label}</b>", styles["GateText"])]], colWidths=[width])
+    label, bg_hex, note = _gate_presentation(gate)
+    bg = colors.HexColor(bg_hex)
+    cell = f"<b>{label}</b>" + (f'<br/><font size="8">{_esc(note)}</font>' if note else "")
+    banner = Table([[Paragraph(cell, styles["GateText"])]], colWidths=[width])
     banner.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), bg),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
