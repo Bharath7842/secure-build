@@ -1,0 +1,31 @@
+id: status-transition-guarded
+area: auth-logic
+polarity: negative
+seed_findings: []
+adjudication: dev_label_only
+# Look-alike of status-transition-reopen-approved: reopen() checks the stored status first.
+# The scripted answer is what a reviewer expects a model to say, so this case pins the pipeline
+# (publish, filters, validators, grouping), not a model's recall.
+state_overrides:
+  deep_scan_batch_small_files: false
+expected:
+  - rule_id: llm-extra
+    cwe: CWE-841
+    file: src/main/java/com/acme/service/RegistrationService.java
+    sink_line: 25
+    verdict: false_positive
+scripted:
+  - step: scan_deep_files
+    when_user_contains: ["RegistrationService.java"]
+    response:
+      findings:
+        - line: 25
+          file: src/main/java/com/acme/service/RegistrationService.java
+          verdict: false_positive
+          confidence: 0.4
+          rule_id: llm-extra
+          severity: LOW
+          cwe: CWE-841
+          title: "Approved registration can be reopened: no transition guard"
+          owasp_category: "A04:2021-Insecure-Design"
+          verdict_reason: "reopen() throws unless the stored status is REJECTED, so an approved registration cannot be reopened."

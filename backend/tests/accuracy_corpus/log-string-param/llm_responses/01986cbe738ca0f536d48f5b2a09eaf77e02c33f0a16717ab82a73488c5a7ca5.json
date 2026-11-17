@@ -1,0 +1,8 @@
+{
+  "input_tokens": 6820,
+  "key": "01986cbe738ca0f536d48f5b2a09eaf77e02c33f0a16717ab82a73488c5a7ca5",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 131,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 9, \"verdict\": \"true_positive\", \"confidence\": 0.8, \"rule_id\": \"java-log-injection-unsanitized-input\", \"severity\": \"MEDIUM\", \"cwe\": \"CWE-117\", \"title\": \"Unsanitized data reaches a log call\", \"owasp_category\": \"A09:2021-Security-Logging-and-Monitoring-Failures\", \"verdict_reason\": \"The name is logged unchanged.\", \"source\": \"the logged value\", \"sink\": \"log.info\", \"data_flow\": \"the value reaches the log call unchanged\", \"snippet\": \"log.info(\\\"hello \\\" + name);\", \"ai_fix\": \"Encode CR/LF before logging.\"}]}"
+}

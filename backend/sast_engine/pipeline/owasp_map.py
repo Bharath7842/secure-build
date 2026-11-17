@@ -17,6 +17,8 @@ CWE_TO_OWASP: dict[str, str] = {
     # A01:2021 - Broken Access Control
     "CWE-22": "A01:2021-Broken-Access-Control",
     "CWE-284": "A01:2021-Broken-Access-Control",
+    "CWE-285": "A01:2021-Broken-Access-Control",
+    "CWE-639": "A01:2021-Broken-Access-Control",
     "CWE-352": "A01:2021-Broken-Access-Control",
     "CWE-601": "A01:2021-Broken-Access-Control",
     "CWE-862": "A01:2021-Broken-Access-Control",
@@ -41,6 +43,7 @@ CWE_TO_OWASP: dict[str, str] = {
     "CWE-943": "A03:2021-Injection",
     # A04:2021 - Insecure Design
     "CWE-185": "A04:2021-Insecure-Design",
+    "CWE-841": "A04:2021-Insecure-Design",
     "CWE-209": "A04:2021-Insecure-Design",
     "CWE-213": "A04:2021-Insecure-Design",
     "CWE-561": "A04:2021-Insecure-Design",
@@ -71,6 +74,7 @@ CWE_TO_OWASP: dict[str, str] = {
     "CWE-347": "A07:2021-Identification-and-Authentication-Failures",
     "CWE-384": "A07:2021-Identification-and-Authentication-Failures",
     "CWE-522": "A07:2021-Identification-and-Authentication-Failures",
+    "CWE-613": "A07:2021-Identification-and-Authentication-Failures",
     "CWE-620": "A07:2021-Identification-and-Authentication-Failures",
     "CWE-640": "A07:2021-Identification-and-Authentication-Failures",
     "CWE-798": "A07:2021-Identification-and-Authentication-Failures",

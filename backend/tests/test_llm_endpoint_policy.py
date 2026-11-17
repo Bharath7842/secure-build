@@ -332,3 +332,62 @@ def test_the_scan_records_where_code_went_and_under_which_policy(client):
     before = versions["llm_policy_sha256"]
     client.put("/settings/llm-policy", headers=ADMIN, json={"allowed_hosts": ["x.example.com"]})
     assert scan_versions.static_versions(scan, mock=False)["llm_policy_sha256"] != before
+
+
+def test_bedrock_claude_5_request_omits_temperature(monkeypatch):
+    """Claude 5 models on Bedrock reject `temperature`; older ones still get it."""
+    import json as _json
+    import llm_client as llm
+
+    assert not llm.bedrock_accepts_temperature("us.anthropic.claude-sonnet-5-5")
+    assert not llm.bedrock_accepts_temperature("global.anthropic.claude-sonnet-5")
+    assert llm.bedrock_accepts_temperature("us.anthropic.claude-sonnet-4-5-20250929-v1:0")
+    assert llm.bedrock_accepts_temperature("us.anthropic.claude-haiku-4-5-20251001-v1:0")
+
+    sent: dict = {}
+
+    class _Body:
+        def read(self):
+            return _json.dumps({"content": [{"text": "ok"}], "usage": {"input_tokens": 1, "output_tokens": 1}})
+
+    class _Client:
+        def invoke_model(self, **kw):
+            sent.update(_json.loads(kw["body"]))
+            return {"body": _Body()}
+
+    monkeypatch.setattr(llm, "_bedrock", _Client())
+    for model, expect in (("us.anthropic.claude-sonnet-5-5", False), ("us.anthropic.claude-sonnet-4-5-20250929-v1:0", True)):
+        sent.clear()
+        llm._call_bedrock("s", "u", model, 16, 0.0, 1, usage=None, step="t")
+        assert ("temperature" in sent) is expect
+
+
+def test_bedrock_claude_5_json_mode_has_no_prefill(monkeypatch):
+    """Claude 5 rejects assistant prefill: JSON mode asks in the prompt, unwraps fences,
+    and never prepends a `{`. Older models keep the prefill."""
+    import json as _json
+    import llm_client as llm
+
+    sent: dict = {}
+    reply = {"text": '```json\n{"a": 1}\n```'}
+
+    class _Body:
+        def read(self):
+            return _json.dumps({"content": [{"text": reply["text"]}], "usage": {"input_tokens": 1, "output_tokens": 1}})
+
+    class _Client:
+        def invoke_model(self, **kw):
+            sent.clear()
+            sent.update(_json.loads(kw["body"]))
+            return {"body": _Body()}
+
+    monkeypatch.setattr(llm, "_bedrock", _Client())
+    out = llm._call_bedrock("s", "u", "us.anthropic.claude-sonnet-5-5", 16, 0.0, 1, usage=None, step="t", json_mode=True)
+    assert out == '{"a": 1}'
+    assert [m["role"] for m in sent["messages"]] == ["user"]
+    assert "JSON object only" in sent["messages"][0]["content"]
+
+    reply["text"] = '"a": 1}'
+    out = llm._call_bedrock("s", "u", "us.anthropic.claude-haiku-4-5-20251001-v1:0", 16, 0.0, 1, usage=None, step="t", json_mode=True)
+    assert out == '{"a": 1}'
+    assert [m["role"] for m in sent["messages"]] == ["user", "assistant"]

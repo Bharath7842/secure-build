@@ -118,6 +118,31 @@
     "pattern": "(?i)['\"]alg['\"]\\s*:\\s*['\"]none['\"]"
   },
   {
+    "id": "secret-jwt-signing-key-literal",
+    "title": "JWT signing secret committed in configuration or source",
+    "description": "A JWT/token signing secret (jwt.secret, app.jwtSecret, token.signing-key) is set to a literal value in a properties/YAML/.env file or in code. Anyone with read access to the repository or a built artifact can mint valid tokens for any user and role. Load it from a secrets manager or environment at deploy time and rotate the committed one.",
+    "cwe": "CWE-798",
+    "severity": "HIGH",
+    "category": "secrets",
+    "owasp": "A02:2021-Cryptographic-Failures",
+    "languages": [],
+    "frameworks": [],
+    "pattern": "(?im)(?:^|[\\s\\\"'])[\\w.\\-]{0,40}(?:jwt|token)[\\w.\\-]{0,30}?(?:secret|signing[_.\\-]?key|hmac)[\\w.\\-]{0,20}[\\\"']?\\s*[:=]\\s*[\\\"']?(?!\\$\\{|<|\\{\\{|%|\\*+|x+[\\\"']?\\s*$)[A-Za-z0-9+/=_!@#$%^&*.\\-]{16,}",
+    "examples": {
+      "match": [
+        "jwt.secret=Xk9fLmQ2vR8sTz4WpYb7NcHd3JgA5eUq",
+        "app.jwtSecret: \"c2VjcmV0LWtleS1mb3Itand0LXNpZ25pbmc=\"",
+        "private static final String JWT_SECRET = \"s3cr3t-signing-key-0123456789\";"
+      ],
+      "no_match": [
+        "jwt.secret=${JWT_SECRET}",
+        "jwt.secret=",
+        "jwt.expiration=86400000",
+        "String jwtSecret = env.getProperty(\"jwt.secret\");"
+      ]
+    }
+  },
+  {
     "id": "secret-api-key-token",
     "title": "Possible hardcoded API key or token",
     "description": "api_key / secret_key / access_token assigned to a long literal",

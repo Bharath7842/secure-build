@@ -630,6 +630,7 @@ def list_feedback(
 
 # --- export -----------------------------------------------------------------------------
 
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 _EXPORT_FIELDS = (
     "review_id", "scan_id", "project_id", "finding_id", "rule_id", "cwe", "severity", "confidence",
     "file_path", "line", "kind", "title", "snippet", "matched_text", "label", "llm_verdict",
@@ -665,9 +666,15 @@ def render_export(records: list[dict[str, Any]], fmt: str) -> tuple[str, str]:
 
     cleaned = [clean(r) for r in records]
     if fmt == "csv":
+        # A spreadsheet runs a cell that starts with = + - @ (or a tab/CR) as a formula;
+        # titles, snippets and reviewer comments carry repository and model text, so
+        # such a cell gets a leading apostrophe. NDJSON keeps the values exactly.
+        def _csv_safe(value: Any) -> Any:
+            return "'" + value if isinstance(value, str) and value.startswith(_CSV_FORMULA_PREFIXES) else value
+
         buf = io.StringIO()
         writer = csv.DictWriter(buf, fieldnames=_EXPORT_FIELDS)
         writer.writeheader()
-        writer.writerows(cleaned)
+        writer.writerows([{k: _csv_safe(v) for k, v in row.items()} for row in cleaned])
         return buf.getvalue(), "text/csv"
     return "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in cleaned), "application/x-ndjson"

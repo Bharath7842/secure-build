@@ -613,6 +613,7 @@ COUNTER_SECTIONS = (
     "prompt_injection",
     "secret_masking",
     "endpoint_policy",
+    "output_validation",
 )
 MAX_RECORDS_PER_SECTION = 500
 
@@ -1105,6 +1106,34 @@ def is_complete_json_response(text: str, stop_reason: Optional[str]) -> bool:
     return isinstance(parsed, (dict, list))
 
 
+_BEDROCK_NO_TEMPERATURE_RE = re.compile(r"claude-(?:sonnet|opus|haiku|fable)-5(?:-|\.|$)", re.IGNORECASE)
+
+
+def bedrock_supports_prefill(model_id: str) -> bool:
+    """Claude 5 models on Bedrock reject a trailing assistant message ("does not
+    support assistant message prefill"), so JSON mode asks for it in the prompt."""
+    return not _BEDROCK_NO_TEMPERATURE_RE.search(model_id or "")
+
+
+_JSON_ONLY_SUFFIX = (
+    "\n\nRespond with a single JSON object only, beginning with `{` and ending with `}`. "
+    "No prose and no markdown code fences."
+)
+_JSON_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*\n?(.*?)\n?```\s*$", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_json_fence(text: str) -> str:
+    """Unwrap a ```json fence if the model added one despite the instruction."""
+    match = _JSON_FENCE_RE.match(text or "")
+    return match.group(1) if match else text
+
+
+def bedrock_accepts_temperature(model_id: str) -> bool:
+    """Claude 5 models on Bedrock reject `temperature` ("deprecated for this
+    model"), so it must be left out of the request entirely for them."""
+    return not _BEDROCK_NO_TEMPERATURE_RE.search(model_id or "")
+
+
 def _call_bedrock(
     system: str,
     user: str,
@@ -1121,22 +1150,26 @@ def _call_bedrock(
     cache_system: bool = False,
     meta_out: Optional[Dict[str, Any]] = None,
 ) -> str:
-    messages: List[Dict[str, str]] = [{"role": "user", "content": user}]
-    if json_mode:
+    prefill = json_mode and bedrock_supports_prefill(model_id)
+    user_text = user
+    if json_mode and not prefill:
+        user_text = user + _JSON_ONLY_SUFFIX
+    messages: List[Dict[str, str]] = [{"role": "user", "content": user_text}]
+    if prefill:
         # Claude continues from the prefilled "{" — prepend when assembling text.
         messages.append({"role": "assistant", "content": "{"})
     system_field: Any = system
     if cache_system:
         system_field = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
-    body = json.dumps(
-        {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "system": system_field,
-            "messages": messages,
-        }
-    )
+    request: Dict[str, Any] = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": max_tokens,
+        "system": system_field,
+        "messages": messages,
+    }
+    if bedrock_accepts_temperature(model_id):
+        request["temperature"] = temperature
+    body = json.dumps(request)
     last_exc: Optional[Exception] = None
     attempt = 0
     throttles = 0
@@ -1150,8 +1183,10 @@ def _call_bedrock(
             )
             payload = json.loads(resp["body"].read())
             text = "".join(b.get("text", "") for b in payload.get("content", []))
-            if json_mode and text and not text.lstrip().startswith("{"):
+            if prefill and text and not text.lstrip().startswith("{"):
                 text = "{" + text
+            elif json_mode and not prefill:
+                text = _strip_json_fence(text)
             stop_reason = payload.get("stop_reason") or ""
             # Every response is billed, including an empty one that gets
             # retried — record it before deciding whether to retry.

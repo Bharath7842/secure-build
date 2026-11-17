@@ -1,0 +1,8 @@
+{
+  "input_tokens": 7102,
+  "key": "39d7c8472be372ab2d622622340008c3ee42432402bcdd4b2a242bae7c00584d",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 234,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 22, \"file\": \"src/main/java/com/acme/service/RegistrationService.java\", \"verdict\": \"true_positive\", \"confidence\": 0.8, \"rule_id\": \"llm-extra\", \"severity\": \"HIGH\", \"cwe\": \"CWE-841\", \"title\": \"Approved registration can be reopened: no transition guard\", \"owasp_category\": \"A04:2021-Insecure-Design\", \"source\": \"caller of reopen()\", \"sink\": \"registration.setStatus(Status.PENDING)\", \"data_flow\": \"approve() and reject() require PENDING, but reopen() overwrites the status unconditionally, so an APPROVED or REJECTED registration goes back to PENDING and can be decided again\", \"snippet\": \"registration.setStatus(Status.PENDING)\", \"verdict_reason\": \"reopen() sets PENDING without comparing the stored status, unlike approve() and reject(); a decided registration can be re-opened and re-decided.\", \"ai_fix\": \"Allow reopen only from REJECTED (an explicit transition table) and compare the stored status before writing.\"}]}"
+}

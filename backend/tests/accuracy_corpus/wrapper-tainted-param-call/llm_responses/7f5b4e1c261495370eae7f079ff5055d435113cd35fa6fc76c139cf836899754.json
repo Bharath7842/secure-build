@@ -1,0 +1,8 @@
+{
+  "input_tokens": 1762,
+  "key": "7f5b4e1c261495370eae7f079ff5055d435113cd35fa6fc76c139cf836899754",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 4,
+  "step": "derive_runtime_rules",
+  "text": "{\"decisions\": []}"
+}

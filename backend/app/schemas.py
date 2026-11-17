@@ -143,6 +143,13 @@ class ProjectOut(ProjectBase):
     git_connected: bool = False
     llm_api_key_set: bool = False
 
+    @field_validator("fallback_llm_model", mode="before")
+    @classmethod
+    def _null_fallback_model_is_empty(cls, v: object) -> object:
+        # Older rows (e.g. openai_compat projects) hold NULL here; one such row
+        # used to 500 the whole project list.
+        return "" if v is None else v
+
 
 class ProjectDeleteOut(BaseModel):
     """Summary of what a `DELETE /projects/{id}` call actually cleaned up,

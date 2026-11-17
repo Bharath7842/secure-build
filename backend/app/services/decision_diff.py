@@ -272,5 +272,8 @@ def build_decision_diff_xlsx(result: Mapping[str, Any]) -> bytes:
         ])
     changes.freeze_panes = "A2"
     buf = io.BytesIO()
+    from app.services.scan_export import protect_workbook_text  # not at import: scan_export is large
+
+    protect_workbook_text(wb)
     wb.save(buf)
     return buf.getvalue()

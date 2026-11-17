@@ -25,6 +25,11 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPresetInfo> = {
     provider: "bedrock",
     model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
   },
+  "bedrock-sonnet-5-5": {
+    label: "AWS Bedrock — Claude Sonnet 5.5",
+    provider: "bedrock",
+    model: "us.anthropic.claude-sonnet-5-5",
+  },
   // The local `claude` CLI, one Claude session per scan; `model` is a CLI alias.
   "claude-cli-sonnet": {
     label: "Claude Sonnet 5.5",
@@ -47,6 +52,11 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPresetInfo> = {
     label: "OpenAI-compatible — Qwen2.5-Coder-32B-Instruct (vLLM / LM Studio)",
     provider: "openai_compat",
     model: "Qwen/Qwen2.5-Coder-32B-Instruct",
+  },
+  "openai-compat-gemma-4-12b-mlx": {
+    label: "OpenAI-compatible — gemma-4-12b-it-mlx (LM Studio)",
+    provider: "openai_compat",
+    model: "gemma-4-12b-it-mlx",
   },
   "ollama-granite-3b": {
     label: "Ollama — granite-code:3b (local)",
@@ -98,6 +108,16 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPresetInfo> = {
     provider: "ollama",
     model: "codegemma:latest",
   },
+  "ollama-qwen3-8": {
+    label: "Ollama — qwen3.8:latest (local)",
+    provider: "ollama",
+    model: "qwen3.8:latest",
+  },
+  "ollama-phi4-mini": {
+    label: "Ollama — phi4-mini:3.8b (local)",
+    provider: "ollama",
+    model: "phi4-mini:3.8b",
+  },
 };
 
 /**
@@ -125,5 +145,6 @@ export function llmPresetForProviderModel(
   if (provider === "openai_compat") {
     return entries.find(([, p]) => p.provider === "openai_compat")?.[0] ?? "openai-compat-qwen-coder-32b";
   }
-  return "bedrock-haiku";
+  const bedrock = entries.find(([, p]) => p.provider === "bedrock" && p.model === model);
+  return bedrock ? bedrock[0] : "bedrock-haiku";
 }

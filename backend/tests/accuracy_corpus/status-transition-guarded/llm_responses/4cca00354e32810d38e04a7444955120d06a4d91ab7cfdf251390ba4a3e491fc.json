@@ -1,0 +1,8 @@
+{
+  "input_tokens": 7146,
+  "key": "4cca00354e32810d38e04a7444955120d06a4d91ab7cfdf251390ba4a3e491fc",
+  "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "output_tokens": 111,
+  "step": "scan_deep_files",
+  "text": "{\"findings\": [{\"line\": 25, \"file\": \"src/main/java/com/acme/service/RegistrationService.java\", \"verdict\": \"false_positive\", \"confidence\": 0.4, \"rule_id\": \"llm-extra\", \"severity\": \"LOW\", \"cwe\": \"CWE-841\", \"title\": \"Approved registration can be reopened: no transition guard\", \"owasp_category\": \"A04:2021-Insecure-Design\", \"verdict_reason\": \"reopen() throws unless the stored status is REJECTED, so an approved registration cannot be reopened.\"}]}"
+}

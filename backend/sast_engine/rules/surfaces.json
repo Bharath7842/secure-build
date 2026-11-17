@@ -197,7 +197,7 @@
   {
     "surface": "JWT signing-key handling",
     "when": { "frameworks": ["JWT (jsonwebtoken)", "Spring Security", "JBoss RESTEasy (JAX-RS)"] },
-    "rules": ["jwt-none-alg", "java-secretkeyspec-string-literal", "secret-api-key-token", "token-in-localstorage", "java-jwt-parse-unsigned", "java-jwt-hardcoded-secret"],
+    "rules": ["jwt-none-alg", "java-secretkeyspec-string-literal", "secret-api-key-token", "token-in-localstorage", "java-jwt-parse-unsigned", "java-jwt-hardcoded-secret", "secret-jwt-signing-key-literal"],
     "rationale": "JWT detected -> a hardcoded or weak signing key lets an attacker mint arbitrary tokens"
   },
   {

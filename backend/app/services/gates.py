@@ -1,9 +1,11 @@
 """Severity summary for a completed scan's findings.
 
 `gate_failed` stays false unless the project sets `gate_max_critical` and/or
-`gate_max_high`. Those limits count findings that are not a false positive and
-not unverified. With both limits unset, CI still gets the counts and the gate
-does not fail — the previous behaviour.
+`gate_max_high`. Those limits count confirmed (true-positive) findings that no
+reviewer resolved or risk-accepted. With both limits unset, CI still gets the
+counts and the gate does not fail — the previous behaviour — but `gate_status`
+is `not_evaluated` (`gate_policy_set` false), which reports must show as such
+rather than as a pass.
 
 Counts always match the findings list length — every finding is included in
 `vulnerabilities_found`, `total_findings`, and `by_severity` (not only
@@ -66,6 +68,7 @@ def build_gate_summary(project: Project, findings: list[Finding], counts: dict |
         reasons.append(f"{gated['critical']} critical finding(s) exceed the limit of {int(max_critical)}")
     if max_high is not None and gated["high"] > int(max_high):
         reasons.append(f"{gated['high']} high finding(s) exceed the limit of {int(max_high)}")
+    policy_set = max_critical is not None or max_high is not None
     return {
         "vulnerabilities_found": total,
         "total_findings": total,
@@ -74,4 +77,9 @@ def build_gate_summary(project: Project, findings: list[Finding], counts: dict |
         "by_source": by_source,
         "gate_failed": bool(reasons),
         "gate_reason": "; ".join(reasons) or None,
+        # `gate_failed=False` with no thresholds set means "nothing was checked", not
+        # "checked and clean": reports must not call that a pass.
+        "gate_policy_set": policy_set,
+        "gate_status": "failed" if reasons else ("passed" if policy_set else "not_evaluated"),
+        "gate_blocking": {sev: gated[sev] for sev in ("critical", "high")},
     }

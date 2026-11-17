@@ -287,7 +287,9 @@ def test_pdf_findings_include_section_labels_and_summary_furniture():
         "EXAMPLE FIX",
     ):
         assert label in text, f"missing PDF section label: {label}"
-    assert "QUALITY GATE PASSED" in text
+    # The sample project sets no gate limits: nothing was checked, so no "PASSED".
+    assert "QUALITY GATE NOT EVALUATED" in text
+    assert "QUALITY GATE PASSED" not in text
     assert "FINDINGS INDEX" in text
     assert "DETAILED FINDINGS" in text
     assert "OWASP DISTRIBUTION" in text
@@ -372,7 +374,7 @@ def test_excel_summary_includes_gate_and_owasp_distribution():
     data = build_excel_report(project, scan, findings)
     wb = load_workbook(BytesIO(data))
     summary = wb["Summary"]
-    assert summary["A2"].value == "QUALITY GATE PASSED"
+    assert summary["A2"].value == "QUALITY GATE NOT EVALUATED"
     values = [summary.cell(r, 1).value for r in range(1, summary.max_row + 1)]
     assert "OWASP distribution" in values
 
@@ -726,3 +728,59 @@ def test_consolidation_leaves_other_kinds_alone(kind):
         _llm("b", "CWE-89", "Thing two", "f.java", 2, rule_id="r2", kind=kind),
     ]
     assert len(group_findings_by_issue(findings)) == 2
+
+
+def _pdf_text(project, scan, findings) -> str:
+    from pypdf import PdfReader
+
+    reader = PdfReader(BytesIO(build_pdf_report(project, scan, findings)))
+    return "\n".join((page.extract_text() or "") for page in reader.pages)
+
+
+def test_gate_banner_says_passed_only_when_a_policy_was_checked():
+    project, scan, findings = _sample()
+    project.gate_max_critical = 5
+    assert "QUALITY GATE PASSED" in _pdf_text(project, scan, findings)
+    project.gate_max_critical = None
+    project.gate_max_high = 0
+    text = _pdf_text(project, scan, findings)
+    assert "QUALITY GATE FAILED" in text and "QUALITY GATE PASSED" not in text
+
+
+def test_gate_not_evaluated_names_the_confirmed_findings_it_did_not_gate():
+    from app.services.gates import build_gate_summary
+    from app.services.scan_export import cwe_findings
+
+    project, _scan, findings = _sample()
+    gate = build_gate_summary(project, cwe_findings(group_findings_by_issue(findings)))
+    assert gate["gate_status"] == "not_evaluated" and gate["gate_policy_set"] is False
+    assert gate["gate_failed"] is False  # CI contract unchanged
+    assert gate["gate_blocking"]["high"] == 1
+
+
+def test_unrelated_issues_of_one_cwe_keep_their_own_evidence_and_fix():
+    """CWE-639 holds both an IDOR and a company takeover: neither borrows the other's
+    description, code or recommendation, and the heading does not claim to be one."""
+    project, scan, _ = _sample()
+    takeover = Finding(
+        id="a", scan_id="s1", severity="critical", title="Company takeover via unauthenticated update",
+        cwe="CWE-639", rule_id="llm-extra", file_path="api/CompanyController.java", line=10,
+        snippet="companyService.update(companyId, body)", verdict="true_positive",
+        verdict_reason="TAKEOVER-EVIDENCE: any caller can rewrite a company.",
+        ai_fix="TAKEOVER-FIX: check the caller owns the company.",
+    )
+    download = Finding(
+        id="b", scan_id="s1", severity="high", title="Document download IDOR",
+        cwe="CWE-639", rule_id="llm-extra", file_path="api/DocumentController.java", line=20,
+        snippet="documentRepo.findById(documentId)", verdict="true_positive",
+        verdict_reason="DOWNLOAD-EVIDENCE: no ownership check on documentId.",
+        ai_fix="DOWNLOAD-FIX: scope the lookup to the caller's tenant.",
+    )
+    from app.services.scan_export import cwe_findings
+
+    units = cwe_findings([takeover, download])
+    assert len(units) == 1 and "other issue" in units[0].title  # still one headline CWE
+    text = _pdf_text(project, scan, [takeover, download])
+    for marker in ("TAKEOVER-EVIDENCE", "TAKEOVER-FIX", "DOWNLOAD-EVIDENCE", "DOWNLOAD-FIX"):
+        assert marker in text, marker
+    assert "Document download IDOR" in text

@@ -31,6 +31,12 @@ LLM_PRESETS: tuple[LlmPreset, ...] = (
         provider="bedrock",
         model="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
     ),
+    LlmPreset(
+        id="bedrock-sonnet-5-5",
+        label="AWS Bedrock — Claude Sonnet 5.5",
+        provider="bedrock",
+        model="us.anthropic.claude-sonnet-5-5",
+    ),
     # The local `claude` CLI (one Claude session per scan), using whatever
     # login Claude Code has on this machine. `model` is a CLI alias or id.
     LlmPreset(
@@ -79,6 +85,12 @@ LLM_PRESETS: tuple[LlmPreset, ...] = (
         label="OpenAI-compatible — Qwen2.5-Coder-32B-Instruct (vLLM / LM Studio)",
         provider="openai_compat",
         model="Qwen/Qwen2.5-Coder-32B-Instruct",
+    ),
+    LlmPreset(
+        id="openai-compat-gemma-4-12b-mlx",
+        label="OpenAI-compatible — gemma-4-12b-it-mlx (LM Studio)",
+        provider="openai_compat",
+        model="gemma-4-12b-it-mlx",
     ),
     LlmPreset(
         id="ollama-granite-3b",
@@ -148,6 +160,20 @@ LLM_PRESETS: tuple[LlmPreset, ...] = (
         label="Ollama — CodeGemma:latest (local)",
         provider="ollama",
         model="codegemma:latest",
+        ollama_size="small",
+    ),
+    LlmPreset(
+        id="ollama-qwen3-8",
+        label="Ollama — qwen3.8:latest (local)",
+        provider="ollama",
+        model="qwen3.8:latest",
+        ollama_size="small",
+    ),
+    LlmPreset(
+        id="ollama-phi4-mini",
+        label="Ollama — phi4-mini:3.8b (local)",
+        provider="ollama",
+        model="phi4-mini:3.8b",
         ollama_size="small",
     ),
 )

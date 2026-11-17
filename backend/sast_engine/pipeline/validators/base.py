@@ -127,6 +127,7 @@ class ValidatorContext:
     _exceptions: Any = field(default=None, repr=False, compare=False)
     _translation: Any = field(default=None, repr=False, compare=False)
     _security: Any = field(default=None, repr=False, compare=False)
+    _auth_lifecycle: Any = field(default=None, repr=False, compare=False)
     # Deep-scan workers ask for the summary at once; the repository is walked once.
     _security_lock: Any = field(default_factory=threading.Lock, repr=False, compare=False)
 
@@ -140,6 +141,17 @@ class ValidatorContext:
             if self._security is None:
                 self._security = neighborhood.security_entries(self.repo_root)
         return neighborhood.render_security_summary(self._security, exclude_paths=exclude_paths)
+
+    def auth_lifecycle_summary(self, exclude_paths: Any = ()) -> str:
+        """Where tokens are issued and which account / workflow states exist, from
+        the other files of the repository — for the deep scan of a file that
+        validates tokens, loads the user, or changes a workflow status."""
+        from .. import neighborhood
+
+        with self._security_lock:
+            if self._auth_lifecycle is None:
+                self._auth_lifecycle = neighborhood.auth_lifecycle_entries(self.repo_root)
+        return neighborhood.render_auth_lifecycle_summary(self._auth_lifecycle, exclude_paths=exclude_paths)
 
     def custom_translation_pipeline(self) -> Any:
         """Files declaring a custom translation compiler / handler / parser (SAST-03-080)."""
