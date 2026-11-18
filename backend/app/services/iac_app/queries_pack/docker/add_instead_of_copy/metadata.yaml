@@ -1,0 +1,17 @@
+id: DOCKER.ADD_INSTEAD_OF_COPY
+name: "Dockerfile uses ADD instead of COPY for local file copies"
+description: "ADD has implicit URL fetching and tar extraction behaviour that can introduce supply-chain risk."
+severity: LOW
+category: SUPPLY_CHAIN
+finding_type: MISCONFIGURATION
+iac_type: docker
+provider: docker
+enabled: true
+version: 1.0.0
+remediation: >
+  Replace ADD with COPY for local file copies. Only use ADD when you need tar extraction or URL fetching.
+references:
+  - https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#add-or-copy
+compliance:
+  - framework: CIS_DOCKER
+    control: "4.9"

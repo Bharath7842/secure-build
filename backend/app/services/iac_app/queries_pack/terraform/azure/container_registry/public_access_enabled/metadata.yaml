@@ -1,0 +1,19 @@
+id: AZURE.ACR.PUBLIC_ACCESS_ENABLED
+name: "Azure Container Registry allows public network access"
+description: "A publicly accessible container registry can be targeted for image enumeration or unauthorized pulls if authentication is misconfigured."
+severity: MEDIUM
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Set public_network_access_enabled = false on your azurerm_container_registry resource and use a Private Endpoint.
+references:
+  - https://docs.microsoft.com/en-us/azure/container-registry/container-registry-private-link
+compliance:
+  - framework: CIS_AZURE
+    control: "7.5"
+  - framework: NIST_800_53
+    control: "SC-7"

@@ -58,3 +58,6 @@ python-dotenv==1.2.3
 # binary into the interpreter's bin/ (pipeline/rg_runner.find_rg_binary looks
 # there). RG_PATH can point at another build instead.
 ripgrep==15.1.0
+
+# --- Integrated IaC / SBOM / SCA scanners ---
+python-hcl2>=4.3.0   # Terraform .tf file parsing (used by iac_app TerraformParser)

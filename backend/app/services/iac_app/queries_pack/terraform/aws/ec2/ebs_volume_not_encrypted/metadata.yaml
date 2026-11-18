@@ -1,0 +1,19 @@
+id: AWS.EC2.EBS_VOLUME_NOT_ENCRYPTED
+name: "EBS volume is not encrypted at rest"
+description: "An aws_ebs_volume resource has encrypted = false or the encrypted attribute is absent."
+severity: MEDIUM
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set encrypted = true in your aws_ebs_volume resource and optionally specify a kms_key_id.
+references:
+  - https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSEncryption.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.2.1"
+  - framework: NIST_800_53
+    control: "SC-28"

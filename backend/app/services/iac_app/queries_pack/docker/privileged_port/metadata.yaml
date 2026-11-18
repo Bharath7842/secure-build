@@ -1,0 +1,17 @@
+id: DOCKER.PRIVILEGED_PORT
+name: "Dockerfile exposes a privileged port (< 1024)"
+description: "Exposing ports below 1024 requires root privileges and may indicate the container runs as root."
+severity: LOW
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: docker
+provider: docker
+enabled: true
+version: 1.0.0
+remediation: >
+  Expose ports 1024 or higher and configure port mapping in your orchestrator.
+references:
+  - https://docs.docker.com/engine/reference/builder/#expose
+compliance:
+  - framework: CIS_DOCKER
+    control: "4.1"

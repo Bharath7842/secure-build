@@ -1,0 +1,19 @@
+id: AWS.OPENSEARCH.NODE_ENCRYPTION_DISABLED
+name: "OpenSearch/Elasticsearch domain does not have node-to-node encryption enabled"
+description: "Without node-to-node encryption, data transmitted between cluster nodes is in plaintext."
+severity: MEDIUM
+category: ENCRYPTION_IN_TRANSIT
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add node_to_node_encryption { enabled = true } to your aws_opensearch_domain or aws_elasticsearch_domain resource.
+references:
+  - https://docs.aws.amazon.com/opensearch-service/latest/developerguide/encryption-at-rest.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.7.2"
+  - framework: NIST_800_53
+    control: "SC-8"

@@ -1,0 +1,19 @@
+id: OPENAPI.API_KEY_IN_QUERY
+name: "OpenAPI specification passes API key as a query parameter"
+description: "API keys in query parameters are logged in server access logs, browser history, and proxy logs, leading to credential leakage."
+severity: MEDIUM
+category: SECRETS_MANAGEMENT
+finding_type: MISCONFIGURATION
+iac_type: openapi
+provider: openapi
+enabled: true
+version: 1.0.0
+remediation: >
+  Move API key authentication to the HTTP Authorization header instead of a query parameter.
+references:
+  - https://swagger.io/docs/specification/authentication/api-keys/
+compliance:
+  - framework: NIST_800_53
+    control: "IA-5"
+  - framework: OWASP_API
+    control: "API2"

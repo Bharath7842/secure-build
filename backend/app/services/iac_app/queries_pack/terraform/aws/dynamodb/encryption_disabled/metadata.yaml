@@ -1,0 +1,19 @@
+id: AWS.DYNAMODB.ENCRYPTION_DISABLED
+name: "DynamoDB table does not use a customer-managed KMS key for encryption"
+description: "By default DynamoDB uses AWS-owned keys. For compliance, tables should use an AWS-managed or customer-managed key."
+severity: MEDIUM
+category: ENCRYPTION_AT_REST
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add server_side_encryption { enabled = true kms_key_arn = aws_kms_key.table.arn } to your aws_dynamodb_table resource.
+references:
+  - https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/EncryptionAtRest.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.4.1"
+  - framework: NIST_800_53
+    control: "SC-28"

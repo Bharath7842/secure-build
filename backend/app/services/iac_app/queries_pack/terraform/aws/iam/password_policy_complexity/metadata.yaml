@@ -1,0 +1,19 @@
+id: AWS.IAM.PASSWORD_POLICY_COMPLEXITY
+name: "IAM password policy does not enforce complexity requirements"
+description: "The IAM account password policy does not require uppercase, lowercase, numbers, and symbols."
+severity: MEDIUM
+category: IDENTITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Enable require_uppercase_characters, require_lowercase_characters, require_numbers, and require_symbols.
+references:
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_passwords_account-policy.html
+compliance:
+  - framework: CIS_AWS
+    control: "1.9"
+  - framework: NIST_800_53
+    control: "IA-5"

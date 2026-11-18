@@ -1,0 +1,19 @@
+id: AWS.S3.PUBLIC_ACCESS_BLOCK_MISSING
+name: "S3 bucket lacks a public access block configuration"
+description: "No aws_s3_bucket_public_access_block resource is associated with the S3 bucket."
+severity: HIGH
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Create an aws_s3_bucket_public_access_block resource for every aws_s3_bucket with all four flags set to true.
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.1.5"
+  - framework: NIST_800_53
+    control: "SC-7"

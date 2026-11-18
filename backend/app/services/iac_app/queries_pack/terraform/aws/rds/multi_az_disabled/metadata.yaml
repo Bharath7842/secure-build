@@ -1,0 +1,19 @@
+id: AWS.RDS.MULTI_AZ_DISABLED
+name: "RDS database instance does not have Multi-AZ enabled"
+description: "Single-AZ RDS instances have no automatic failover in case of an availability zone failure."
+severity: MEDIUM
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set multi_az = true for production aws_db_instance resources.
+references:
+  - https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZ.html
+compliance:
+  - framework: NIST_800_53
+    control: "CP-10"
+  - framework: SOC2
+    control: "A1.2"

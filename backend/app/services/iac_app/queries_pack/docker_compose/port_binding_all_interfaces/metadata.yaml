@@ -1,0 +1,19 @@
+id: COMPOSE.PORT_BINDING_ALL_INTERFACES
+name: "Docker Compose service binds port to all network interfaces (0.0.0.0)"
+description: "Binding to 0.0.0.0 exposes the service on all network interfaces, making it reachable from outside the host."
+severity: MEDIUM
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: docker_compose
+provider: docker
+enabled: true
+version: 1.0.0
+remediation: >
+  Bind to a specific IP (e.g., '127.0.0.1:8080:8080') instead of '0.0.0.0:8080:8080' or '8080:8080'.
+references:
+  - https://docs.docker.com/compose/compose-file/compose-file-v3/#ports
+compliance:
+  - framework: CIS_DOCKER
+    control: "5.14"
+  - framework: NIST_800_53
+    control: "SC-7"

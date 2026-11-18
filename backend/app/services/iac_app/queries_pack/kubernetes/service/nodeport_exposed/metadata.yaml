@@ -1,0 +1,19 @@
+id: K8S.SVC.NODEPORT_EXPOSED
+name: "Service is exposed via NodePort"
+description: "NodePort services expose a port on every cluster node's IP, increasing the attack surface."
+severity: MEDIUM
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Use ClusterIP for internal services and LoadBalancer or Ingress for external traffic.
+references:
+  - https://kubernetes.io/docs/concepts/services-networking/service/#type-nodeport
+compliance:
+  - framework: CIS_K8S
+    control: "5.4.2"
+  - framework: NIST_800_53
+    control: "SC-7"

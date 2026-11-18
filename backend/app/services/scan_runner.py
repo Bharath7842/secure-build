@@ -32,6 +32,9 @@ from app.services import (
     secret_masking,
 )
 from app.services.credential_holder import InMemoryCredentialHolder
+from app.services.sbom_app import service as sbom_service
+from app.services.iac_app import service as iac_service
+from app.services import sca_service
 from app.services.dast_findings import DastFindingsWriter
 from app.services.finding_rows import build_evidence_row, build_finding_row
 from app.services.scan_progress import ProgressTracker, infer_progress_from_lines
@@ -1216,6 +1219,313 @@ def _fresh_scan(scan_id: str) -> Scan | None:
         session.close()
 
 
+# CWE and OWASP mappings keyed by IaC query engine category strings.
+# The IaC engine never injects these into finding dicts — we derive them here.
+_IAC_CATEGORY_CWE: dict[str, str] = {
+    "SECRETS": "CWE-798",
+    "SECRETS_MANAGEMENT": "CWE-798",
+    "ENCRYPTION_AT_REST": "CWE-311",
+    "ENCRYPTION_IN_TRANSIT": "CWE-326",
+    "ENCRYPTION": "CWE-311",
+    "ACCESS_CONTROL": "CWE-284",
+    "IAM": "CWE-250",
+    "NETWORK_SECURITY": "CWE-284",
+    "NETWORK": "CWE-284",
+    "CONTAINER_SECURITY": "CWE-693",
+    "CONTAINER": "CWE-693",
+    "KUBERNETES": "CWE-693",
+    "SUPPLY_CHAIN": "CWE-829",
+    "LOGGING": "CWE-778",
+    "AUDIT_LOGGING": "CWE-778",
+    "SECURE_DEFAULTS": "CWE-1188",
+    "STORAGE": "CWE-538",
+    "DATA_PROTECTION": "CWE-311",
+    "IDENTITY": "CWE-269",
+}
+
+_IAC_CATEGORY_OWASP: dict[str, str] = {
+    "SECRETS": "A07:2021",
+    "SECRETS_MANAGEMENT": "A07:2021",
+    "ENCRYPTION_AT_REST": "A02:2021",
+    "ENCRYPTION_IN_TRANSIT": "A02:2021",
+    "ENCRYPTION": "A02:2021",
+    "ACCESS_CONTROL": "A01:2021",
+    "IAM": "A01:2021",
+    "NETWORK_SECURITY": "A05:2021",
+    "NETWORK": "A05:2021",
+    "CONTAINER_SECURITY": "A05:2021",
+    "CONTAINER": "A05:2021",
+    "KUBERNETES": "A05:2021",
+    "SUPPLY_CHAIN": "A08:2021",
+    "LOGGING": "A09:2021",
+    "AUDIT_LOGGING": "A09:2021",
+    "SECURE_DEFAULTS": "A05:2021",
+    "STORAGE": "A05:2021",
+    "DATA_PROTECTION": "A02:2021",
+    "IDENTITY": "A01:2021",
+}
+
+
+# Map the most common CWEs that appear in OSV/GHSA records to OWASP Top 10.
+# Used by _sca_to_findings to derive owasp_category from cwe_ids.
+_SCA_CWE_OWASP: dict[str, str] = {
+    "CWE-20": "A03:2021",   # Improper Input Validation
+    "CWE-22": "A01:2021",   # Path Traversal
+    "CWE-78": "A03:2021",   # OS Command Injection
+    "CWE-79": "A03:2021",   # XSS
+    "CWE-89": "A03:2021",   # SQL Injection
+    "CWE-94": "A03:2021",   # Code Injection
+    "CWE-200": "A02:2021",  # Information Exposure
+    "CWE-269": "A01:2021",  # Improper Privilege Management
+    "CWE-284": "A01:2021",  # Improper Access Control
+    "CWE-285": "A01:2021",  # Improper Authorization
+    "CWE-287": "A07:2021",  # Improper Authentication
+    "CWE-295": "A07:2021",  # Improper Certificate Validation
+    "CWE-306": "A07:2021",  # Missing Authentication
+    "CWE-311": "A02:2021",  # Missing Encryption
+    "CWE-326": "A02:2021",  # Inadequate Encryption Strength
+    "CWE-327": "A02:2021",  # Broken Crypto
+    "CWE-330": "A02:2021",  # Weak PRNG
+    "CWE-400": "A05:2021",  # Uncontrolled Resource Consumption
+    "CWE-434": "A04:2021",  # Unrestricted File Upload
+    "CWE-502": "A08:2021",  # Deserialization
+    "CWE-532": "A09:2021",  # Info Exposure via Log
+    "CWE-601": "A01:2021",  # Open Redirect
+    "CWE-611": "A05:2021",  # XXE
+    "CWE-770": "A05:2021",  # Resource Allocation
+    "CWE-798": "A07:2021",  # Hardcoded Credentials
+    "CWE-918": "A10:2021",  # SSRF
+}
+
+
+def _sca_to_findings(sca_result: dict) -> list[dict]:
+    """Convert sca_service output to Finding-dict format."""
+    findings: list[dict] = []
+    for entry in sca_result.get("vulnerabilities") or []:
+        purl = entry.get("purl", "")
+        pkg = entry.get("package_name") or purl
+        version = entry.get("version", "")
+        for vuln in entry.get("vulns") or []:
+            vuln_id = vuln.get("id", "")
+            details = vuln.get("details") or None
+            # CWE is extracted from OSV's database_specific.cwe_ids by sca_service
+            cwe_ids: list[str] = vuln.get("cwe_ids") or []
+            cwe = cwe_ids[0] if cwe_ids else None
+            owasp = next((_SCA_CWE_OWASP[c] for c in cwe_ids if c in _SCA_CWE_OWASP), None)
+            findings.append({
+                "kind": "sca_vex",
+                "verdict": "unverified",
+                "unresolved_reason": "not_reviewed_sca_vex",
+                "issue_class": "security",
+                "rule_id": f"sca-{vuln_id}" if vuln_id else "sca-unknown",
+                "title": f"{vuln_id}: {vuln.get('summary', '')}" if vuln_id else vuln.get("summary", "Unknown vulnerability"),
+                "severity": vuln.get("severity") or "MEDIUM",
+                "cwe": cwe,
+                "owasp_category": owasp,
+                "file_path": "__sca__",
+                "matched_text": purl,
+                "snippet": details,
+                "verdict_reason": f"Package {pkg} {version} — from OSV.dev" if (pkg or version) else None,
+                "source": None,
+                "sink": None,
+                "data_flow": None,
+                "ai_fix": None,
+            })
+    return findings
+
+
+def _iac_to_findings(raw_findings: list[dict]) -> list[dict]:
+    """Normalize IaC query engine output to Finding-dict format."""
+    findings: list[dict] = []
+    for f in raw_findings:
+        category = (f.get("category") or "").upper()
+        cwe = _IAC_CATEGORY_CWE.get(category)
+        owasp = f.get("owasp_category") or _IAC_CATEGORY_OWASP.get(category)
+        evidence = f.get("evidence") or f.get("description") or None
+        remediation = f.get("remediation") or None
+        resource = f.get("resource") or None
+        findings.append({
+            "kind": "iac",
+            "verdict": "unverified",
+            "unresolved_reason": "not_reviewed_iac",
+            "issue_class": "security",
+            "rule_id": f.get("rule_id") or "iac-unknown",
+            "title": f.get("title") or "IaC finding",
+            "severity": f.get("severity") or "MEDIUM",
+            "cwe": cwe,
+            "owasp_category": owasp,
+            "file_path": f.get("file_path") or "__iac__",
+            "line": f.get("line_start"),
+            "snippet": evidence,
+            "matched_text": resource or "",
+            "verdict_reason": remediation,
+            "source": None,
+            "sink": None,
+            "data_flow": None,
+            "ai_fix": remediation,
+        })
+    return findings
+
+
+_PARALLEL_SCANNER_TIMEOUT = 120  # seconds to wait for each parallel scanner thread
+
+
+def _launch_parallel_scanners(scan_id: str, workspace: Path):
+    """Start SBOM→SCA/VEX and IaC threads the moment the workspace is ready.
+
+    These run in parallel with the SAST engine — they share no state with it.
+    Returns ``(t_sbom_sca, t_iac, results)`` where *results* is a shared dict
+    the closures populate; call :func:`_collect_parallel_scanners` to join the
+    threads and persist the findings.
+    """
+    _log = logging.getLogger(__name__)
+    results: dict = {
+        "sbom_findings": [],
+        "sca_findings": [],
+        "iac_findings": [],
+        "sbom_meta": {},
+        "errors": [],
+    }
+
+    def _run_sbom_sca() -> None:
+        # --- SBOM ---------------------------------------------------------------
+        if engine_adapter.run_sbom_in_sast_enabled():
+            scan_log.log(scan_id, "### SBOM: Scanning components …")
+            # Fast path: skip the slow ClearlyDefined license network lookup.
+            # SCA only needs purls; full license enrichment is not required here.
+            sbom_result = sbom_service.run_sbom_fast(str(workspace))
+            results["sbom_meta"] = {
+                "components": sbom_result.get("components") or [],
+                "ecosystems": sbom_result.get("ecosystems") or [],
+                "licenses": sbom_result.get("licenses") or [],
+                "errors": sbom_result.get("errors") or [],
+                "warnings": sbom_result.get("warnings") or [],
+            }
+            if sbom_result.get("error"):
+                _log.warning("SBOM error (scan %s): %s", scan_id, sbom_result["error"])
+                results["errors"].append(f"SBOM: {sbom_result['error']}")
+            comp_count = len(results["sbom_meta"]["components"])
+            scan_log.log(scan_id, f"SBOM complete: {comp_count} component(s) found.")
+        else:
+            scan_log.log(scan_id, "SBOM disabled — skipping.")
+
+        # --- SCA/VEX (chains directly after SBOM) --------------------------------
+        if engine_adapter.run_sca_vex_enabled():
+            components = results["sbom_meta"].get("components") or []
+            components_with_purl = [c for c in components if c.get("purl")]
+            if components_with_purl:
+                scan_log.log(scan_id, "### SCA: Checking components for known CVEs …")
+                sca_result = sca_service.run_sca(components_with_purl)
+                results["sca_findings"].extend(_sca_to_findings(sca_result))
+                results["sbom_meta"]["vex_statements"] = sca_result.get("vex_statements") or []
+                scan_log.log(scan_id, f"SCA complete: {len(results['sca_findings'])} finding(s).")
+            else:
+                scan_log.log(scan_id, "SCA skipped — no components with purls found by SBOM.")
+        else:
+            scan_log.log(scan_id, "SCA/VEX disabled — skipping.")
+
+    def _run_iac() -> None:
+        if engine_adapter.run_iac_enabled():
+            # Quick pre-check: count .tf and Dockerfile files so we can diagnose
+            # any mismatch between workspace state and IaC findings.
+            _ws = Path(str(workspace))
+            _tf_count = sum(1 for _ in _ws.rglob("*.tf")) if _ws.exists() else -1
+            _docker_count = sum(
+                1 for p in _ws.rglob("*")
+                if p.is_file() and (p.name.lower().startswith("dockerfile") or p.suffix.lower() == ".dockerfile")
+            ) if _ws.exists() else -1
+            scan_log.log(
+                scan_id,
+                f"IaC workspace: {_ws} (exists={_ws.exists()}, tf={_tf_count}, dockerfiles={_docker_count})",
+            )
+            scan_log.log(scan_id, "### IaC: Scanning infrastructure-as-code files …")
+            iac_result = iac_service.run_iac_scan(str(workspace))
+            if iac_result.get("error"):
+                _log.warning("IaC error (scan %s): %s", scan_id, iac_result["error"])
+                results["errors"].append(f"IaC: {iac_result['error']}")
+                scan_log.log(scan_id, f"IaC error: {iac_result['error']}")
+            else:
+                raw = iac_result.get("findings") or []
+                # Log a category breakdown so diagnosis is easy when counts look wrong.
+                if raw:
+                    cats: dict[str, int] = {}
+                    for _f in raw:
+                        _c = _f.get("category") or "(none)"
+                        cats[_c] = cats.get(_c, 0) + 1
+                    cat_summary = ", ".join(f"{c}={n}" for c, n in sorted(cats.items()))
+                    scan_log.log(scan_id, f"IaC raw findings by category: {cat_summary}")
+                results["iac_findings"].extend(_iac_to_findings(raw))
+                tf_fc = iac_result.get("terraform_file_count", "?")
+                dk_fc = iac_result.get("docker_file_count", "?")
+                scan_log.log(
+                    scan_id,
+                    f"IaC complete: {len(results['iac_findings'])} finding(s) "
+                    f"from {iac_result.get('file_count', 0)} file(s) "
+                    f"(terraform={tf_fc}, docker={dk_fc}).",
+                )
+        else:
+            scan_log.log(scan_id, "IaC disabled — skipping.")
+
+    t_sbom_sca = threading.Thread(target=_run_sbom_sca, name=f"sbom-sca-{scan_id}", daemon=True)
+    t_iac = threading.Thread(target=_run_iac, name=f"iac-{scan_id}", daemon=True)
+    t_sbom_sca.start()
+    t_iac.start()
+    return t_sbom_sca, t_iac, results
+
+
+def _collect_parallel_scanners(
+    scan_id: str,
+    t_sbom_sca: threading.Thread,
+    t_iac: threading.Thread,
+    results: dict,
+) -> None:
+    """Join the parallel scanner threads and persist their findings.
+
+    Safe to call even when SAST failed — it still collects whatever the
+    threads finished before the timeout, then writes those findings to the DB.
+    """
+    _log = logging.getLogger(__name__)
+
+    t_sbom_sca.join(timeout=_PARALLEL_SCANNER_TIMEOUT)
+    if t_sbom_sca.is_alive():
+        _log.warning("SBOM/SCA thread timed out after %ss (scan %s)", _PARALLEL_SCANNER_TIMEOUT, scan_id)
+        scan_log.log(scan_id, f"SBOM/SCA timed out after {_PARALLEL_SCANNER_TIMEOUT}s — skipping remaining.")
+
+    t_iac.join(timeout=_PARALLEL_SCANNER_TIMEOUT)
+    if t_iac.is_alive():
+        _log.warning("IaC thread timed out after %ss (scan %s)", _PARALLEL_SCANNER_TIMEOUT, scan_id)
+        scan_log.log(scan_id, f"IaC timed out after {_PARALLEL_SCANNER_TIMEOUT}s — skipping remaining.")
+
+    # Persist findings collected before the timeout.
+    writer = _make_findings_writer(scan_id)
+    for virtual_path, findings in [
+        ("__sbom_sca__", results["sca_findings"]),
+        ("__iac__", results["iac_findings"]),
+    ]:
+        if findings:
+            writer(virtual_path, findings)
+
+    # Persist SBOM component inventory onto the scan row.
+    sbom_meta = results.get("sbom_meta") or {}
+    if sbom_meta:
+        session = db_module.SessionLocal()
+        try:
+            with _DB_WRITE_LOCK:
+                scan = session.get(Scan, scan_id)
+                if scan is not None:
+                    meta = dict(scan.metadata_json or {})
+                    meta["sbom_result"] = sbom_meta
+                    scan.metadata_json = meta
+                    session.commit()
+        finally:
+            session.close()
+
+    total = len(results["sca_findings"]) + len(results["iac_findings"])
+    scan_log.log(scan_id, f"SBOM/SCA/IaC complete: {total} finding(s) added.")
+    if results["errors"]:
+        scan_log.log(scan_id, f"Scanner errors: {'; '.join(results['errors'])}")
+
+
 def execute_scan(scan_id: str) -> None:
     # Look up SessionLocal via the module (not a direct import) because
     # tests call init_db(tmp_url) *after* this module has already been
@@ -1337,8 +1647,12 @@ def execute_scan(scan_id: str) -> None:
                         scan.commit_sha = resolved_sha
                         db.commit()
                     scan_log.log(scan_id, "Repository ready.")
+                    # Workspace is ready — start SBOM/SCA/IaC threads NOW so they
+                    # run in parallel with the SAST engine rather than after it.
+                    _par_t_sbom_sca, _par_t_iac, _par_results = _launch_parallel_scanners(scan_id, workspace)
                 else:
                     scan_log.log(scan_id, "Using the local mock workspace — no checkout needed.")
+                    _par_t_sbom_sca = _par_t_iac = _par_results = None  # mock: no parallel scanners
 
                 if _should_abort(db.get(Scan, scan_id), scan_id):
                     _mark_cancelled(db, scan_id)
@@ -1370,6 +1684,10 @@ def execute_scan(scan_id: str) -> None:
                     discovery = engine_result.get("discovery") or {}
                     usage_summary = engine_result.get("usage_summary") or {}
                 except Exception as exc:  # noqa: BLE001 - surface engine errors on the scan row
+                    # Collect parallel scanner results even on SAST failure so their
+                    # findings are not lost and their threads are cleaned up.
+                    if _par_t_sbom_sca is not None:
+                        _collect_parallel_scanners(scan_id, _par_t_sbom_sca, _par_t_iac, _par_results)
                     db.rollback()
                     scan = db.get(Scan, scan_id)
                     if scan is None:
@@ -1423,6 +1741,13 @@ def execute_scan(scan_id: str) -> None:
                 if scan is None or _should_abort(scan, scan_id):
                     _mark_cancelled(db, scan_id)
                     return
+
+                # SAST finished — join the parallel SBOM/SCA/IaC threads and persist
+                # their findings.  These ran concurrently with the SAST engine so there
+                # is no additional wall-clock cost here beyond whatever remains of the
+                # 120 s timeout (usually zero — they finish in ~30 s).
+                if _par_t_sbom_sca is not None:
+                    _collect_parallel_scanners(scan_id, _par_t_sbom_sca, _par_t_iac, _par_results)
 
                 reconcile_unverified_findings(scan_id)
                 _log_unresolved_summary(scan_id)

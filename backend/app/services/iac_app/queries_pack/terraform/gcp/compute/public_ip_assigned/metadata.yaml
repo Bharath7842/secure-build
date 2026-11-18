@@ -1,0 +1,19 @@
+id: GCP.COMPUTE.PUBLIC_IP_ASSIGNED
+name: "GCE instance has a public IP address assigned"
+description: "A public IP exposes the instance directly to the internet. Use a NAT gateway or VPN for outbound-only connectivity."
+severity: HIGH
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: gcp
+enabled: true
+version: 1.0.0
+remediation: >
+  Remove the access_config block from network_interface in google_compute_instance. Use Cloud NAT for outbound traffic.
+references:
+  - https://cloud.google.com/compute/docs/ip-addresses
+compliance:
+  - framework: CIS_GCP
+    control: "4.9"
+  - framework: NIST_800_53
+    control: "SC-7"

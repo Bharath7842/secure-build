@@ -1,0 +1,17 @@
+id: DOCKER.NO_HEALTHCHECK
+name: "Dockerfile does not define a HEALTHCHECK instruction"
+description: "Without HEALTHCHECK, container orchestrators cannot determine whether the application is healthy."
+severity: LOW
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: docker
+provider: docker
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a HEALTHCHECK instruction to verify that your application is running correctly.
+references:
+  - https://docs.docker.com/engine/reference/builder/#healthcheck
+compliance:
+  - framework: CIS_DOCKER
+    control: "4.6"

@@ -1,0 +1,19 @@
+id: K8S.POD.ALLOW_PRIVILEGE_ESCALATION
+name: "Container allows privilege escalation"
+description: "allowPrivilegeEscalation: true permits processes in the container to gain more privileges than their parent."
+severity: HIGH
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Set securityContext.allowPrivilegeEscalation: false in all container definitions.
+references:
+  - https://kubernetes.io/docs/concepts/security/pod-security-standards/
+compliance:
+  - framework: CIS_K8S
+    control: "5.2.5"
+  - framework: NIST_800_53
+    control: "CM-6"

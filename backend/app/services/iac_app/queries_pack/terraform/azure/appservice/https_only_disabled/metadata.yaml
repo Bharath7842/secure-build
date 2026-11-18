@@ -1,0 +1,19 @@
+id: AZURE.APPSERVICE.HTTPS_ONLY_DISABLED
+name: "Azure App Service does not enforce HTTPS-only traffic"
+description: "Without https_only=true, the App Service accepts unencrypted HTTP requests, exposing session tokens and data in transit."
+severity: HIGH
+category: ENCRYPTION_IN_TRANSIT
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Set https_only = true on your azurerm_linux_web_app, azurerm_windows_web_app, or azurerm_app_service resource.
+references:
+  - https://docs.microsoft.com/en-us/azure/app-service/configure-ssl-bindings#enforce-https
+compliance:
+  - framework: CIS_AZURE
+    control: "9.2"
+  - framework: NIST_800_53
+    control: "SC-8"

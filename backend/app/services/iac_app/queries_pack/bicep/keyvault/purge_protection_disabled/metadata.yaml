@@ -1,0 +1,19 @@
+id: BICEP.KEYVAULT.PURGE_PROTECTION_DISABLED
+name: "Bicep Key Vault does not have purge protection enabled"
+description: "Without purge protection, a deleted vault and all its secrets can be permanently destroyed."
+severity: MEDIUM
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: bicep
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Set enablePurgeProtection: true in Microsoft.KeyVault/vaults properties.
+references:
+  - https://docs.microsoft.com/en-us/azure/key-vault/general/soft-delete-overview#purge-protection
+compliance:
+  - framework: CIS_AZURE
+    control: "8.4"
+  - framework: NIST_800_53
+    control: "CP-10"

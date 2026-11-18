@@ -1,0 +1,19 @@
+id: K8S.POD.NO_RESOURCE_LIMITS
+name: "Container does not have CPU or memory resource limits"
+description: "Without resource limits, a single container can consume all node resources, causing denial of service."
+severity: MEDIUM
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Set resources.limits.cpu and resources.limits.memory on all containers.
+references:
+  - https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+compliance:
+  - framework: CIS_K8S
+    control: "5.2.11"
+  - framework: NIST_800_53
+    control: "SC-5"

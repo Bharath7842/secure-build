@@ -1,0 +1,17 @@
+id: PULUMI.AWS.EC2_PUBLIC_IP
+name: "Pulumi EC2 instance is configured with a public IP address"
+description: "Instances with associate_public_ip_address=true are directly reachable from the internet."
+severity: MEDIUM
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: pulumi
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set associatePublicIpAddress: false on your aws:ec2/instance:Instance and use a NAT gateway for outbound traffic.
+references:
+  - https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-instance-addressing.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-7"

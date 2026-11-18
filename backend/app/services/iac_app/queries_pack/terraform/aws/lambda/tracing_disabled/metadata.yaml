@@ -1,0 +1,19 @@
+id: AWS.LAM.TRACING_DISABLED
+name: "Lambda function X-Ray tracing is not enabled"
+description: "Without active tracing, debugging and performance analysis of Lambda invocations is limited."
+severity: LOW
+category: LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add tracing_config { mode = "Active" } to your aws_lambda_function resource.
+references:
+  - https://docs.aws.amazon.com/lambda/latest/dg/services-xray.html
+compliance:
+  - framework: NIST_800_53
+    control: "AU-12"
+  - framework: SOC2
+    control: "CC7.1"

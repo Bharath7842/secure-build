@@ -1,0 +1,19 @@
+id: AZURE.STORAGE.HTTPS_NOT_REQUIRED
+name: "Azure Storage account does not require HTTPS traffic"
+description: "Without HTTPS enforcement, data can be transmitted in plaintext, risking interception."
+severity: HIGH
+category: ENCRYPTION_IN_TRANSIT
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Set enable_https_traffic_only = true (or https_traffic_only_enabled = true) on azurerm_storage_account.
+references:
+  - https://docs.microsoft.com/en-us/azure/storage/common/storage-require-secure-transfer
+compliance:
+  - framework: CIS_AZURE
+    control: "3.1"
+  - framework: NIST_800_53
+    control: "SC-8"

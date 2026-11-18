@@ -1,0 +1,17 @@
+id: AWS.ECS.CLUSTER_INSIGHTS_DISABLED
+name: "ECS cluster does not have Container Insights enabled"
+description: "Without Container Insights, there is no CloudWatch monitoring for CPU, memory, disk I/O, and network metrics per task."
+severity: LOW
+category: AUDIT_LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add setting { name = "containerInsights" value = "enabled" } to your aws_ecs_cluster resource.
+references:
+  - https://docs.aws.amazon.com/AmazonECS/latest/developerguide/cloudwatch-container-insights.html
+compliance:
+  - framework: NIST_800_53
+    control: "AU-2"

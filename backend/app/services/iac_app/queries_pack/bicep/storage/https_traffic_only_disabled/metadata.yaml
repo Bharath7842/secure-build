@@ -1,0 +1,19 @@
+id: BICEP.STORAGE.HTTPS_TRAFFIC_ONLY_DISABLED
+name: "Bicep Storage account does not enforce HTTPS-only traffic"
+description: "Without supportsHttpsTrafficOnly=true, the storage account accepts unencrypted HTTP requests."
+severity: HIGH
+category: ENCRYPTION_IN_TRANSIT
+finding_type: MISCONFIGURATION
+iac_type: bicep
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Set supportsHttpsTrafficOnly: true in your Microsoft.Storage/storageAccounts properties.
+references:
+  - https://docs.microsoft.com/en-us/azure/storage/common/storage-require-secure-transfer
+compliance:
+  - framework: CIS_AZURE
+    control: "3.1"
+  - framework: NIST_800_53
+    control: "SC-8"

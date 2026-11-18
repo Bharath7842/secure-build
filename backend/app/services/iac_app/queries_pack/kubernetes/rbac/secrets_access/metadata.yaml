@@ -1,0 +1,19 @@
+id: K8S.RBAC.SECRETS_ACCESS
+name: "RBAC role allows reading Kubernetes Secrets"
+description: "Access to Secrets allows attackers who compromise a pod to read credentials and tokens."
+severity: HIGH
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Restrict Secrets access to only the service accounts that absolutely require it.
+references:
+  - https://kubernetes.io/docs/reference/access-authn-authz/rbac/
+compliance:
+  - framework: CIS_K8S
+    control: "5.1.2"
+  - framework: NIST_800_53
+    control: "AC-6"

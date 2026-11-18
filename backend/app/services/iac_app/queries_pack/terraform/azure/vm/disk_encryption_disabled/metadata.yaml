@@ -1,0 +1,19 @@
+id: AZURE.VM.DISK_ENCRYPTION_DISABLED
+name: "Azure managed disk does not have encryption at rest with a customer-managed key"
+description: "Managed disks are encrypted by default with platform-managed keys. For compliance, sensitive workloads should use customer-managed keys stored in Key Vault."
+severity: MEDIUM
+category: ENCRYPTION_AT_REST
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Attach a disk_encryption_set_id to your azurerm_managed_disk resource referencing an azurerm_disk_encryption_set backed by Azure Key Vault.
+references:
+  - https://docs.microsoft.com/en-us/azure/virtual-machines/disk-encryption-overview
+compliance:
+  - framework: CIS_AZURE
+    control: "7.6"
+  - framework: NIST_800_53
+    control: "SC-28"

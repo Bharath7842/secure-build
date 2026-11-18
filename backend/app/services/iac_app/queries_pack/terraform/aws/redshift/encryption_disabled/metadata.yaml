@@ -1,0 +1,19 @@
+id: AWS.REDSHIFT.ENCRYPTION_DISABLED
+name: "Redshift cluster does not have encryption enabled"
+description: "Without encryption, data stored in the Redshift cluster including snapshots is in plaintext."
+severity: HIGH
+category: ENCRYPTION_AT_REST
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set encrypted = true on your aws_redshift_cluster resource.
+references:
+  - https://docs.aws.amazon.com/redshift/latest/mgmt/working-with-db-encryption.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.5.2"
+  - framework: NIST_800_53
+    control: "SC-28"

@@ -1,0 +1,19 @@
+id: CFN.IAM.PASSWORD_POLICY
+name: "CloudFormation IAM account password policy is not strong"
+description: "The IAM::AccountPasswordPolicy resource does not enforce strong password requirements."
+severity: MEDIUM
+category: IDENTITY
+finding_type: MISCONFIGURATION
+iac_type: cloudformation
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set MinimumPasswordLength >= 14, RequireUppercaseCharacters, RequireLowercaseCharacters, RequireNumbers, RequireSymbols.
+references:
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_passwords_account-policy.html
+compliance:
+  - framework: CIS_AWS
+    control: "1.8"
+  - framework: NIST_800_53
+    control: "IA-5"

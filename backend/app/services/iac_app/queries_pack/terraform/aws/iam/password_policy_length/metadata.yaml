@@ -1,0 +1,19 @@
+id: AWS.IAM.PASSWORD_POLICY_LENGTH
+name: "IAM password policy minimum length is insufficient"
+description: "The IAM account password policy minimum length is less than 14 characters."
+severity: MEDIUM
+category: IDENTITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set minimum_password_length to 14 or more in aws_iam_account_password_policy.
+references:
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_passwords_account-policy.html
+compliance:
+  - framework: CIS_AWS
+    control: "1.8"
+  - framework: NIST_800_53
+    control: "IA-5"

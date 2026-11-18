@@ -1,0 +1,19 @@
+id: K8S.POD.NO_READ_ONLY_FILESYSTEM
+name: "Container does not use a read-only root filesystem"
+description: "A writable root filesystem allows attackers to persist malware or modify the container at runtime."
+severity: MEDIUM
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Set securityContext.readOnlyRootFilesystem: true in all container definitions.
+references:
+  - https://kubernetes.io/docs/concepts/security/pod-security-standards/
+compliance:
+  - framework: CIS_K8S
+    control: "5.2.8"
+  - framework: NIST_800_53
+    control: "CM-6"

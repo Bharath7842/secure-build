@@ -1,0 +1,19 @@
+id: AWS.SECRETSMANAGER.ROTATION_DISABLED
+name: "Secrets Manager secret does not have automatic rotation enabled"
+description: "Without rotation, long-lived secrets increase the blast radius of a credential leak. Automatic rotation limits the exposure window."
+severity: MEDIUM
+category: SECRETS_MANAGEMENT
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add an aws_secretsmanager_secret_rotation resource linked to your secret and configure a rotation Lambda.
+references:
+  - https://docs.aws.amazon.com/secretsmanager/latest/userguide/rotating-secrets.html
+compliance:
+  - framework: CIS_AWS
+    control: "1.14"
+  - framework: NIST_800_53
+    control: "IA-5"

@@ -1,0 +1,17 @@
+id: GRPC.SENSITIVE_FIELD_PLAINTEXT
+name: "gRPC message contains a field with a sensitive name stored as a string"
+description: "Storing passwords, tokens, or keys as plain string fields in protobuf messages may lead to accidental logging or leakage."
+severity: MEDIUM
+category: SECRETS_MANAGEMENT
+finding_type: MISCONFIGURATION
+iac_type: grpc
+provider: grpc
+enabled: true
+version: 1.0.0
+remediation: >
+  Use bytes or encrypted wrappers for sensitive fields. Never store raw credentials in string fields.
+references:
+  - https://protobuf.dev/programming-guides/api/
+compliance:
+  - framework: NIST_800_53
+    control: "IA-5"

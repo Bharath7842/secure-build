@@ -1,0 +1,19 @@
+id: AZURE.STORAGE.NETWORK_DEFAULT_ALLOW
+name: "Azure Storage account network rules default action is Allow"
+description: "With default_action=Allow, the storage account is accessible from all networks unless explicit deny rules are added, contradicting a default-deny posture."
+severity: MEDIUM
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Add network_rules { default_action = "Deny" } to your azurerm_storage_account resource and explicitly allow required subnets or IPs.
+references:
+  - https://docs.microsoft.com/en-us/azure/storage/common/storage-network-security
+compliance:
+  - framework: CIS_AZURE
+    control: "3.8"
+  - framework: NIST_800_53
+    control: "SC-7"

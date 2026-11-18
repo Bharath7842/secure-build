@@ -1,0 +1,19 @@
+id: AWS.IAM.PASSWORD_POLICY_MAX_AGE
+name: "IAM password policy allows passwords older than 90 days"
+description: "The IAM account password policy max_password_age exceeds 90 days or is not set."
+severity: LOW
+category: IDENTITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set max_password_age to 90 or fewer days in aws_iam_account_password_policy.
+references:
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_passwords_account-policy.html
+compliance:
+  - framework: CIS_AWS
+    control: "1.11"
+  - framework: NIST_800_53
+    control: "IA-5"

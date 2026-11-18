@@ -1,0 +1,17 @@
+id: AWS.CF.WAF_NOT_ENABLED
+name: "CloudFront distribution has no WAF web ACL attached"
+description: "Without a WAF, the distribution has no protection against common web attacks such as SQL injection and XSS."
+severity: MEDIUM
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set web_acl_id to an existing WAF web ACL ARN on your aws_cloudfront_distribution resource.
+references:
+  - https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/distribution-web-awswaf.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-7"

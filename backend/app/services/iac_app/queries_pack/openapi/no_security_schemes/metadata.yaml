@@ -1,0 +1,19 @@
+id: OPENAPI.NO_SECURITY_SCHEMES
+name: "OpenAPI specification defines no security schemes"
+description: "Without security schemes, the API cannot enforce authentication or authorization on any endpoint."
+severity: HIGH
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: openapi
+provider: openapi
+enabled: true
+version: 1.0.0
+remediation: >
+  Define at least one security scheme (e.g., bearerAuth, apiKey, oauth2) in components/securitySchemes.
+references:
+  - https://swagger.io/docs/specification/authentication/
+compliance:
+  - framework: NIST_800_53
+    control: "IA-2"
+  - framework: OWASP_API
+    control: "API2"

@@ -1,0 +1,17 @@
+id: GRPC.PROTO2_SYNTAX
+name: "gRPC proto file uses proto2 syntax"
+description: "proto2 is the older Protocol Buffers syntax that is no longer recommended. proto3 provides better defaults and is the standard for new gRPC services."
+severity: LOW
+category: SECURE_DEFAULTS
+finding_type: MISCONFIGURATION
+iac_type: grpc
+provider: grpc
+enabled: true
+version: 1.0.0
+remediation: >
+  Migrate to proto3 syntax. Update the syntax line to: syntax = "proto3";
+references:
+  - https://protobuf.dev/programming-guides/proto3/
+compliance:
+  - framework: NIST_800_53
+    control: "CM-6"

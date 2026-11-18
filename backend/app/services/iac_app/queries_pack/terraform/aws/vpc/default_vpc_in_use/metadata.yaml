@@ -1,0 +1,19 @@
+id: AWS.VPC.DEFAULT_VPC_IN_USE
+name: "Default VPC is in use"
+description: "The default VPC has permissive settings and should not be used for production workloads."
+severity: MEDIUM
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Create a custom VPC with explicit security controls and remove or empty the default VPC.
+references:
+  - https://docs.aws.amazon.com/vpc/latest/userguide/default-vpc.html
+compliance:
+  - framework: CIS_AWS
+    control: "5.5"
+  - framework: NIST_800_53
+    control: "SC-7"

@@ -1,0 +1,19 @@
+id: AWS.EC2.SECURITY_GROUP_ALL_PORTS_OPEN
+name: "Security group allows all TCP/UDP traffic from any IP address"
+description: "A security group ingress rule with port 0-65535 open to 0.0.0.0/0 is a critical misconfiguration."
+severity: CRITICAL
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Restrict ingress rules to only the specific ports and protocols required by your application.
+references:
+  - https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html
+compliance:
+  - framework: CIS_AWS
+    control: "5.1"
+  - framework: NIST_800_53
+    control: "SC-7"

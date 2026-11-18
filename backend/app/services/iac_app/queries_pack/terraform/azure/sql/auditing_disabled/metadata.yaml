@@ -1,0 +1,19 @@
+id: AZURE.SQL.AUDITING_DISABLED
+name: "Azure SQL Server does not have auditing enabled"
+description: "Without auditing, there is no record of database logins, queries, or administrative actions, making incident investigation impossible."
+severity: MEDIUM
+category: AUDIT_LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Add an azurerm_mssql_server_extended_auditing_policy resource linked to your SQL server with retention_in_days >= 90.
+references:
+  - https://docs.microsoft.com/en-us/azure/azure-sql/database/auditing-overview
+compliance:
+  - framework: CIS_AZURE
+    control: "4.1.1"
+  - framework: NIST_800_53
+    control: "AU-2"

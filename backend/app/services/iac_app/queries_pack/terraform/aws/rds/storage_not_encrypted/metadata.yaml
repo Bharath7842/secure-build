@@ -1,0 +1,19 @@
+id: AWS.RDS.STORAGE_NOT_ENCRYPTED
+name: "RDS database storage is not encrypted at rest"
+description: "The RDS instance has storage_encrypted = false or absent, leaving data unencrypted."
+severity: HIGH
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set storage_encrypted = true and optionally kms_key_id in your aws_db_instance.
+references:
+  - https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.Encryption.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.3.1"
+  - framework: NIST_800_53
+    control: "SC-28"

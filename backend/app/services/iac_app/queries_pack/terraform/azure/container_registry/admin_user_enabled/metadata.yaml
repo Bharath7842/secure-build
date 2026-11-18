@@ -1,0 +1,19 @@
+id: AZURE.ACR.ADMIN_USER_ENABLED
+name: "Azure Container Registry has the admin user account enabled"
+description: "The admin user is a single shared account for the registry. It cannot be audited per-user and should be disabled in favour of service principal or managed identity access."
+severity: MEDIUM
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Set admin_enabled = false on your azurerm_container_registry resource and use service principals or managed identities.
+references:
+  - https://docs.microsoft.com/en-us/azure/container-registry/container-registry-authentication
+compliance:
+  - framework: CIS_AZURE
+    control: "7.4"
+  - framework: NIST_800_53
+    control: "IA-2"

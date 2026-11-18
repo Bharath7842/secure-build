@@ -1,0 +1,19 @@
+id: AWS.EC2.SECURITY_GROUP_SSH_OPEN
+name: "Security group allows SSH (port 22) from any IP address"
+description: "Allowing SSH access from 0.0.0.0/0 or ::/0 exposes instances to brute force and exploit attacks."
+severity: CRITICAL
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Restrict SSH ingress to known IP ranges or use AWS Systems Manager Session Manager instead.
+references:
+  - https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html
+compliance:
+  - framework: CIS_AWS
+    control: "5.2"
+  - framework: NIST_800_53
+    control: "SC-7"

@@ -1,0 +1,19 @@
+id: AZURE.SQL.FIREWALL_ALLOWS_ALL_AZURE_IPS
+name: "Azure SQL firewall rule allows all Azure services (0.0.0.0 to 0.0.0.0)"
+description: "The 0.0.0.0–0.0.0.0 firewall rule allows any Azure-hosted service to connect to the SQL server, including services in other Azure tenants."
+severity: HIGH
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Remove the 0.0.0.0–0.0.0.0 firewall rule and use Virtual Network service endpoints or Private Endpoints instead.
+references:
+  - https://docs.microsoft.com/en-us/azure/azure-sql/database/firewall-configure
+compliance:
+  - framework: CIS_AZURE
+    control: "4.1.2"
+  - framework: NIST_800_53
+    control: "SC-7"

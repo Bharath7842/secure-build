@@ -1,0 +1,19 @@
+id: AWS.RDS.PUBLICLY_ACCESSIBLE
+name: "RDS database instance is publicly accessible"
+description: "Setting publicly_accessible = true exposes the database endpoint to the internet."
+severity: CRITICAL
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set publicly_accessible = false and ensure the database is in a private subnet.
+references:
+  - https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_VPC.WorkingWithRDSInstanceinaVPC.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.3.3"
+  - framework: NIST_800_53
+    control: "SC-7"

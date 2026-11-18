@@ -1,0 +1,19 @@
+id: PULUMI.AWS.IAM_ADMIN_POLICY
+name: "Pulumi IAM role has the AdministratorAccess policy attached"
+description: "AdministratorAccess grants unrestricted access to all AWS services and resources, violating least-privilege."
+severity: CRITICAL
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: pulumi
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Replace the AdministratorAccess policy with a least-privilege policy scoped to the specific actions and resources needed.
+references:
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html
+compliance:
+  - framework: CIS_AWS
+    control: "1.16"
+  - framework: NIST_800_53
+    control: "AC-6"

@@ -1,0 +1,19 @@
+id: AWS.RDS.BACKUP_RETENTION_LOW
+name: "RDS database backup retention period is less than 7 days"
+description: "Short backup retention limits recovery options in case of data corruption or accidental deletion."
+severity: MEDIUM
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set backup_retention_period to 7 or more days in your aws_db_instance.
+references:
+  - https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_WorkingWithAutomatedBackups.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.3.2"
+  - framework: NIST_800_53
+    control: "CP-9"

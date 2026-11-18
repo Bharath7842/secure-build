@@ -1,0 +1,19 @@
+id: AZURE.AKS.NETWORK_POLICY_MISSING
+name: "AKS cluster does not have a network policy configured"
+description: "Without a network policy (Calico or Azure), all pods in the cluster can communicate freely, violating least-privilege networking."
+severity: MEDIUM
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Add network_profile { network_policy = "calico" network_plugin = "azure" } to your azurerm_kubernetes_cluster resource.
+references:
+  - https://docs.microsoft.com/en-us/azure/aks/use-network-policies
+compliance:
+  - framework: CIS_AZURE
+    control: "8.6"
+  - framework: NIST_800_53
+    control: "SC-7"

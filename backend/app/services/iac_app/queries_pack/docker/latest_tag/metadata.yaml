@@ -1,0 +1,19 @@
+id: DOCKER.LATEST_TAG
+name: "Dockerfile FROM instruction uses the 'latest' tag"
+description: "Using latest makes builds non-reproducible and may pull unexpected upstream changes."
+severity: MEDIUM
+category: SUPPLY_CHAIN
+finding_type: MISCONFIGURATION
+iac_type: docker
+provider: docker
+enabled: true
+version: 1.0.0
+remediation: >
+  Pin the base image to a specific version tag or digest (e.g., FROM ubuntu:22.04 or FROM ubuntu@sha256:...).
+references:
+  - https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#from
+compliance:
+  - framework: CIS_DOCKER
+    control: "4.3"
+  - framework: NIST_800_53
+    control: "CM-2"

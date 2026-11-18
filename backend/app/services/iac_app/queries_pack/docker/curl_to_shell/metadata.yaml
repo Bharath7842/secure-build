@@ -1,0 +1,19 @@
+id: DOCKER.CURL_TO_SHELL
+name: "Dockerfile pipes curl or wget output directly to a shell"
+description: "Piping remote scripts directly to bash or sh is a supply-chain risk — the script is not reviewed."
+severity: HIGH
+category: SUPPLY_CHAIN
+finding_type: MISCONFIGURATION
+iac_type: docker
+provider: docker
+enabled: true
+version: 1.0.0
+remediation: >
+  Download the script first, verify its integrity (checksum/signature), then execute it.
+references:
+  - https://docs.docker.com/develop/develop-images/dockerfile_best-practices/
+compliance:
+  - framework: CIS_DOCKER
+    control: "4.3"
+  - framework: NIST_800_53
+    control: "CM-7"

@@ -1,0 +1,19 @@
+id: AWS.CF.MIN_TLS_VERSION_LOW
+name: "CloudFront distribution minimum TLS protocol version is below TLS 1.2"
+description: "Older TLS versions (SSLv3, TLSv1, TLSv1.1) have known vulnerabilities. CloudFront should enforce TLS 1.2 or higher."
+severity: MEDIUM
+category: ENCRYPTION_IN_TRANSIT
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set viewer_certificate.minimum_protocol_version = "TLSv1.2_2021" on your aws_cloudfront_distribution.
+references:
+  - https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/secure-connections-supported-viewer-protocols-ciphers.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.2.2"
+  - framework: NIST_800_53
+    control: "SC-8"

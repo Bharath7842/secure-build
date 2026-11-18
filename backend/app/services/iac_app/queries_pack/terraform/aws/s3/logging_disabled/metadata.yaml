@@ -1,0 +1,19 @@
+id: AWS.S3.ACCESS_LOGGING_DISABLED
+name: "S3 bucket access logging is not enabled"
+description: "S3 access logging records all requests made to the bucket for audit and incident response."
+severity: MEDIUM
+category: LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a logging block to your aws_s3_bucket resource, or use aws_s3_bucket_logging.
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/ServerLogs.html
+compliance:
+  - framework: CIS_AWS
+    control: "3.6"
+  - framework: NIST_800_53
+    control: "AU-2"

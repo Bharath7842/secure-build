@@ -1,0 +1,19 @@
+id: AZURE.AKS.RBAC_DISABLED
+name: "AKS cluster has RBAC disabled"
+description: "Without RBAC, all users and service accounts have full cluster access, violating least-privilege."
+severity: HIGH
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Set role_based_access_control_enabled = true on your azurerm_kubernetes_cluster resource.
+references:
+  - https://docs.microsoft.com/en-us/azure/aks/manage-azure-rbac
+compliance:
+  - framework: CIS_AZURE
+    control: "8.5"
+  - framework: NIST_800_53
+    control: "AC-6"

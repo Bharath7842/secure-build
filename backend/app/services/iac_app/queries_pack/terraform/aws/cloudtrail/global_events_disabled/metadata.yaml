@@ -1,0 +1,19 @@
+id: AWS.CT.GLOBAL_EVENTS_DISABLED
+name: "CloudTrail does not log global service events (IAM, STS, etc.)"
+description: "Without include_global_service_events = true, IAM and STS API calls are not logged."
+severity: MEDIUM
+category: LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set include_global_service_events = true in your aws_cloudtrail resource.
+references:
+  - https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-concepts.html
+compliance:
+  - framework: CIS_AWS
+    control: "3.1"
+  - framework: NIST_800_53
+    control: "AU-2"

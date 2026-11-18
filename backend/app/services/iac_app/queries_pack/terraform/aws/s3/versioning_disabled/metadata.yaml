@@ -1,0 +1,19 @@
+id: AWS.S3.VERSIONING_DISABLED
+name: "S3 bucket versioning is not enabled"
+description: "S3 bucket versioning protects against accidental deletion and allows recovery of previous versions."
+severity: MEDIUM
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a versioning block with enabled = true to your aws_s3_bucket resource, or use aws_s3_bucket_versioning.
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.1.3"
+  - framework: NIST_800_53
+    control: "CP-9"

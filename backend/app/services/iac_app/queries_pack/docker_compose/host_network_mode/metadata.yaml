@@ -1,0 +1,19 @@
+id: COMPOSE.HOST_NETWORK_MODE
+name: "Docker Compose service uses host network mode"
+description: "Host network mode removes network isolation between the container and the Docker host, allowing the container to listen on any host port."
+severity: HIGH
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: docker_compose
+provider: docker
+enabled: true
+version: 1.0.0
+remediation: >
+  Use the default bridge network or a custom user-defined network. Remove network_mode: host.
+references:
+  - https://docs.docker.com/network/host/
+compliance:
+  - framework: CIS_DOCKER
+    control: "5.9"
+  - framework: NIST_800_53
+    control: "SC-7"

@@ -1,0 +1,19 @@
+id: AWS.COGNITO.WEAK_PASSWORD_POLICY
+name: "Cognito user pool has a weak password policy"
+description: "A weak password policy (short length, no complexity requirements) makes accounts vulnerable to brute-force and credential stuffing attacks."
+severity: MEDIUM
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Configure password_policy with minimum_length >= 14, require_uppercase, require_lowercase, require_numbers, and require_symbols all set to true.
+references:
+  - https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-policies.html
+compliance:
+  - framework: CIS_AWS
+    control: "1.8"
+  - framework: NIST_800_53
+    control: "IA-5"

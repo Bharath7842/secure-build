@@ -1,0 +1,19 @@
+id: GCP.GCS.LOGGING_DISABLED
+name: "GCS bucket access logging is not enabled"
+description: "Without access logging, there is no audit trail for read/write operations on the bucket."
+severity: MEDIUM
+category: AUDIT_LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: gcp
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a logging { log_bucket = "<log-bucket>" } block to your google_storage_bucket resource.
+references:
+  - https://cloud.google.com/storage/docs/access-logs
+compliance:
+  - framework: CIS_GCP
+    control: "5.3"
+  - framework: NIST_800_53
+    control: "AU-2"

@@ -1,0 +1,19 @@
+id: CFN.SG.SSH_OPEN
+name: "CloudFormation security group allows SSH from any IP"
+description: "A security group ingress rule opens port 22 to 0.0.0.0/0 or ::/0."
+severity: CRITICAL
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: cloudformation
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Restrict SSH ingress to specific IP ranges in your CloudFormation security group.
+references:
+  - https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html
+compliance:
+  - framework: CIS_AWS
+    control: "5.2"
+  - framework: NIST_800_53
+    control: "SC-7"

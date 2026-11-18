@@ -1,0 +1,19 @@
+id: BICEP.STORAGE.PUBLIC_ACCESS_ENABLED
+name: "Bicep Storage account allows public blob access"
+description: "allowBlobPublicAccess=true allows unauthenticated access to any container set to anonymous access."
+severity: HIGH
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: bicep
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Set allowBlobPublicAccess: false in your Microsoft.Storage/storageAccounts properties.
+references:
+  - https://docs.microsoft.com/en-us/azure/storage/blobs/anonymous-read-access-prevent
+compliance:
+  - framework: CIS_AZURE
+    control: "3.7"
+  - framework: NIST_800_53
+    control: "AC-3"

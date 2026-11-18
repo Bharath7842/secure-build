@@ -1,0 +1,17 @@
+id: AWS.DYNAMODB.PITR_DISABLED
+name: "DynamoDB table does not have point-in-time recovery enabled"
+description: "Without PITR, there is no continuous backup and no way to restore the table to any second in the last 35 days."
+severity: MEDIUM
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add point_in_time_recovery { enabled = true } to your aws_dynamodb_table resource.
+references:
+  - https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/PointInTimeRecovery.html
+compliance:
+  - framework: NIST_800_53
+    control: "CP-10"

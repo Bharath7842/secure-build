@@ -1,0 +1,19 @@
+id: AZURE.MONITOR.ACTIVITY_LOG_RETENTION_LOW
+name: "Azure Monitor log profile retains activity logs for less than 1 year"
+description: "CIS Azure requires at least 365 days of activity log retention for audit and incident response purposes."
+severity: MEDIUM
+category: AUDIT_LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Set retention_policy { enabled = true days = 365 } on your azurerm_monitor_log_profile resource.
+references:
+  - https://docs.microsoft.com/en-us/azure/azure-monitor/essentials/activity-log
+compliance:
+  - framework: CIS_AZURE
+    control: "5.1.2"
+  - framework: NIST_800_53
+    control: "AU-11"

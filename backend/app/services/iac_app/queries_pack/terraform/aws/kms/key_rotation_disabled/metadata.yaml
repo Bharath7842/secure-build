@@ -1,0 +1,19 @@
+id: AWS.KMS.KEY_ROTATION_DISABLED
+name: "KMS customer-managed key rotation is not enabled"
+description: "Without automatic key rotation, compromised key material remains in use indefinitely."
+severity: MEDIUM
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set enable_key_rotation = true in your aws_kms_key resource.
+references:
+  - https://docs.aws.amazon.com/kms/latest/developerguide/rotate-keys.html
+compliance:
+  - framework: CIS_AWS
+    control: "3.8"
+  - framework: NIST_800_53
+    control: "SC-12"

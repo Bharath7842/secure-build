@@ -1,0 +1,19 @@
+id: DOCKER.SECRET_IN_ENV
+name: "Dockerfile sets a secret value in an ENV instruction"
+description: "Secrets in ENV instructions are baked into the image layer and visible in docker inspect."
+severity: HIGH
+category: SECRETS
+finding_type: MISCONFIGURATION
+iac_type: docker
+provider: docker
+enabled: true
+version: 1.0.0
+remediation: >
+  Use Docker BuildKit secrets (--secret) or runtime environment injection instead of ENV for secrets.
+references:
+  - https://docs.docker.com/build/building/secrets/
+compliance:
+  - framework: CIS_DOCKER
+    control: "4.10"
+  - framework: NIST_800_53
+    control: "IA-5"

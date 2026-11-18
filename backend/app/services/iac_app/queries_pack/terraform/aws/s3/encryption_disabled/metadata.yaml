@@ -1,0 +1,19 @@
+id: AWS.S3.ENCRYPTION_DISABLED
+name: "S3 bucket server-side encryption is not configured"
+description: "Without server-side encryption, objects stored in S3 are not encrypted at rest."
+severity: MEDIUM
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Create an aws_s3_bucket_server_side_encryption_configuration resource for the bucket.
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingEncryption.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.1.1"
+  - framework: NIST_800_53
+    control: "SC-28"

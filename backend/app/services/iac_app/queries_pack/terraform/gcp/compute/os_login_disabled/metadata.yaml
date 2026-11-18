@@ -1,0 +1,19 @@
+id: GCP.COMPUTE.OS_LOGIN_DISABLED
+name: "GCE instance does not have OS Login enabled"
+description: "OS Login centralizes SSH key management via IAM. Without it, project-level SSH keys that are hard to revoke can be used."
+severity: MEDIUM
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: gcp
+enabled: true
+version: 1.0.0
+remediation: >
+  Add metadata = { enable-oslogin = "TRUE" } to your google_compute_instance resource.
+references:
+  - https://cloud.google.com/compute/docs/oslogin
+compliance:
+  - framework: CIS_GCP
+    control: "4.4"
+  - framework: NIST_800_53
+    control: "IA-2"

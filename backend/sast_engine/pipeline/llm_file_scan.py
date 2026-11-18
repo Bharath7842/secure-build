@@ -1236,6 +1236,9 @@ UNRESOLVED_REASONS = frozenset({
     "conflict",
     "not_in_sample",
     "explanation_contradiction",
+    # Supplemental scans run as part of SAST (scan_type="sast"):
+    "not_reviewed_iac",
+    "not_reviewed_sca_vex",
 })
 
 

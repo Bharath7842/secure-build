@@ -1,0 +1,19 @@
+id: AWS.EC2.IMDSV2_NOT_REQUIRED
+name: "EC2 instance does not enforce IMDSv2 (Instance Metadata Service v2)"
+description: "Without http_tokens = required, the instance is vulnerable to SSRF attacks via IMDSv1."
+severity: HIGH
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add metadata_options { http_tokens = "required" } to your aws_instance resource.
+references:
+  - https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html
+compliance:
+  - framework: CIS_AWS
+    control: "5.6"
+  - framework: NIST_800_53
+    control: "SC-7"

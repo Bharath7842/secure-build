@@ -1,0 +1,19 @@
+id: GCP.GKE.NETWORK_POLICY_DISABLED
+name: "GKE cluster does not have a network policy enabled"
+description: "Without a network policy, all pods can communicate with each other, violating least-privilege networking."
+severity: MEDIUM
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: gcp
+enabled: true
+version: 1.0.0
+remediation: >
+  Add network_policy { enabled = true provider = "CALICO" } to your google_container_cluster resource.
+references:
+  - https://cloud.google.com/kubernetes-engine/docs/how-to/network-policy
+compliance:
+  - framework: CIS_GCP
+    control: "6.6.7"
+  - framework: NIST_800_53
+    control: "SC-7"

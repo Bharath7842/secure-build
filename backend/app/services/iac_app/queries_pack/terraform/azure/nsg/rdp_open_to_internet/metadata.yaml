@@ -1,0 +1,19 @@
+id: AZURE.NSG.RDP_OPEN_TO_INTERNET
+name: "Azure NSG rule allows RDP (port 3389) from the internet"
+description: "Unrestricted RDP access from the internet exposes Windows VMs to brute-force attacks and lateral movement."
+severity: CRITICAL
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Restrict source_address_prefix to your corporate IP range instead of "*" or "Internet" for port 3389.
+references:
+  - https://docs.microsoft.com/en-us/azure/security/fundamentals/network-best-practices
+compliance:
+  - framework: CIS_AZURE
+    control: "7.2"
+  - framework: NIST_800_53
+    control: "SC-7"

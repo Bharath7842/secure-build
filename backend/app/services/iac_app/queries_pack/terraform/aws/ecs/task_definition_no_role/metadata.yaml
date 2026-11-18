@@ -1,0 +1,19 @@
+id: AWS.ECS.TASK_NO_ROLE
+name: "ECS task definition does not have a task IAM role assigned"
+description: "Without a task role, the task inherits the EC2 instance profile, granting it far more permissions than needed."
+severity: MEDIUM
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set task_role_arn to a least-privilege IAM role on your aws_ecs_task_definition resource.
+references:
+  - https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html
+compliance:
+  - framework: NIST_800_53
+    control: "AC-6"
+  - framework: CIS_AWS
+    control: "1.16"

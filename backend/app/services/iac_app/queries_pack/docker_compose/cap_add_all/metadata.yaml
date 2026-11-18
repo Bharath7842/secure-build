@@ -1,0 +1,19 @@
+id: COMPOSE.CAP_ADD_ALL
+name: "Docker Compose service adds all Linux capabilities"
+description: "cap_add: [ALL] grants the container every Linux capability, equivalent to running as root with no restrictions."
+severity: CRITICAL
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: docker_compose
+provider: docker
+enabled: true
+version: 1.0.0
+remediation: >
+  Remove ALL from cap_add and add only the specific capabilities the application requires.
+references:
+  - https://docs.docker.com/engine/reference/run/#runtime-privilege-and-linux-capabilities
+compliance:
+  - framework: CIS_DOCKER
+    control: "5.3"
+  - framework: NIST_800_53
+    control: "AC-6"

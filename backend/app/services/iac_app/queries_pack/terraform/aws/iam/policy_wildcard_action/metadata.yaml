@@ -1,0 +1,19 @@
+id: AWS.IAM.POLICY_WILDCARD_ACTION
+name: "IAM policy allows wildcard action (*) granting excessive permissions"
+description: "An IAM policy document contains Action: * which grants all permissions."
+severity: HIGH
+category: IDENTITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Replace wildcard actions with the specific IAM actions your workload requires.
+references:
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html
+compliance:
+  - framework: CIS_AWS
+    control: "1.16"
+  - framework: NIST_800_53
+    control: "AC-6"

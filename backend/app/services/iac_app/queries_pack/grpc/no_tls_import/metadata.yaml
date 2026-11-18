@@ -1,0 +1,17 @@
+id: GRPC.NO_TLS_IMPORT
+name: "gRPC proto file does not import any TLS or authentication package"
+description: "Without TLS imports or auth interceptors, the gRPC service likely transmits data unencrypted and without authentication."
+severity: MEDIUM
+category: ENCRYPTION_IN_TRANSIT
+finding_type: MISCONFIGURATION
+iac_type: grpc
+provider: grpc
+enabled: true
+version: 1.0.0
+remediation: >
+  Add TLS configuration to your gRPC server and import google/api/auth.proto or similar auth packages.
+references:
+  - https://grpc.io/docs/guides/auth/
+compliance:
+  - framework: NIST_800_53
+    control: "SC-8"

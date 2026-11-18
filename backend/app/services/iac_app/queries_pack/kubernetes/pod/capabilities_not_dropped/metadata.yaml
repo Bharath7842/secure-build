@@ -1,0 +1,19 @@
+id: K8S.POD.CAPABILITIES_NOT_DROPPED
+name: "Container does not drop all Linux capabilities"
+description: "Without explicitly dropping all capabilities, containers retain dangerous Linux capabilities by default."
+severity: MEDIUM
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Set securityContext.capabilities.drop: ["ALL"] in all container definitions.
+references:
+  - https://kubernetes.io/docs/concepts/security/pod-security-standards/
+compliance:
+  - framework: CIS_K8S
+    control: "5.2.7"
+  - framework: NIST_800_53
+    control: "CM-6"

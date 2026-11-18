@@ -1,0 +1,19 @@
+id: PULUMI.AWS.S3_PUBLIC_ACL
+name: "Pulumi S3 bucket has a public ACL"
+description: "Using a public-read or public-read-write ACL exposes all bucket objects to anonymous internet access."
+severity: CRITICAL
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: pulumi
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Remove the acl property or set it to 'private'. Use bucket policies for specific access grants.
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.1.5"
+  - framework: NIST_800_53
+    control: "AC-3"

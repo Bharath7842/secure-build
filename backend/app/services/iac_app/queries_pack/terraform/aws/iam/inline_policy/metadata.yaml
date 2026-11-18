@@ -1,0 +1,19 @@
+id: AWS.IAM.INLINE_POLICY
+name: "IAM inline policy attached directly to user, role, or group"
+description: "Inline IAM policies are harder to audit than managed policies and bypass permission boundaries."
+severity: LOW
+category: IDENTITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Replace inline policies with managed IAM policies attached via aws_iam_role_policy_attachment.
+references:
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_managed-vs-inline.html
+compliance:
+  - framework: CIS_AWS
+    control: "1.16"
+  - framework: NIST_800_53
+    control: "AC-6"

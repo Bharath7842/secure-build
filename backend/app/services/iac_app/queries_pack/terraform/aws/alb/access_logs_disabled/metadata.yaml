@@ -1,0 +1,19 @@
+id: AWS.ALB.ACCESS_LOGS_DISABLED
+name: "Application Load Balancer does not have access logging enabled"
+description: "Without access logs, there is no record of requests processed by the ALB, making security incident analysis and traffic auditing impossible."
+severity: MEDIUM
+category: AUDIT_LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add access_logs { bucket = "<log-bucket>" enabled = true } to your aws_lb (or aws_alb) resource.
+references:
+  - https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-access-logs.html
+compliance:
+  - framework: CIS_AWS
+    control: "3.9"
+  - framework: NIST_800_53
+    control: "AU-2"

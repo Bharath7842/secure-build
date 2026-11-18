@@ -1,0 +1,19 @@
+id: CFN.S3.PUBLIC_READ_ACL
+name: "CloudFormation S3 bucket has public-read ACL"
+description: "An ACL of public-read on an S3 bucket makes all objects readable by anyone on the internet."
+severity: CRITICAL
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: cloudformation
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Remove the public-read ACL and use bucket policies with explicit deny for public access.
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-overview.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.1.5"
+  - framework: NIST_800_53
+    control: "SC-7"

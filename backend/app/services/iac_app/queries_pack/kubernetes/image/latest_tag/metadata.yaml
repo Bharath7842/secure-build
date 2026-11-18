@@ -1,0 +1,19 @@
+id: K8S.IMG.LATEST_TAG
+name: "Container image uses the 'latest' tag"
+description: "Using the latest tag makes deployments non-reproducible and may pull unexpected image versions."
+severity: MEDIUM
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Pin container images to a specific version tag or digest (e.g., nginx:1.25.3 or nginx@sha256:...).
+references:
+  - https://kubernetes.io/docs/concepts/containers/images/
+compliance:
+  - framework: CIS_K8S
+    control: "5.5.1"
+  - framework: NIST_800_53
+    control: "CM-2"

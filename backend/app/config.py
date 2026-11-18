@@ -191,6 +191,11 @@ class Settings(BaseSettings):
     dast_preset_light: dict[str, float] = {}
     dast_preset_deep: dict[str, float] = {}
     run_sbom: bool = True  # deterministic CycloneDX/SPDX component inventory + license classification
+    # Supplemental scans run as part of SAST (scan_type="sast") only.
+    # RUN_SBOM_IN_SAST=0 / RUN_SCA_VEX=0 / RUN_IAC=0 disable each one.
+    run_sbom_in_sast: bool = True  # SBOM component inventory appended to unified SAST report
+    run_sca_vex: bool = True  # SCA vulnerability + VEX applicability appended to unified SAST report
+    run_iac: bool = True  # IaC security scan appended to unified SAST report
     # Bedrock Claude Haiku best-effort supplier/license/type fill-in for whatever
     # deps.dev + the static tables in sbom_scan.py leave unresolved (SBOM_LLM_ENRICHMENT=0 to skip)
     sbom_llm_enrichment: bool = True

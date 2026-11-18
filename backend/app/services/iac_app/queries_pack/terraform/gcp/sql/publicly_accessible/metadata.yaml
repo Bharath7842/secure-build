@@ -1,0 +1,19 @@
+id: GCP.SQL.PUBLICLY_ACCESSIBLE
+name: "Cloud SQL instance has a public IPv4 address"
+description: "A Cloud SQL instance with ipv4_enabled=true is reachable from the internet. Use private IP with VPC peering instead."
+severity: HIGH
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: gcp
+enabled: true
+version: 1.0.0
+remediation: >
+  Set ipv4_enabled = false in settings.ip_configuration and use private_network to configure private IP.
+references:
+  - https://cloud.google.com/sql/docs/mysql/configure-private-ip
+compliance:
+  - framework: CIS_GCP
+    control: "6.2.1"
+  - framework: NIST_800_53
+    control: "SC-7"

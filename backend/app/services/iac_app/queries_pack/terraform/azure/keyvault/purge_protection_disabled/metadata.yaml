@@ -1,0 +1,19 @@
+id: AZURE.KEYVAULT.PURGE_PROTECTION_DISABLED
+name: "Azure Key Vault does not have purge protection enabled"
+description: "Without purge protection, a deleted vault and its secrets can be permanently purged immediately, preventing recovery."
+severity: MEDIUM
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Set purge_protection_enabled = true on your azurerm_key_vault resource.
+references:
+  - https://docs.microsoft.com/en-us/azure/key-vault/general/soft-delete-overview#purge-protection
+compliance:
+  - framework: CIS_AZURE
+    control: "8.4"
+  - framework: NIST_800_53
+    control: "CP-10"

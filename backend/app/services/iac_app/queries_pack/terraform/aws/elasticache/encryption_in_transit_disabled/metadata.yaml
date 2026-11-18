@@ -1,0 +1,19 @@
+id: AWS.ELASTICACHE.ENCRYPTION_IN_TRANSIT_DISABLED
+name: "ElastiCache replication group does not have in-transit encryption enabled"
+description: "Without TLS, data between application clients and the Redis cluster is transmitted in plaintext."
+severity: HIGH
+category: ENCRYPTION_IN_TRANSIT
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set transit_encryption_enabled = true on your aws_elasticache_replication_group resource.
+references:
+  - https://docs.aws.amazon.com/AmazonElastiCache/latest/red-ug/in-transit-encryption.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.6.2"
+  - framework: NIST_800_53
+    control: "SC-8"

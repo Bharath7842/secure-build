@@ -1,0 +1,19 @@
+id: AWS.RDS.DELETION_PROTECTION_DISABLED
+name: "RDS database deletion protection is disabled"
+description: "Without deletion protection the database can be accidentally deleted."
+severity: MEDIUM
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set deletion_protection = true in your aws_db_instance resource.
+references:
+  - https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_DeleteInstance.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.3.6"
+  - framework: NIST_800_53
+    control: "CP-9"

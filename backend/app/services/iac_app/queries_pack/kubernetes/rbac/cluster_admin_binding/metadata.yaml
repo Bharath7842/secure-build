@@ -1,0 +1,19 @@
+id: K8S.RBAC.CLUSTER_ADMIN_BINDING
+name: "ClusterRoleBinding grants cluster-admin role"
+description: "The cluster-admin ClusterRole provides unrestricted access to the entire cluster."
+severity: CRITICAL
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Replace cluster-admin bindings with least-privilege ClusterRoles scoped to specific resources.
+references:
+  - https://kubernetes.io/docs/reference/access-authn-authz/rbac/
+compliance:
+  - framework: CIS_K8S
+    control: "5.1.1"
+  - framework: NIST_800_53
+    control: "AC-6"

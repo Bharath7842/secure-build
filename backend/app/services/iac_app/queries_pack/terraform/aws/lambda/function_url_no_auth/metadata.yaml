@@ -1,0 +1,19 @@
+id: AWS.LAM.FUNCTION_URL_NO_AUTH
+name: "Lambda function URL has no authentication (authorization_type = NONE)"
+description: "A Lambda function URL with authorization_type = NONE is publicly accessible without credentials."
+severity: HIGH
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set authorization_type = "AWS_IAM" on your aws_lambda_function_url resource.
+references:
+  - https://docs.aws.amazon.com/lambda/latest/dg/urls-auth.html
+compliance:
+  - framework: NIST_800_53
+    control: "AC-3"
+  - framework: CIS_AWS
+    control: "recommended"

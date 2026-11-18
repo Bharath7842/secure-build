@@ -1,0 +1,19 @@
+id: K8S.CONTAINER.WRITABLE_ROOT_FS
+name: "Container has a writable root filesystem"
+description: "A writable root filesystem allows attackers to modify system files, install tools, or persist malware inside the container."
+severity: MEDIUM
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Set securityContext.readOnlyRootFilesystem: true on each container. Use emptyDir or PVC mounts for writable paths.
+references:
+  - https://kubernetes.io/docs/concepts/security/pod-security-standards/
+compliance:
+  - framework: CIS_K8S
+    control: "5.2.9"
+  - framework: NIST_800_53
+    control: "CM-6"

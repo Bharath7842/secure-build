@@ -1,0 +1,19 @@
+id: GCP.GKE.PRIVATE_CLUSTER_DISABLED
+name: "GKE cluster nodes do not have private IPs (private cluster disabled)"
+description: "With public nodes, the GKE node VMs are directly reachable from the internet, increasing the attack surface."
+severity: HIGH
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: gcp
+enabled: true
+version: 1.0.0
+remediation: >
+  Add private_cluster_config { enable_private_nodes = true } to your google_container_cluster resource.
+references:
+  - https://cloud.google.com/kubernetes-engine/docs/how-to/private-cluster-create
+compliance:
+  - framework: CIS_GCP
+    control: "6.6.5"
+  - framework: NIST_800_53
+    control: "SC-7"

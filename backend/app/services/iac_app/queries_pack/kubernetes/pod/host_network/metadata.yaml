@@ -1,0 +1,19 @@
+id: K8S.POD.HOST_NETWORK
+name: "Pod shares host network namespace (hostNetwork: true)"
+description: "Sharing the host network exposes all host network interfaces to the container."
+severity: HIGH
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Set hostNetwork: false (or remove it) in the pod spec.
+references:
+  - https://kubernetes.io/docs/concepts/security/pod-security-standards/
+compliance:
+  - framework: CIS_K8S
+    control: "5.2.4"
+  - framework: NIST_800_53
+    control: "SC-7"

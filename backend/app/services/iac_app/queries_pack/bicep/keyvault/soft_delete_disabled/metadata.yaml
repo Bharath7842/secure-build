@@ -1,0 +1,19 @@
+id: BICEP.KEYVAULT.SOFT_DELETE_DISABLED
+name: "Bicep Key Vault does not have soft delete enabled"
+description: "Without soft delete, vault contents deleted can not be recovered within a retention window."
+severity: MEDIUM
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: bicep
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Set enableSoftDelete: true and softDeleteRetentionInDays to at least 7 in Microsoft.KeyVault/vaults properties.
+references:
+  - https://docs.microsoft.com/en-us/azure/key-vault/general/soft-delete-overview
+compliance:
+  - framework: CIS_AZURE
+    control: "8.4"
+  - framework: NIST_800_53
+    control: "CP-10"

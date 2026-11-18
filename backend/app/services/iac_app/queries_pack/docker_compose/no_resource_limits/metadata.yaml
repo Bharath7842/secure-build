@@ -1,0 +1,19 @@
+id: COMPOSE.NO_RESOURCE_LIMITS
+name: "Docker Compose service has no CPU or memory resource limits"
+description: "Without resource limits, a runaway container can consume all host CPU and memory, causing a denial-of-service for other services."
+severity: MEDIUM
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: docker_compose
+provider: docker
+enabled: true
+version: 1.0.0
+remediation: >
+  Add deploy.resources.limits.cpus and deploy.resources.limits.memory to the service definition.
+references:
+  - https://docs.docker.com/compose/compose-file/deploy/#resources
+compliance:
+  - framework: CIS_DOCKER
+    control: "5.28"
+  - framework: NIST_800_53
+    control: "SC-5"

@@ -1,0 +1,19 @@
+id: K8S.POD.PRIVILEGED_CONTAINER
+name: "Container is running in privileged mode"
+description: "A privileged container has full access to the host kernel and devices, equivalent to root on the host."
+severity: CRITICAL
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Remove securityContext.privileged: true from all containers.
+references:
+  - https://kubernetes.io/docs/concepts/security/pod-security-standards/
+compliance:
+  - framework: CIS_K8S
+    control: "5.2.1"
+  - framework: NIST_800_53
+    control: "CM-6"

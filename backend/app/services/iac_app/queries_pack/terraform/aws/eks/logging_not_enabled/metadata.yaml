@@ -1,0 +1,19 @@
+id: AWS.EKS.LOGGING_NOT_ENABLED
+name: "EKS cluster control plane logging is not fully enabled"
+description: "Without all log types enabled, audit events and API calls are not captured."
+severity: MEDIUM
+category: LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set enabled_cluster_log_types to include api, audit, authenticator, controllerManager, and scheduler.
+references:
+  - https://docs.aws.amazon.com/eks/latest/userguide/control-plane-logs.html
+compliance:
+  - framework: CIS_EKS
+    control: "2.1.1"
+  - framework: NIST_800_53
+    control: "AU-2"

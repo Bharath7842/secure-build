@@ -1,0 +1,19 @@
+id: K8S.RBAC.WILDCARD_VERB
+name: "RBAC Role or ClusterRole grants wildcard verb (*)"
+description: "A wildcard verb grants every action (get, list, create, update, patch, delete, watch) on the matched resources, violating least privilege."
+severity: HIGH
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Replace verbs: ["*"] with the specific verbs the role actually requires.
+references:
+  - https://kubernetes.io/docs/reference/access-authn-authz/rbac/
+compliance:
+  - framework: CIS_K8S
+    control: "5.1.3"
+  - framework: NIST_800_53
+    control: "AC-6"

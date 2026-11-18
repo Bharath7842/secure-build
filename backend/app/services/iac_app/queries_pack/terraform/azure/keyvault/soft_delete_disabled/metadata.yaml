@@ -1,0 +1,19 @@
+id: AZURE.KEYVAULT.SOFT_DELETE_DISABLED
+name: "Azure Key Vault does not have soft delete enabled"
+description: "Without soft delete, keys, secrets, and certificates deleted from the vault cannot be recovered."
+severity: MEDIUM
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Set soft_delete_retention_days = 90 on your azurerm_key_vault resource (minimum 7 days).
+references:
+  - https://docs.microsoft.com/en-us/azure/key-vault/general/soft-delete-overview
+compliance:
+  - framework: CIS_AZURE
+    control: "8.4"
+  - framework: NIST_800_53
+    control: "CP-10"

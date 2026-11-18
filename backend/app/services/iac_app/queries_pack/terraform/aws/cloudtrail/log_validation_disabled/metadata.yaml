@@ -1,0 +1,19 @@
+id: AWS.CT.LOG_VALIDATION_DISABLED
+name: "CloudTrail log file validation is not enabled"
+description: "Without log file validation, tampering with CloudTrail logs may go undetected."
+severity: MEDIUM
+category: LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set enable_log_file_validation = true in your aws_cloudtrail resource.
+references:
+  - https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-log-file-validation-intro.html
+compliance:
+  - framework: CIS_AWS
+    control: "3.2"
+  - framework: NIST_800_53
+    control: "AU-9"

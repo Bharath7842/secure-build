@@ -1,0 +1,19 @@
+id: AWS.IAM.PASSWORD_POLICY_REUSE
+name: "IAM password policy allows password reuse within last 24 passwords"
+description: "The IAM account password policy password_reuse_prevention is less than 24."
+severity: LOW
+category: IDENTITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set password_reuse_prevention to 24 or more in aws_iam_account_password_policy.
+references:
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_passwords_account-policy.html
+compliance:
+  - framework: CIS_AWS
+    control: "1.10"
+  - framework: NIST_800_53
+    control: "IA-5"

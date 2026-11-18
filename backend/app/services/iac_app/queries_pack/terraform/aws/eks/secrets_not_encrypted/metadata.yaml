@@ -1,0 +1,19 @@
+id: AWS.EKS.SECRETS_NOT_ENCRYPTED
+name: "EKS cluster Kubernetes secrets are not encrypted with KMS"
+description: "Without encryption_config for secrets, Kubernetes Secrets are stored unencrypted in etcd."
+severity: HIGH
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add an encryption_config block with resources = ["secrets"] and a KMS key ARN.
+references:
+  - https://docs.aws.amazon.com/eks/latest/userguide/enable-kms.html
+compliance:
+  - framework: CIS_EKS
+    control: "5.3.1"
+  - framework: NIST_800_53
+    control: "SC-28"

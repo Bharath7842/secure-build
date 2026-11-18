@@ -1,0 +1,19 @@
+id: K8S.POD.RUN_AS_ROOT
+name: "Container does not enforce running as a non-root user"
+description: "Without runAsNonRoot: true, containers may run as root, granting host-level privileges if the container is compromised."
+severity: HIGH
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Set securityContext.runAsNonRoot: true or securityContext.runAsUser to a non-zero UID.
+references:
+  - https://kubernetes.io/docs/concepts/security/pod-security-standards/
+compliance:
+  - framework: CIS_K8S
+    control: "5.2.6"
+  - framework: NIST_800_53
+    control: "AC-6"

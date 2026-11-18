@@ -1,0 +1,17 @@
+id: SAM.API.NO_AUTH
+name: "SAM Serverless API has no authentication configured"
+description: "An API Gateway stage without an authorizer allows unauthenticated access to all routes."
+severity: HIGH
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: cloudformation
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add an Auth block with a DefaultAuthorizer to your AWS::Serverless::Api resource.
+references:
+  - https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-api.html
+compliance:
+  - framework: NIST_800_53
+    control: "IA-2"

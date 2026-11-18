@@ -1,0 +1,17 @@
+id: AWS.ALB.HTTP_LISTENER_NO_REDIRECT
+name: "ALB listener on HTTP port 80 does not redirect to HTTPS"
+description: "An HTTP listener that forwards traffic (instead of redirecting to HTTPS) allows plaintext communication with backend services."
+severity: HIGH
+category: ENCRYPTION_IN_TRANSIT
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Change the aws_lb_listener default_action to type = "redirect" with redirect { protocol = "HTTPS" status_code = "HTTP_301" }.
+references:
+  - https://docs.aws.amazon.com/elasticloadbalancing/latest/application/create-https-listener.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-8"

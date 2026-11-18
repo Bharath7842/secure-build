@@ -1,0 +1,19 @@
+id: GCP.GCS.PUBLIC_ACCESS_ENABLED
+name: "GCS bucket has uniform bucket-level access disabled"
+description: "Without uniform bucket-level access, per-object ACLs can make objects publicly accessible, bypassing bucket policies."
+severity: HIGH
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: gcp
+enabled: true
+version: 1.0.0
+remediation: >
+  Set uniform_bucket_level_access = true on all google_storage_bucket resources.
+references:
+  - https://cloud.google.com/storage/docs/uniform-bucket-level-access
+compliance:
+  - framework: CIS_GCP
+    control: "5.1"
+  - framework: NIST_800_53
+    control: "AC-3"

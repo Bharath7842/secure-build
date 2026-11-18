@@ -1,0 +1,19 @@
+id: COMPOSE.SENSITIVE_HOST_PATH_MOUNT
+name: "Docker Compose service mounts a sensitive host path"
+description: "Mounting sensitive host paths like /etc, /var/run/docker.sock, or /proc gives the container privileged access to the host."
+severity: HIGH
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: docker_compose
+provider: docker
+enabled: true
+version: 1.0.0
+remediation: >
+  Remove sensitive host path mounts. Use Docker volumes for data persistence.
+references:
+  - https://www.cisecurity.org/benchmark/docker
+compliance:
+  - framework: CIS_DOCKER
+    control: "5.5"
+  - framework: NIST_800_53
+    control: "CM-6"

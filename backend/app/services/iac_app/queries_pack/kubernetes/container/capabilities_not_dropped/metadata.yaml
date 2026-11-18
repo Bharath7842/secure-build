@@ -1,0 +1,19 @@
+id: K8S.CONTAINER.CAPABILITIES_NOT_DROPPED
+name: "Container does not drop all Linux capabilities"
+description: "Linux capabilities not explicitly dropped remain available to the container. The principle of least privilege requires dropping all and adding only what is needed."
+severity: MEDIUM
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Set securityContext.capabilities.drop: ["ALL"] on each container and add back only the specific capabilities required.
+references:
+  - https://kubernetes.io/docs/concepts/security/pod-security-standards/
+compliance:
+  - framework: CIS_K8S
+    control: "5.2.7"
+  - framework: NIST_800_53
+    control: "AC-6"

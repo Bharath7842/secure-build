@@ -1,0 +1,19 @@
+id: BICEP.SQL.AUDITING_DISABLED
+name: "Bicep SQL Server does not have auditing enabled"
+description: "Without a database audit policy, login and query events are not logged, hampering incident response."
+severity: MEDIUM
+category: AUDIT_LOGGING
+finding_type: MISCONFIGURATION
+iac_type: bicep
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a Microsoft.Sql/servers/auditingSettings child resource and set state: 'Enabled'.
+references:
+  - https://docs.microsoft.com/en-us/azure/azure-sql/database/auditing-overview
+compliance:
+  - framework: CIS_AZURE
+    control: "4.1.1"
+  - framework: NIST_800_53
+    control: "AU-2"

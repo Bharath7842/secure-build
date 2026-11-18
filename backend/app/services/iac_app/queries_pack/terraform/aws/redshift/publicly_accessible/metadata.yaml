@@ -1,0 +1,19 @@
+id: AWS.REDSHIFT.PUBLICLY_ACCESSIBLE
+name: "Redshift cluster is publicly accessible"
+description: "A publicly accessible Redshift cluster can be reached from the internet, exposing the database to unauthorized connection attempts."
+severity: HIGH
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set publicly_accessible = false on your aws_redshift_cluster resource and place it in a private subnet.
+references:
+  - https://docs.aws.amazon.com/redshift/latest/mgmt/working-with-clusters.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.5.1"
+  - framework: NIST_800_53
+    control: "SC-7"

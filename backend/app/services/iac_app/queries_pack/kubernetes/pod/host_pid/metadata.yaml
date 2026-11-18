@@ -1,0 +1,19 @@
+id: K8S.POD.HOST_PID
+name: "Pod shares host PID namespace (hostPID: true)"
+description: "Sharing the host PID namespace allows containers to see and potentially signal all processes on the host."
+severity: HIGH
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Set hostPID: false (or remove it) in the pod spec.
+references:
+  - https://kubernetes.io/docs/concepts/security/pod-security-standards/
+compliance:
+  - framework: CIS_K8S
+    control: "5.2.2"
+  - framework: NIST_800_53
+    control: "CM-6"

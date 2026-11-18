@@ -1,0 +1,19 @@
+id: GCP.GCS.VERSIONING_DISABLED
+name: "GCS bucket versioning is not enabled"
+description: "Without versioning, deleted or overwritten objects cannot be recovered, increasing data loss risk."
+severity: MEDIUM
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: gcp
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a versioning { enabled = true } block to your google_storage_bucket resource.
+references:
+  - https://cloud.google.com/storage/docs/object-versioning
+compliance:
+  - framework: CIS_GCP
+    control: "5.2"
+  - framework: NIST_800_53
+    control: "CP-10"

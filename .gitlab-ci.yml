@@ -1,0 +1,141 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Secure Build — GitLab CI/CD integration
+#
+# Shows SAST + IaC + SCA findings in GitLab's:
+#   • Merge Request security widget
+#   • Security Dashboard (project/group level)
+#   • Vulnerability report
+#
+# Required CI/CD variables (Settings → CI/CD → Variables):
+#   SAST_API_URL       https://your-secure-build-instance.com    (no trailing /)
+#   SAST_API_TOKEN     CI service token from Secure Build admin panel
+#   SAST_PROJECT_ID    Project UUID from Secure Build (Settings → General)
+# ──────────────────────────────────────────────────────────────────────────────
+
+stages:
+  - security
+
+secure-build-sast:
+  stage: security
+  image: alpine:latest
+
+  variables:
+    SCAN_POLL_INTERVAL: "30"      # seconds between status checks
+    SCAN_TIMEOUT: "1800"          # 30 minutes max wait
+
+  before_script:
+    - apk add --no-cache curl jq
+
+  script:
+    # ── 1. Trigger (or reuse) a scan for this commit ──────────────────────────
+    - |
+      echo "Triggering Secure Build scan…"
+      SCAN_RESP=$(curl -sf --max-time 30 \
+        -X POST "${SAST_API_URL}/scans" \
+        -H "Authorization: Bearer ${SAST_API_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "{
+          \"project_id\": \"${SAST_PROJECT_ID}\",
+          \"branch\":     \"${CI_COMMIT_BRANCH}\",
+          \"commit_sha\": \"${CI_COMMIT_SHA}\",
+          \"metadata\": {
+            \"source\":       \"gitlab\",
+            \"pipeline_url\": \"${CI_PIPELINE_URL}\",
+            \"job_url\":      \"${CI_JOB_URL}\",
+            \"mr_iid\":       \"${CI_MERGE_REQUEST_IID}\"
+          }
+        }" || true)
+
+      SCAN_ID=$(echo "${SCAN_RESP}" | jq -r '.id // empty')
+      if [ -z "${SCAN_ID}" ]; then
+        echo "ERROR: could not get scan id. Response: ${SCAN_RESP}"
+        exit 1
+      fi
+      echo "Scan ID: ${SCAN_ID}"
+      echo "SCAN_ID=${SCAN_ID}" >> scan.env
+      REUSED=$(echo "${SCAN_RESP}" | jq -r '.reused // false')
+      echo "Reused existing scan: ${REUSED}"
+
+    # ── 2. Poll until success / failed / timeout ──────────────────────────────
+    - |
+      source scan.env
+      ELAPSED=0
+      while true; do
+        SCAN_INFO=$(curl -sf --max-time 15 \
+          "${SAST_API_URL}/scans/${SCAN_ID}" \
+          -H "Authorization: Bearer ${SAST_API_TOKEN}" || true)
+
+        STATUS=$(echo "${SCAN_INFO}" | jq -r '.status // "unknown"')
+        PROGRESS=$(echo "${SCAN_INFO}" | jq -r '.progress // 0')
+        echo "[${ELAPSED}s] status=${STATUS} progress=${PROGRESS}%"
+
+        if [ "${STATUS}" = "success" ]; then
+          echo "Scan complete."
+          break
+        fi
+
+        if [ "${STATUS}" = "failed" ]; then
+          MSG=$(echo "${SCAN_INFO}" | jq -r '.message // "no details"')
+          echo "ERROR: Scan failed — ${MSG}"
+          exit 1
+        fi
+
+        if [ "${ELAPSED}" -ge "${SCAN_TIMEOUT}" ]; then
+          echo "ERROR: Timed out after ${SCAN_TIMEOUT}s waiting for scan."
+          exit 1
+        fi
+
+        sleep "${SCAN_POLL_INTERVAL}"
+        ELAPSED=$((ELAPSED + SCAN_POLL_INTERVAL))
+      done
+
+    # ── 3. Download SARIF report (SAST + IaC + SCA findings) ─────────────────
+    - |
+      source scan.env
+      echo "Downloading SARIF report…"
+      curl -sf --max-time 60 \
+        "${SAST_API_URL}/scans/${SCAN_ID}/export.sarif" \
+        -H "Authorization: Bearer ${SAST_API_TOKEN}" \
+        -o gl-sast-report.json
+
+      FINDING_COUNT=$(jq '.runs[0].results | length' gl-sast-report.json 2>/dev/null || echo "?")
+      echo "SARIF findings: ${FINDING_COUNT}"
+
+    # ── 4. (Optional) Download PDF + Excel for the pipeline artifacts ─────────
+    - |
+      source scan.env
+      curl -sf --max-time 60 \
+        "${SAST_API_URL}/scans/${SCAN_ID}/export.pdf" \
+        -H "Authorization: Bearer ${SAST_API_TOKEN}" \
+        -o secure-build-report.pdf || true
+
+      curl -sf --max-time 60 \
+        "${SAST_API_URL}/scans/${SCAN_ID}/export.xlsx" \
+        -H "Authorization: Bearer ${SAST_API_TOKEN}" \
+        -o secure-build-report.xlsx || true
+
+  artifacts:
+    # GitLab reads this for the MR security widget and Security Dashboard
+    reports:
+      sast: gl-sast-report.json
+
+    # Keep the full PDF and Excel as downloadable pipeline artifacts
+    paths:
+      - gl-sast-report.json
+      - secure-build-report.pdf
+      - secure-build-report.xlsx
+
+    expire_in: 4 weeks
+
+  # Let the pipeline pass even if findings are reported — the Security Dashboard
+  # controls whether to block merges (MR approval rules, not this flag).
+  allow_failure: true
+
+  timeout: 35 minutes
+
+  # Only run on branch pushes and MRs, not tags
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'

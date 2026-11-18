@@ -1,0 +1,19 @@
+id: GCP.GKE.MASTER_AUTH_NETWORKS_MISSING
+name: "GKE cluster control plane is not restricted to authorized networks"
+description: "Without master authorized networks, the Kubernetes API server is accessible from any IP address."
+severity: HIGH
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: gcp
+enabled: true
+version: 1.0.0
+remediation: >
+  Configure master_authorized_networks_config { cidr_blocks { cidr_block = "10.0.0.0/8" } } on your google_container_cluster resource.
+references:
+  - https://cloud.google.com/kubernetes-engine/docs/how-to/authorized-networks
+compliance:
+  - framework: CIS_GCP
+    control: "6.6.3"
+  - framework: NIST_800_53
+    control: "SC-7"

@@ -1,0 +1,19 @@
+id: AWS.OPENSEARCH.ENCRYPTION_AT_REST_DISABLED
+name: "OpenSearch/Elasticsearch domain does not have encryption at rest enabled"
+description: "Without at-rest encryption, the domain's data stored on EBS volumes is not encrypted."
+severity: HIGH
+category: ENCRYPTION_AT_REST
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add encrypt_at_rest { enabled = true } to your aws_opensearch_domain or aws_elasticsearch_domain resource.
+references:
+  - https://docs.aws.amazon.com/opensearch-service/latest/developerguide/encryption-at-rest.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.7.1"
+  - framework: NIST_800_53
+    control: "SC-28"

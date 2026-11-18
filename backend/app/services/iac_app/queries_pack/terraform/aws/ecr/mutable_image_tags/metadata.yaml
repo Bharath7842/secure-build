@@ -1,0 +1,17 @@
+id: AWS.ECR.MUTABLE_IMAGE_TAGS
+name: "ECR repository allows mutable image tags"
+description: "Mutable tags (MUTABLE) allow pushing a new image with the same tag, enabling image substitution attacks and breaking immutable deployments."
+severity: MEDIUM
+category: SUPPLY_CHAIN_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set image_tag_mutability = "IMMUTABLE" on your aws_ecr_repository resource.
+references:
+  - https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-tag-mutability.html
+compliance:
+  - framework: NIST_800_53
+    control: "CM-6"

@@ -1,0 +1,19 @@
+id: OPENAPI.NO_GLOBAL_SECURITY
+name: "OpenAPI specification has no global security requirement"
+description: "Without a global security requirement, operations may be unauthenticated by default unless each path explicitly requires auth."
+severity: MEDIUM
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: openapi
+provider: openapi
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a top-level security: requirement to the OpenAPI specification to enforce auth by default.
+references:
+  - https://swagger.io/docs/specification/authentication/
+compliance:
+  - framework: NIST_800_53
+    control: "IA-2"
+  - framework: OWASP_API
+    control: "API2"

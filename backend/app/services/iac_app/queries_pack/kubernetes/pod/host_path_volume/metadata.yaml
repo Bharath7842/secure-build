@@ -1,0 +1,19 @@
+id: K8S.POD.HOST_PATH_VOLUME
+name: "Pod mounts a host path volume"
+description: "hostPath volumes expose the host filesystem to the container and can be used for privilege escalation."
+severity: HIGH
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Use emptyDir, configMap, secret, or PersistentVolumeClaim instead of hostPath volumes.
+references:
+  - https://kubernetes.io/docs/concepts/security/pod-security-standards/
+compliance:
+  - framework: CIS_K8S
+    control: "5.2.9"
+  - framework: NIST_800_53
+    control: "CM-6"

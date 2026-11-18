@@ -1,0 +1,19 @@
+id: K8S.POD.AUTOMOUNT_SA_TOKEN
+name: "Pod automatically mounts service account token"
+description: "automountServiceAccountToken=true (the default) mounts a Kubernetes API credential into every container. If the pod is compromised, attackers can use this token to access the Kubernetes API."
+severity: MEDIUM
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Set automountServiceAccountToken: false on pods that do not need to call the Kubernetes API.
+references:
+  - https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/#opt-out-of-api-credential-automounting
+compliance:
+  - framework: CIS_K8S
+    control: "5.1.6"
+  - framework: NIST_800_53
+    control: "AC-6"

@@ -1,0 +1,19 @@
+id: AZURE.APPSERVICE.AUTH_DISABLED
+name: "Azure App Service does not have authentication enabled"
+description: "Without App Service Authentication (Easy Auth), the application has no platform-level identity enforcement and must handle auth entirely in application code."
+severity: MEDIUM
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Add an auth_settings { enabled = true } block to your azurerm_app_service resource, or configure azurerm_linux_web_app_active_directory_auth_settings.
+references:
+  - https://docs.microsoft.com/en-us/azure/app-service/overview-authentication-authorization
+compliance:
+  - framework: CIS_AZURE
+    control: "9.1"
+  - framework: NIST_800_53
+    control: "IA-2"

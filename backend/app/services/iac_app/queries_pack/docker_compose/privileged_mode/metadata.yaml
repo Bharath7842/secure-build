@@ -1,0 +1,20 @@
+id: COMPOSE.PRIVILEGED_MODE
+name: "Docker Compose service runs in privileged mode"
+description: "Privileged containers have root access to the host, breaking container isolation and enabling full system compromise."
+severity: CRITICAL
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: docker_compose
+provider: docker
+enabled: true
+version: 1.0.0
+remediation: >
+  Remove privileged: true from the service definition. Use specific capabilities (cap_add) if elevated permissions are needed.
+references:
+  - https://docs.docker.com/compose/compose-file/deploy/#resources
+  - https://www.cisecurity.org/benchmark/docker
+compliance:
+  - framework: CIS_DOCKER
+    control: "5.4"
+  - framework: NIST_800_53
+    control: "CM-6"

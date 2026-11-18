@@ -1,0 +1,19 @@
+id: OPENAPI.UNAUTHENTICATED_OPERATION
+name: "OpenAPI operation explicitly disables authentication"
+description: "Setting security: [] on an operation overrides any global security requirement, leaving the endpoint fully unauthenticated."
+severity: HIGH
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: openapi
+provider: openapi
+enabled: true
+version: 1.0.0
+remediation: >
+  Remove the empty security: [] from operations that should require authentication, or add an appropriate security scheme.
+references:
+  - https://swagger.io/docs/specification/authentication/
+compliance:
+  - framework: NIST_800_53
+    control: "IA-2"
+  - framework: OWASP_API
+    control: "API2"

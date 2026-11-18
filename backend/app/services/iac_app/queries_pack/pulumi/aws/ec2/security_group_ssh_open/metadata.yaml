@@ -1,0 +1,19 @@
+id: PULUMI.AWS.SG_SSH_OPEN
+name: "Pulumi Security Group allows SSH from the internet"
+description: "Unrestricted SSH inbound access (0.0.0.0/0 or ::/0 on port 22) exposes instances to brute-force attacks."
+severity: CRITICAL
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: pulumi
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Restrict SSH ingress to specific CIDR ranges. Remove 0.0.0.0/0 from port 22 inbound rules.
+references:
+  - https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html
+compliance:
+  - framework: CIS_AWS
+    control: "5.2"
+  - framework: NIST_800_53
+    control: "SC-7"

@@ -1,0 +1,19 @@
+id: K8S.POD.HOST_IPC
+name: "Pod shares host IPC namespace (hostIPC: true)"
+description: "Sharing the host IPC namespace allows containers to access host inter-process communication."
+severity: HIGH
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Set hostIPC: false (or remove it) in the pod spec.
+references:
+  - https://kubernetes.io/docs/concepts/security/pod-security-standards/
+compliance:
+  - framework: CIS_K8S
+    control: "5.2.3"
+  - framework: NIST_800_53
+    control: "CM-6"

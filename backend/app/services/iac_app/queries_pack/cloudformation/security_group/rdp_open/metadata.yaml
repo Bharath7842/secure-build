@@ -1,0 +1,19 @@
+id: CFN.SG.RDP_OPEN
+name: "CloudFormation security group allows RDP from any IP"
+description: "A security group ingress rule opens port 3389 to 0.0.0.0/0 or ::/0."
+severity: CRITICAL
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: cloudformation
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Restrict RDP ingress to known management IP ranges.
+references:
+  - https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html
+compliance:
+  - framework: CIS_AWS
+    control: "5.3"
+  - framework: NIST_800_53
+    control: "SC-7"

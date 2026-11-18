@@ -1,0 +1,19 @@
+id: AWS.REDSHIFT.AUDIT_LOGGING_DISABLED
+name: "Redshift cluster does not have audit logging enabled"
+description: "Without audit logging, there is no record of connections, queries, or user activity in the cluster."
+severity: MEDIUM
+category: AUDIT_LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a logging { enable = true bucket_name = "<log-bucket>" } block to your aws_redshift_cluster resource.
+references:
+  - https://docs.aws.amazon.com/redshift/latest/mgmt/db-auditing.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.5.3"
+  - framework: NIST_800_53
+    control: "AU-2"

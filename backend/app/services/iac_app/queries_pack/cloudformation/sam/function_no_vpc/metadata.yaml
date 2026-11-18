@@ -1,0 +1,17 @@
+id: SAM.FUNCTION.NO_VPC
+name: "SAM Serverless Function is not configured to run in a VPC"
+description: "Without a VPC configuration, Lambda functions run in the AWS default network and cannot access VPC resources or be network-isolated."
+severity: MEDIUM
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: cloudformation
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a VpcConfig property with SubnetIds and SecurityGroupIds to your AWS::Serverless::Function resource.
+references:
+  - https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-function.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-7"

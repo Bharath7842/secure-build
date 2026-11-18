@@ -1,0 +1,17 @@
+id: AWS.OPENSEARCH.HTTPS_NOT_ENFORCED
+name: "OpenSearch/Elasticsearch domain does not enforce HTTPS"
+description: "Without enforce_https=true, the domain accepts unencrypted HTTP requests."
+severity: HIGH
+category: ENCRYPTION_IN_TRANSIT
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add domain_endpoint_options { enforce_https = true tls_security_policy = "Policy-Min-TLS-1-2-2019-07" } to your aws_opensearch_domain resource.
+references:
+  - https://docs.aws.amazon.com/opensearch-service/latest/developerguide/encryption-at-rest.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-8"

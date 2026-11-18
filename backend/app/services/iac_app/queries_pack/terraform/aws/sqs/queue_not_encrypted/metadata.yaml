@@ -1,0 +1,17 @@
+id: AWS.SQS.QUEUE_NOT_ENCRYPTED
+name: "SQS queue does not have server-side encryption enabled"
+description: "Without SSE, messages stored in the queue are in plaintext and accessible to anyone with AWS console or API access to the account."
+severity: MEDIUM
+category: ENCRYPTION_AT_REST
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set kms_master_key_id = "alias/aws/sqs" (or a CMK) on your aws_sqs_queue resource to enable SSE.
+references:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-server-side-encryption.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-28"

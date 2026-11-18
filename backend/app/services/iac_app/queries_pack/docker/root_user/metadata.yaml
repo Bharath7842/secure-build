@@ -1,0 +1,19 @@
+id: DOCKER.ROOT_USER
+name: "Dockerfile runs as root (no USER instruction or USER root/0)"
+description: "Running Docker containers as root is a CIS Docker Benchmark violation and increases blast radius."
+severity: HIGH
+category: CONTAINER_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: docker
+provider: docker
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a USER instruction with a non-root user before the final CMD/ENTRYPOINT.
+references:
+  - https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#user
+compliance:
+  - framework: CIS_DOCKER
+    control: "4.1"
+  - framework: NIST_800_53
+    control: "AC-6"

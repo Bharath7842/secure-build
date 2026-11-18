@@ -1,0 +1,17 @@
+id: SAM.FUNCTION.XRAY_DISABLED
+name: "SAM Serverless Function does not have X-Ray tracing enabled"
+description: "Without active X-Ray tracing, there is no distributed request visibility, making security incident analysis and debugging significantly harder."
+severity: LOW
+category: AUDIT_LOGGING
+finding_type: MISCONFIGURATION
+iac_type: cloudformation
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set Tracing: Active on your AWS::Serverless::Function resource.
+references:
+  - https://docs.aws.amazon.com/lambda/latest/dg/services-xray.html
+compliance:
+  - framework: NIST_800_53
+    control: "AU-2"

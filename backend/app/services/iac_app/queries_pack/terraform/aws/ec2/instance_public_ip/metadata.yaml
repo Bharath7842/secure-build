@@ -1,0 +1,19 @@
+id: AWS.EC2.INSTANCE_PUBLIC_IP
+name: "EC2 instance is configured with a public IP address"
+description: "Setting associate_public_ip_address = true exposes the instance directly to the internet."
+severity: HIGH
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set associate_public_ip_address = false and use a load balancer or NAT gateway for internet access.
+references:
+  - https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-instance-addressing.html
+compliance:
+  - framework: CIS_AWS
+    control: "5.1"
+  - framework: NIST_800_53
+    control: "SC-7"

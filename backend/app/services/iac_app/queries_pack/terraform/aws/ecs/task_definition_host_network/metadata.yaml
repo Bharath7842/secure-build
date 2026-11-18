@@ -1,0 +1,19 @@
+id: AWS.ECS.TASK_HOST_NETWORK
+name: "ECS task definition uses host network mode"
+description: "network_mode=host removes network isolation between the container and the EC2 host, sharing the host's network namespace."
+severity: HIGH
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set network_mode = "awsvpc" on your aws_ecs_task_definition resource.
+references:
+  - https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-networking.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-7"
+  - framework: CIS_AWS
+    control: "5.4"

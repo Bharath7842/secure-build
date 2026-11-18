@@ -1,0 +1,17 @@
+id: AWS.KMS.KEY_DELETION_WINDOW_SHORT
+name: "KMS key deletion window is too short (less than 7 days)"
+description: "A very short deletion window leaves little time to cancel an accidental key deletion."
+severity: LOW
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set deletion_window_in_days to at least 7 in your aws_kms_key resource.
+references:
+  - https://docs.aws.amazon.com/kms/latest/developerguide/deleting-keys.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-12"

@@ -1,0 +1,19 @@
+id: AWS.VPC.FLOW_LOGS_DISABLED
+name: "VPC flow logs are not enabled"
+description: "Without VPC flow logs, network traffic cannot be audited for security incidents."
+severity: MEDIUM
+category: LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Create an aws_flow_log resource attached to the VPC.
+references:
+  - https://docs.aws.amazon.com/vpc/latest/userguide/flow-logs.html
+compliance:
+  - framework: CIS_AWS
+    control: "3.9"
+  - framework: NIST_800_53
+    control: "AU-2"

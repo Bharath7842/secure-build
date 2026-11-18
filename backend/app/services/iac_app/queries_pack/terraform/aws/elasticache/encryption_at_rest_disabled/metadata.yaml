@@ -1,0 +1,19 @@
+id: AWS.ELASTICACHE.ENCRYPTION_AT_REST_DISABLED
+name: "ElastiCache replication group does not have encryption at rest enabled"
+description: "Without at-rest encryption, cached data stored on disk can be read if the underlying storage is accessed."
+severity: MEDIUM
+category: ENCRYPTION_AT_REST
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set at_rest_encryption_enabled = true on your aws_elasticache_replication_group resource.
+references:
+  - https://docs.aws.amazon.com/AmazonElastiCache/latest/red-ug/at-rest-encryption.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.6.1"
+  - framework: NIST_800_53
+    control: "SC-28"

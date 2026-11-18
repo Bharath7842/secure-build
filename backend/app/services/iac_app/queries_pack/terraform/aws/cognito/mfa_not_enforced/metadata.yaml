@@ -1,0 +1,19 @@
+id: AWS.COGNITO.MFA_NOT_ENFORCED
+name: "Cognito user pool does not enforce MFA"
+description: "Without mandatory MFA, user accounts in the pool can be compromised through credential stuffing or phishing with no second factor required."
+severity: HIGH
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set mfa_configuration = "ON" on your aws_cognito_user_pool resource (or "OPTIONAL" to allow user choice).
+references:
+  - https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-mfa.html
+compliance:
+  - framework: CIS_AWS
+    control: "1.2"
+  - framework: NIST_800_53
+    control: "IA-2"

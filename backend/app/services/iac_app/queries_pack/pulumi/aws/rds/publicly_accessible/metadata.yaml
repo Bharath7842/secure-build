@@ -1,0 +1,19 @@
+id: PULUMI.AWS.RDS_PUBLICLY_ACCESSIBLE
+name: "Pulumi RDS instance is publicly accessible"
+description: "A publicly accessible RDS instance is reachable from the internet, increasing the risk of unauthorized database access."
+severity: HIGH
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: pulumi
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set publiclyAccessible: false on your aws:rds/instance:Instance resource.
+references:
+  - https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.Connecting.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.3.2"
+  - framework: NIST_800_53
+    control: "SC-7"

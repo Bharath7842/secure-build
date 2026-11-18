@@ -1,0 +1,19 @@
+id: CFN.IAM.POLICY_WILDCARD_ACTION
+name: "CloudFormation IAM policy allows wildcard action (*)"
+description: "An IAM policy in a CloudFormation template contains Action: * granting all AWS permissions."
+severity: HIGH
+category: IDENTITY
+finding_type: MISCONFIGURATION
+iac_type: cloudformation
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Replace wildcard actions with the specific IAM actions your resources require.
+references:
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html
+compliance:
+  - framework: CIS_AWS
+    control: "1.16"
+  - framework: NIST_800_53
+    control: "AC-6"

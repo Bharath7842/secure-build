@@ -1,0 +1,19 @@
+id: AZURE.NSG.SSH_OPEN_TO_INTERNET
+name: "Azure NSG rule allows SSH (port 22) from the internet"
+description: "Unrestricted SSH access from the internet exposes VMs to brute-force and credential-stuffing attacks."
+severity: CRITICAL
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Restrict source_address_prefix to your corporate IP range instead of "*" or "Internet" for port 22.
+references:
+  - https://docs.microsoft.com/en-us/azure/security/fundamentals/network-best-practices
+compliance:
+  - framework: CIS_AZURE
+    control: "7.1"
+  - framework: NIST_800_53
+    control: "SC-7"

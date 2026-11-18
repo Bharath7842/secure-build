@@ -1,0 +1,19 @@
+id: CFN.RDS.PUBLICLY_ACCESSIBLE
+name: "CloudFormation RDS instance is publicly accessible"
+description: "PubliclyAccessible: true exposes the database endpoint to the internet."
+severity: CRITICAL
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: cloudformation
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set PubliclyAccessible: false in your AWS::RDS::DBInstance Properties.
+references:
+  - https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_VPC.WorkingWithRDSInstanceinaVPC.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.3.3"
+  - framework: NIST_800_53
+    control: "SC-7"

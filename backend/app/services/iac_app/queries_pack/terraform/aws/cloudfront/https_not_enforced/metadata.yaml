@@ -1,0 +1,19 @@
+id: AWS.CF.HTTPS_NOT_ENFORCED
+name: "CloudFront distribution does not redirect HTTP to HTTPS"
+description: "Without redirect-to-https or https-only, users can access the distribution over unencrypted HTTP."
+severity: HIGH
+category: ENCRYPTION_IN_TRANSIT
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set viewer_protocol_policy = "redirect-to-https" or "https-only" on all cache behaviors in aws_cloudfront_distribution.
+references:
+  - https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-https.html
+compliance:
+  - framework: CIS_AWS
+    control: "2.2.1"
+  - framework: NIST_800_53
+    control: "SC-8"

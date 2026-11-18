@@ -1,0 +1,19 @@
+id: AZURE.STORAGE.PUBLIC_ACCESS_ALLOWED
+name: "Azure Storage account allows public blob access"
+description: "When allow_nested_items_to_be_public is true, any container or blob can be made publicly readable, exposing data."
+severity: HIGH
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Set allow_nested_items_to_be_public = false on all azurerm_storage_account resources.
+references:
+  - https://docs.microsoft.com/en-us/azure/storage/blobs/anonymous-read-access-prevent
+compliance:
+  - framework: CIS_AZURE
+    control: "3.7"
+  - framework: NIST_800_53
+    control: "AC-3"

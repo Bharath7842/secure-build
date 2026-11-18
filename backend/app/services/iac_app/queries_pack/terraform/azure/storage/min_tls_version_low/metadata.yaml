@@ -1,0 +1,19 @@
+id: AZURE.STORAGE.MIN_TLS_VERSION_LOW
+name: "Azure Storage account minimum TLS version is below TLS 1.2"
+description: "TLS versions below 1.2 have known vulnerabilities. Azure Storage should enforce TLS 1.2 or higher."
+severity: MEDIUM
+category: ENCRYPTION_IN_TRANSIT
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: azure
+enabled: true
+version: 1.0.0
+remediation: >
+  Set min_tls_version = "TLS1_2" on your azurerm_storage_account resource.
+references:
+  - https://docs.microsoft.com/en-us/azure/storage/common/transport-layer-security-configure-minimum-version
+compliance:
+  - framework: CIS_AZURE
+    control: "3.15"
+  - framework: NIST_800_53
+    control: "SC-8"

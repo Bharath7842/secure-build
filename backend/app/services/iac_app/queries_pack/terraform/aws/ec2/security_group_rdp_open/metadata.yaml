@@ -1,0 +1,19 @@
+id: AWS.EC2.SECURITY_GROUP_RDP_OPEN
+name: "Security group allows RDP (port 3389) from any IP address"
+description: "Allowing RDP access from 0.0.0.0/0 exposes Windows instances to brute force attacks."
+severity: CRITICAL
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Restrict RDP ingress to known management IP ranges or use a VPN or AWS Client VPN.
+references:
+  - https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html
+compliance:
+  - framework: CIS_AWS
+    control: "5.3"
+  - framework: NIST_800_53
+    control: "SC-7"

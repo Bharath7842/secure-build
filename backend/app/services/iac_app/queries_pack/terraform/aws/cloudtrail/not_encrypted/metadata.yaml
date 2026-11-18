@@ -1,0 +1,19 @@
+id: AWS.CT.NOT_ENCRYPTED
+name: "CloudTrail logs are not encrypted with KMS"
+description: "Without a KMS key, CloudTrail log files are not encrypted at rest."
+severity: MEDIUM
+category: DATA_PROTECTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set kms_key_id in your aws_cloudtrail resource to encrypt logs with a customer-managed KMS key.
+references:
+  - https://docs.aws.amazon.com/awscloudtrail/latest/userguide/encrypting-cloudtrail-log-files-with-aws-kms.html
+compliance:
+  - framework: CIS_AWS
+    control: "3.7"
+  - framework: NIST_800_53
+    control: "SC-28"

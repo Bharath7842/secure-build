@@ -1,0 +1,19 @@
+id: GCP.IAM.PRIMITIVE_ROLE_ASSIGNED
+name: "GCP project has a primitive IAM role (Owner or Editor) assigned"
+description: "Primitive roles (roles/owner, roles/editor) are coarse-grained and grant far more permissions than necessary, violating least-privilege."
+severity: HIGH
+category: ACCESS_CONTROL
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: gcp
+enabled: true
+version: 1.0.0
+remediation: >
+  Replace roles/owner or roles/editor with predefined roles scoped to the specific resource and use case.
+references:
+  - https://cloud.google.com/iam/docs/understanding-roles#primitive_roles
+compliance:
+  - framework: CIS_GCP
+    control: "1.1"
+  - framework: NIST_800_53
+    control: "AC-6"
