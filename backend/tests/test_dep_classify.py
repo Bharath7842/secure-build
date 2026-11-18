@@ -102,6 +102,7 @@ def _node_state(agent, root, **overrides):
     state = {
         "local_path": str(root), "scope": None, "context_note": "", "verbose": False,
         "verbose_files": False, "use_llm": True, "persist_to_disk": False,
+        "classify_unrecognized_deps": True, "rerank_leftover_files": True,
         "_tracer": agent.AgentTrace(verbose=False),
     }
     state.update(overrides)

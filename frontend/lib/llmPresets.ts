@@ -78,6 +78,11 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPresetInfo> = {
     provider: "ollama",
     model: "granite-code:8b",
   },
+  "ollama-qwen2-5-coder-14b": {
+    label: "Ollama — qwen2.5-coder:14b (local)",
+    provider: "ollama",
+    model: "qwen2.5-coder:14b",
+  },
   "ollama-gpt-oss": {
     label: "Ollama — gpt-oss:latest (local)",
     provider: "ollama",
@@ -117,6 +122,11 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPresetInfo> = {
     label: "Ollama — phi4-mini:3.8b (local)",
     provider: "ollama",
     model: "phi4-mini:3.8b",
+  },
+  "ollama-gemma4-12b": {
+    label: "Ollama — gemma4:12b (local)",
+    provider: "ollama",
+    model: "gemma4:12b",
   },
 };
 

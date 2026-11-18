@@ -471,8 +471,9 @@ class SastState(TypedDict, total=False):
     # optional LLM pass). Default on; CLI --no-derived-regex / limitations id
     # "runtime-derived-regex". Merged onto the static catalog in _scan_context.
     derive_runtime_rules: bool
-    # Additive LLM passes, default on whenever use_llm is. CLI --no-classify-deps /
-    # --no-rerank-leftovers; no project setting.
+    # Additive LLM passes, OFF by default (tech-stack detection and risk mapping
+    # are deterministic). CLI opt-in --classify-deps / --rerank-leftovers; no
+    # project setting, and agent_bridge never sets them.
     classify_unrecognized_deps: bool
     rerank_leftover_files: bool
     max_derived_regex_rules: int
@@ -1215,12 +1216,13 @@ def node_analyze_tech_stack(state: SastState) -> dict:
 def _classify_unrecognized_dependencies(
     state: SastState, dependency_summary: Dict[str, Any], usage: Dict[str, Any], tracer: "AgentTrace",
 ) -> None:
-    """Additive LLM pass over the dependencies no signature matched (default on
-    with LLM scanning; CLI --no-classify-deps / state["classify_unrecognized_deps"]).
+    """Additive LLM pass over the dependencies no signature matched. OFF by
+    default (tech-stack detection is deterministic); opt in with CLI
+    --classify-deps / state["classify_unrecognized_deps"] = True.
     Writes `dependency_summary["llm_labels"]` only — never `frameworks`, so the
     stack verdict and the prompts built from it stay as they were. Failure or an
     exhausted budget leaves the summary untouched."""
-    if not state.get("use_llm") or not state.get("classify_unrecognized_deps", True):
+    if not state.get("use_llm") or not state.get("classify_unrecognized_deps", False):
         return
     unrecognized = dependency_summary.get("unrecognized_dependencies") or []
     if not unrecognized:
@@ -1401,12 +1403,12 @@ def _rerank_leftover_files(
     """Additive LLM pass: promote catch-all MEDIUM files that handle auth, input,
     errors or security config to HIGH — or to CRITICAL when the project deep-scans
     CRITICAL files only (a HIGH file would then never reach the deep scan, which
-    is the point of promoting it) (default on with LLM scanning; CLI
-    --no-rerank-leftovers / state["rerank_leftover_files"]). Runs before the
+    is the point of promoting it). OFF by default (risk mapping is deterministic);
+    opt in with CLI --rerank-leftovers / state["rerank_leftover_files"] = True. Runs before the
     deep/triage buckets are built so counts, scan_priority and the deep-scan
     set all see the promotion. Never demotes; any failure promotes nothing.
     Returns how many files were promoted."""
-    if not state.get("use_llm") or not state.get("rerank_leftover_files", True) or not leftover_paths:
+    if not state.get("use_llm") or not state.get("rerank_leftover_files", False) or not leftover_paths:
         return 0
     usage = state.get("usage") or init_usage(state.get("llm_provider"), state.get("llm_model"))
     result = risk_rerank.rerank_leftover_files(
@@ -2986,10 +2988,12 @@ def main() -> None:
     parser.add_argument("--flow-max-depth", type=int, default=None,
                          help="Override max call-graph hops (source to sink) when walking "
                               f"inter-file flows (default: {call_graph.MAX_HOP_DEPTH})")
-    parser.add_argument("--no-classify-deps", action="store_true",
-                         help="Skip the LLM pass that labels dependencies no framework signature matched")
-    parser.add_argument("--no-rerank-leftovers", action="store_true",
-                         help="Skip the LLM pass that promotes unclassified source files to HIGH")
+    parser.add_argument("--classify-deps", action="store_true",
+                         help="Opt in to the LLM pass that labels dependencies no framework signature matched "
+                              "(off by default: tech-stack detection is deterministic)")
+    parser.add_argument("--rerank-leftovers", action="store_true",
+                         help="Opt in to the LLM pass that promotes unclassified source files to HIGH "
+                              "(off by default: risk mapping is deterministic)")
     parser.add_argument("--no-derived-regex", action="store_true",
                          help="Skip runtime regex derive (call-graph wrappers + LLM pass); "
                               "use the static catalog only")
@@ -3043,8 +3047,8 @@ def main() -> None:
         "deep_scan_critical_only": args.critical_only_deep_scan,
         "inter_file_flow": use_llm and not args.no_inter_file_flow,
         "derive_runtime_rules": not args.no_derived_regex,
-        "classify_unrecognized_deps": not args.no_classify_deps,
-        "rerank_leftover_files": not args.no_rerank_leftovers,
+        "classify_unrecognized_deps": args.classify_deps,
+        "rerank_leftover_files": args.rerank_leftovers,
         "catalog_prefilter": args.catalog_prefilter,
         "parallel_stages": not args.sequential,
         "_tracer": tracer,

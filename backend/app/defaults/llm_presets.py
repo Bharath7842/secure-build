@@ -121,6 +121,13 @@ LLM_PRESETS: tuple[LlmPreset, ...] = (
         ollama_size="small",
     ),
     LlmPreset(
+        id="ollama-qwen2-5-coder-14b",
+        label="Ollama — qwen2.5-coder:14b (local)",
+        provider="ollama",
+        model="qwen2.5-coder:14b",
+        ollama_size="large",
+    ),
+    LlmPreset(
         id="ollama-gpt-oss",
         label="Ollama — gpt-oss:latest (local)",
         provider="ollama",
@@ -175,6 +182,13 @@ LLM_PRESETS: tuple[LlmPreset, ...] = (
         provider="ollama",
         model="phi4-mini:3.8b",
         ollama_size="small",
+    ),
+    LlmPreset(
+        id="ollama-gemma4-12b",
+        label="Ollama — gemma4:12b (local)",
+        provider="ollama",
+        model="gemma4:12b",
+        ollama_size="large",
     ),
 )
 
