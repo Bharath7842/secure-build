@@ -180,7 +180,9 @@ UNRESOLVED_REASONS = frozenset(
         "explanation_contradiction",
         # Supplemental scans run as part of SAST (scan_type="sast"):
         "not_reviewed_iac",    # IaC finding pending human review
-        "not_reviewed_sca_vex",  # SCA/VEX finding pending human review
+        # Legacy only: SCA/VEX rows of old SAST scans (that phase was removed; the
+        # reports leave those rows out, see fp_visibility.RETIRED_SAST_KINDS).
+        "not_reviewed_sca_vex",
     }
 )
 

@@ -43,6 +43,17 @@ _SCALE_STAGES = _EXPLOITABILITY_STAGES | _VERDICT_STAGES
 _VERDICT_SCALE_SINCE = 5
 
 
+# Finding kinds a SAST scan no longer produces and its reports no longer show.
+# `sca_vex`: dependency CVEs from the SBOM -> SCA phase that used to run inside
+# SAST scans (removed; SCA and SBOM are their own scan types). Old scans keep the
+# rows; every SAST reading leaves them out. Not counted as hidden false positives.
+RETIRED_SAST_KINDS = frozenset({"sca_vex"})
+
+
+def drop_retired_sast_kinds(findings: list[Finding]) -> list[Finding]:
+    return [f for f in findings if (f.kind or "") not in RETIRED_SAST_KINDS]
+
+
 def _scanner_verdict(finding: Finding) -> str:
     return (getattr(finding, "llm_verdict", None) or finding.verdict or "").strip().lower()
 
@@ -80,6 +91,7 @@ def hide_confident_false_positives(
     or, on raw rows, pass the ids of reviewed findings as `reviewed_ids`."""
     if (scan.scan_type or "sast").strip().lower() != "sast":
         return findings, 0
+    findings = drop_retired_sast_kinds(findings)
 
     def reviewed(finding: Finding) -> bool:
         if reviewed_ids is not None:

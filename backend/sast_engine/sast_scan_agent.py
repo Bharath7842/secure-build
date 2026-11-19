@@ -73,7 +73,7 @@ from llm_client import RESULT_CACHE_USAGE_KEY, init_usage, usage_cost_summary  #
 import ast_struct  # noqa: E402
 from pipeline import call_graph, call_graph_python, dep_classify, dependency_scan, derive_rules, flow_verify, llm_file_scan, regex_scan, rg_prefilter, risk_rerank  # noqa: E402
 from pipeline import occurrence, reachability  # noqa: E402
-from pipeline import sql_semantics  # noqa: E402
+from pipeline import sql_semantics, taint_flows  # noqa: E402
 from pipeline.validators import VALIDATOR_CONTEXT_USAGE_KEY, ValidatorContext  # noqa: E402
 
 # ===========================================================================
@@ -452,6 +452,11 @@ class SastState(TypedDict, total=False):
     # Java inter-file call-graph flows (off when use_llm is false, tree-sitter
     # missing, or the stack is not maven-java). Default True when use_llm.
     inter_file_flow: bool
+    # Argument-level taint on Java flows (pipeline/taint_flows.py): ranks
+    # proven paths first, keeps flows whose sink gets no input out of LLM
+    # verification and attaches path/sanitized_path evidence. Default True;
+    # scan_limitations id "taint-flow-tracking", CLI --no-taint-flows.
+    taint_flows: bool
     flow_verify_cap: int
     flow_max_hop_depth: int
     call_graph: Dict[str, Any]
@@ -1919,6 +1924,29 @@ def node_build_call_graph(state: SastState) -> dict:
     return {"call_graph": summary, "module_plan": module_plan}
 
 
+def _trace_flow_taint(tracer: "AgentTrace", graph: Any, flows: List[Any], packed: Dict[str, Any]) -> List[Any]:
+    """Argument-level taint on every flow (pipeline/taint_flows.py). Sorts
+    `flows` in place, proven paths first (stable, so the call-graph ranking
+    holds within a status), and returns the flows worth verifying: all but
+    `no_path`. Those stay in `flows`, so their call chain is still
+    reachability evidence."""
+    counts = taint_flows.annotate_flows(graph, flows)
+    flows.sort(key=taint_flows.rank)
+    keep = [f for f in flows if taint_flows.status_of(f) != taint_flows.STATUS_NO_PATH]
+    packed["taint_status_counts"] = counts
+    tracer.log(6, "discover_flows",
+               f"Taint traced on {len(flows)} flow(s): path={counts[taint_flows.STATUS_PATH]}, "
+               f"sanitized_path={counts[taint_flows.STATUS_SANITIZED]}, "
+               f"unknown={counts[taint_flows.STATUS_UNKNOWN]}, no_path={counts[taint_flows.STATUS_NO_PATH]} "
+               f"(not verified)",
+               narrative=f"Followed the entry input through each call's arguments: "
+                         f"{counts[taint_flows.STATUS_PATH]} flow(s) carry it to the sink, "
+                         f"{counts[taint_flows.STATUS_SANITIZED]} only through an encoder, and "
+                         f"{counts[taint_flows.STATUS_NO_PATH]} pass the sink no input at all, so they "
+                         f"are not sent for verification.")
+    return keep
+
+
 def node_discover_flows(state: SastState) -> dict:
     tracer: AgentTrace = state["_tracer"]
     packed = state.get("call_graph") or {}
@@ -1941,9 +1969,12 @@ def node_discover_flows(state: SastState) -> dict:
         # anyway): the flows past the verify cap are still evidence for
         # node_corroborate_flows. Sorted, so [:cap] is what cap= returned.
         ts_all = lang_module.discover_flows(graph, cap=sys.maxsize, max_hop_depth=max_hop_depth)
+        to_verify = ts_all
+        if graph_lang == "java" and state.get("taint_flows", True):
+            to_verify = _trace_flow_taint(tracer, graph, ts_all, packed)
         # One verification per sink: entry points that reach the same sink
         # are named in that flow's prompt instead of verified separately.
-        ts_distinct = call_graph.collapse_flows_by_sink(ts_all)
+        ts_distinct = call_graph.collapse_flows_by_sink(to_verify)
         ts_flows = ts_distinct[: max(0, cap)]
         packed["entry_tier"] = graph.entry_tier
         ts_total = len(ts_distinct)
@@ -2982,6 +3013,9 @@ def main() -> None:
                               "on by default for real (API-triggered) scans")
     parser.add_argument("--no-inter-file-flow", action="store_true",
                          help="Skip Java inter-file call-graph tracing and flow-slice LLM verify")
+    parser.add_argument("--no-taint-flows", action="store_true",
+                         help="Skip argument-level taint on Java flows: every flow is verified, "
+                              "ranked by the call graph alone, with method-level evidence only")
     parser.add_argument("--flow-verify-cap", type=int, default=None,
                          help="Override max inter-file flow slices sent to the LLM "
                               f"(default: {call_graph.FLOW_VERIFY_CAP})")
@@ -3046,6 +3080,7 @@ def main() -> None:
         "deep_scan_batch_small_files": not args.no_batch_small_files,
         "deep_scan_critical_only": args.critical_only_deep_scan,
         "inter_file_flow": use_llm and not args.no_inter_file_flow,
+        "taint_flows": not args.no_taint_flows,
         "derive_runtime_rules": not args.no_derived_regex,
         "classify_unrecognized_deps": args.classify_deps,
         "rerank_leftover_files": args.rerank_leftovers,

@@ -1,6 +1,6 @@
 {
-  "input_tokens": 1451,
-  "key": "0deabdea4f25cd5c0877f7c73c0c8cc1f065b4095404b9c4988329ee286c5aac",
+  "input_tokens": 1482,
+  "key": "7f1bb7caeacdbb5f6f6289041934d6c7c16ef26cc267b1f2755fdc3f67c756eb",
   "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
   "output_tokens": 125,
   "step": "group_confirm_triage_findings",

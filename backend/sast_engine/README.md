@@ -159,11 +159,39 @@ match on `finding["reachability"]` (persisted as `Finding.reachability`).
 
 | status | from | meaning | effect |
 |---|---|---|---|
+| `path` | taint trace (Java) | the entry's input is passed through each call's arguments into the sink call's dangerous argument | raises a `true_positive` to 0.9 |
+| `sanitized_path` | taint trace (Java) | the same, but only through a library encoder suited to that sink | attached; CVSS `AC:H` |
 | `entry_reachable` | call graph | an entry point calls down to the sink's method; doesn't show which value | attached only |
 
-`path` and `sanitized_path` appear only on scans made before the
-code-property-graph stage was removed; they are still read (UI, exports,
-confirmation prompts) but never produced.
+`path` and `sanitized_path` come from `pipeline/taint_flows.py` (below); scans
+made before the code-property-graph stage was removed hold them too.
+
+### Argument-level taint (`taint_flows`)
+
+`discover_flows` proves only that methods call each other. Before collapsing
+and capping, `node_discover_flows` runs `taint_flows.annotate_flows` over every
+Java flow (limitation `taint-flow-tracking`, CLI `--no-taint-flows`). Each
+method gets one summary: parameters are symbolic labels, request accessors
+(`request.getParameter(..)`, ...) are sources, and a flow-insensitive fixpoint
+over assignments, `+=`, builder/collection mutation, for-each and lambda
+parameters labels every call's arguments. Number/boolean/enum/UUID
+conversions kill a label and known library encoders mark it — counted only
+against the sink kinds the encoder defends (HTML escaping before a SQL query
+leaves the flow a `path`). Composition then
+substitutes labels hop by hop through the edge call's argument positions and
+reads the sink's dangerous argument (the SQL text, not `JdbcTemplate`'s bound
+values; the receiver for `ps.executeQuery()`). Entry parameters are untrusted
+unless their type cannot carry text (`Long`, `HttpServletResponse`, `Model`,
+...); for a public-API entry only its string-like parameters are untrusted.
+
+The result (`flow.taint`) is `path`, `sanitized_path`, `unknown` (a field, an
+untyped lambda, a call it could not locate — never treated as safe) or
+`no_path`. Flows are re-sorted in that order (stable), `no_path` flows are
+left out of LLM verification but stay in the reachability index as
+`entry_reachable`, and a traced flow's verify prompt carries a one-paragraph
+`Taint analysis` note naming the path. Propagation is generous on purpose (a
+call's result carries its arguments' and receiver's labels), so the error it
+makes is calling a flow `path` that is not, never dropping one that is.
 
 Evidence only adds. A finding with no chain is never dropped and its
 confidence is never lowered, because the call graph doesn't model every

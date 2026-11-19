@@ -9,10 +9,11 @@ Evidence (STATUS_ENTRY_REACHABLE): a method-level chain — an entry point calls
 down to the method holding this sink. It doesn't show which value reaches the
 argument, so it is context, never a confidence boost.
 
-STATUS_PATH / STATUS_SANITIZED are legacy: expression-level taint paths that
-an earlier, since-removed code-property-graph stage attached. New scans never
-produce them; they stay defined because persisted rows carry them and the
-reconcile sweep, the confirmation prompt and the exports still read them.
+STATUS_PATH / STATUS_SANITIZED: an argument-level path — the entry's input is
+passed through each call's arguments into the sink call's dangerous argument,
+directly or only through a library encoder. pipeline/taint_flows.py produces
+them for Java flows; older rows also hold ones from a since-removed
+code-property-graph stage.
 
 Evidence only ever adds: a finding with no chain keeps its verdict and its
 confidence. A legacy unsanitized path raises a true positive's confidence to
@@ -78,9 +79,44 @@ def _compact(path: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return path[:_HEAD_STEPS] + path[-(MAX_PATH_STEPS - _HEAD_STEPS):]
 
 
+def _evidence_from_taint(flow: Any, taint: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """A value-level path from taint_flows: source, the call at each hop that
+    passes the value on, and the sink call."""
+    steps = [
+        {"file": _norm(s["file"]), "line": int(s["line"]), "method": s.get("method", ""),
+         "code": str(s.get("code") or "")[:200]}
+        for s in taint.get("steps") or [] if s.get("file") and int(s.get("line") or -1) > 0
+    ]
+    if len(steps) < 2:
+        return None
+    return {
+        "status": taint["status"],
+        "sink_kind": flow.sink_kind,
+        "sink_code": steps[-1]["code"],
+        "source": {k: steps[0][k] for k in ("file", "line", "code")},
+        "sink": {k: steps[-1][k] for k in ("file", "line", "code")},
+        "taint_path": _compact(steps),
+        "steps_total": len(steps),
+        "sanitizers": [
+            {"file": _norm(s["file"]), "line": int(s["line"]), "code": str(s.get("code") or "")[:200]}
+            for s in taint.get("sanitizers") or []
+        ],
+        "guards": [],
+        "entry_tier": flow.entry_tier,
+        "authenticated": bool(flow.authenticated),
+    }
+
+
 def evidence_from_call_graph_flow(flow: Any) -> Optional[Dict[str, Any]]:
-    """Evidence for a tree-sitter call-graph Flow: one step per method hop,
-    anchored at the call line inside it (the sink call for the last hop)."""
+    """Evidence for a tree-sitter call-graph Flow: the argument-level path when
+    taint_flows found one (STATUS_PATH / STATUS_SANITIZED), else one step per
+    method hop, anchored at the call line inside it (the sink call for the
+    last hop)."""
+    taint = getattr(flow, "taint", None) or {}
+    if taint.get("status") in (STATUS_PATH, STATUS_SANITIZED):  # mirrors taint_flows.STATUS_*
+        evidence = _evidence_from_taint(flow, taint)
+        if evidence is not None:
+            return evidence
     hops = [h for h in (flow.hops or []) if h.file and int(h.line or -1) > 0]
     if len(hops) < 2:
         return None
@@ -229,10 +265,15 @@ def render_evidence(evidence: Dict[str, Any]) -> str:
     chain = "\n".join(
         f"  {s.get('code', '')}  ({s.get('file', '')}:{s.get('line', '')})" for s in steps
     )
+    origin = (
+        "a public module-API parameter's value" if evidence.get("entry_tier") == "public_api"
+        else "a request-controlled value"
+    )
     lines = [
-        f"Dataflow evidence ({evidence.get('sink_kind')} sink) — a request-controlled "
-        "value reaches this location along this path. It proves reachability for this "
-        "occurrence only; a listed sanitizer or guard may still make it safe:",
+        f"Dataflow evidence ({evidence.get('sink_kind')} sink) — {origin} "
+        "reaches this location along this path (a static trace of call "
+        "arguments, for this occurrence only); a listed sanitizer or guard may "
+        "still make it safe:",
         chain + (f"\n  ... {elided} intermediate step(s) omitted" if elided > 0 else ""),
     ]
     for label, key in (("Sanitizer calls on the path", "sanitizers"),

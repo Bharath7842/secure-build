@@ -1,7 +1,8 @@
 """flow_verify.py — LLM-verify multi-file call-graph flows.
 
-The graph has no argument-level taint, so the slice is the only precision
-mechanism: every hop's *complete* method body is sent. Oversized methods skip
+Argument-level taint (pipeline/taint_flows.py) is best effort and shown to the
+model as a lead only, so the slice stays the precision mechanism: every hop's
+*complete* method body is sent. Oversized methods skip
 the flow rather than hide a call site. The one exception is a slice over
 FLOW_SLICE_CHAR_BUDGET in total: its *intermediate* hops are condensed to the
 signature plus a window around the call into the next hop, while the entry and sink hops always stay whole.
@@ -24,7 +25,7 @@ from llm_client import (
     stage_has_budget,
 )
 
-from pipeline import explanation_check, prompt_injection
+from pipeline import explanation_check, prompt_injection, reachability, taint_flows
 from pipeline.finding_facts import prepare_findings
 from pipeline.call_graph import Flow, FLOW_VERIFY_CAP, flow_to_dict
 from pipeline.llm_file_scan import (
@@ -174,11 +175,14 @@ def build_flow_user_prompt(flow: Flow, slice_text: str) -> str:
         if flow.entry_tier == "public_api"
         else "The source is untrusted input at the entry hop (HTTP, listener, or main)."
     )
+    taint_note = taint_flows.prompt_note(flow)
     return (
         f"Flow: {hop_summary}\n"
         f"Entry tier: {flow.entry_tier}\n"
         f"Files: {files}\n"
-        f"{source_note}\n\n"
+        f"{source_note}\n"
+        + (f"{taint_note}\n" if taint_note else "")
+        + "\n"
         f"{build_other_sources_note(flow)}"
         f"{slice_text}\n"
     )
@@ -211,6 +215,9 @@ def build_flow_group_user_prompt(
             f"F{n}: {chain}  ({' → '.join(h.method for h in flow.hops)}; "
             f"entry tier {flow.entry_tier}; source is {_source_note(flow)})"
         )
+        taint_note = taint_flows.prompt_note(flow)
+        if taint_note:
+            flow_lines.append(f"  F{n} {taint_note}")
         note = build_other_sources_note(flow)
         if note:
             flow_lines.append(f"  F{n} " + note.rstrip())
@@ -243,6 +250,27 @@ def _flow_path_payload(flow: Flow) -> List[Dict[str, Any]]:
             "snippet": _numbered_body(hop.body, hop.start_line),
         })
     return steps
+
+
+def _attach_taint_evidence(finding: Dict[str, Any], flow: Flow) -> None:
+    """A finding at the flow's own sink gets the flow's argument-level path
+    as its reachability evidence (shown on the finding card, used for the
+    confidence floor and CVSS), like findings of other tiers at that sink do.
+    No CWE check here, unlike reachability.match: this finding is the model's
+    verdict on this very sink, whatever CWE it chose. A finding elsewhere in
+    the sink method is about something else and gets nothing."""
+    if taint_flows.status_of(flow) not in (taint_flows.STATUS_PATH, taint_flows.STATUS_SANITIZED):
+        return
+    try:
+        line = int(finding.get("line") or -1)
+    except (TypeError, ValueError):
+        return
+    if abs(line - flow.hops[-1].line) > reachability.LINE_TOLERANCE:
+        return
+    evidence = reachability.evidence_from_call_graph_flow(flow)
+    if evidence is not None:
+        finding["reachability"] = evidence
+        reachability.apply_confidence(finding)
 
 
 def _data_flow_line(flow: Flow) -> str:
@@ -293,7 +321,10 @@ def _findings_for_flow(
     occurrence_validators: bool = True,
 ) -> List[Dict[str, Any]]:
     sink = flow.hops[-1]
-    source_lines = sink.body.splitlines()
+    # normalize_finding re-anchors by indexing `source_lines` with file line
+    # numbers, so the sink body sits at its true lines. Unpadded, a snippet
+    # match returned the line's position inside the method (4, not 12).
+    source_lines = [""] * (sink.start_line - 1) + sink.body.splitlines()
     cache_hit = last_call_was_cache_hit()  # the call whose answer is being converted
     findings: List[Dict[str, Any]] = []
     flow_path = _flow_path_payload(flow)
@@ -328,6 +359,7 @@ def _findings_for_flow(
             finding["source"] = flow.hops[0].label
         if not finding.get("sink"):
             finding["sink"] = sink.label
+        _attach_taint_evidence(finding, flow)
         # Occurrence facts and validators need the sink file as a whole (the
         # hop bodies are method slices); without a loader the finding simply
         # has none, and is judged exactly as before.

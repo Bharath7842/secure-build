@@ -15,6 +15,7 @@ import ScanUsageCard from "@/components/ScanUsageCard";
 import ScanUsageResultPanel from "@/components/ScanUsageResultPanel";
 import ScanFindingsCard from "@/components/ScanFindingsCard";
 import ScanFindingsResultPanel from "@/components/ScanFindingsResultPanel";
+import ScanFindingsPanel from "@/components/ScanFindingsPanel";
 import ScanDecisionDiffPanel from "@/components/ScanDecisionDiffPanel";
 import ScanExportButtons from "@/components/ScanExportButtons";
 import ScanResultCard from "@/components/ScanResultCard";
@@ -74,6 +75,9 @@ export default function ScanDetailPage() {
     "discovery" | "findings" | "usage" | "structure" | "ast" | "rules" | null
   >(null);
   const [panelExpanded, setPanelExpanded] = useState(false);
+  // Which main view a finished scan shows. `null` = automatic: the vulnerability
+  // report once the scan succeeded, the engine log otherwise. A click pins it.
+  const [mainView, setMainView] = useState<"report" | "log" | null>(null);
   const [structureTree, setStructureTree] = useState<string[] | null>(null);
   const isDesktop = useMediaQuery(DESKTOP_SPLIT_QUERY);
 
@@ -567,6 +571,18 @@ export default function ScanDetailPage() {
     resultsError ||
     (terminal && status.status === "failed" && status.message);
 
+  // Once a scan is over, its findings table is the page; the log is a tab away.
+  const showReportTabs = terminal && (status.status === "success" || hasSavedFindings);
+  const view: "report" | "log" = showReportTabs
+    ? (mainView ?? (status.status === "success" ? "report" : "log"))
+    : "log";
+
+  function selectView(next: "report" | "log") {
+    setMainView(next);
+    // The report tab *is* the findings table; don't keep a second copy open beside it.
+    if (next === "report" && sidePanel === "findings") closeSidePanel();
+  }
+
   const scanLabel = scanRecord ? `Scan · v${scanRecord.version}` : null;
   const source = scanRecord ? (scanRecord.triggered_by === "jenkins" ? "Jenkins" : "App") : null;
 
@@ -663,9 +679,83 @@ export default function ScanDetailPage() {
         <div className="shrink-0 space-y-2 border-b border-slate-200 px-6 py-3">{notices}</div>
       )}
 
+      {showReportTabs && (
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6">
+          <div role="tablist" aria-label="Scan view" className="flex items-center gap-1">
+            {(
+              [
+                ["report", "Vulnerability report"],
+                ["log", "Engine log"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={view === key}
+                onClick={() => selectView(key)}
+                className={`agent-focus-ring -mb-px border-b-2 px-3 py-2.5 text-sm font-medium transition-colors ${
+                  view === key
+                    ? "border-[var(--accent)] text-[var(--ink)]"
+                    : "border-transparent text-[var(--muted)] hover:text-[var(--ink)]"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {view === "report" && (
+            <div className="flex items-center gap-2 py-2">
+              {discovery && (
+                <button
+                  type="button"
+                  onClick={() => setSidePanel("discovery")}
+                  className={`agent-focus-ring rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
+                    sidePanel === "discovery"
+                      ? "border-[var(--accent)] text-[var(--accent)]"
+                      : "border-slate-200 text-[var(--muted)] hover:text-[var(--ink)]"
+                  }`}
+                >
+                  Tech stack &amp; risk
+                </button>
+              )}
+              {showUsageCard && usageSummary && (
+                <button
+                  type="button"
+                  onClick={() => setSidePanel("usage")}
+                  className={`agent-focus-ring rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
+                    sidePanel === "usage"
+                      ? "border-[var(--accent)] text-[var(--accent)]"
+                      : "border-slate-200 text-[var(--muted)] hover:text-[var(--ink)]"
+                  }`}
+                >
+                  LLM usage
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="min-h-0 flex-1 overflow-hidden">
         <ResizableSplit
           left={
+            view === "report" ? (
+              <div className="agent-scroll h-full min-h-0 overflow-y-auto px-6 py-6">
+                <ScanFindingsPanel
+                  scanId={id}
+                  report={
+                    effectiveReport ?? {
+                      files_scanned: 0,
+                      tp_count: 0,
+                      fp_count: 0,
+                      unverified_count: 0,
+                      by_owasp_category: {},
+                    }
+                  }
+                />
+              </div>
+            ) : (
             <ScanAgentLog
               lines={logLines}
               live={!terminal}
@@ -682,8 +772,9 @@ export default function ScanDetailPage() {
               }}
               sectionCards={sectionCards}
             />
+            )
           }
-          right={rightPanel}
+          right={view === "report" && sidePanel === "findings" ? null : rightPanel}
           expanded={panelExpanded}
         />
       </div>

@@ -1,7 +1,8 @@
 """call_graph.py — Java call graph + typed-sink flow discovery.
 
 Best-effort static resolution (not sound taint). Edges are method-level
-"A calls B"; argument binding is left to the LLM on full method bodies.
+"A calls B"; pipeline/taint_flows.py follows argument positions along a flow
+afterwards, and the LLM still judges the full method bodies.
 
 Sinks are fail-closed: a call is a sink only when the method name *and* the
 resolved receiver type match an allowlist (or a syntactic form the regex
@@ -374,6 +375,15 @@ class Flow:
     # Entry points of flows collapsed into this one because they reach the
     # same sink ({file, line, method, label} each; collapse_flows_by_sink).
     other_sources: List[Dict[str, Any]] = field(default_factory=list)
+    # Graph method key per hop, the line of the call in hop i that enters hop
+    # i+1, and the sink call's method name — what pipeline/taint_flows.py
+    # needs to follow argument positions. Empty for Python flows.
+    method_keys: List[str] = field(default_factory=list)
+    call_lines: List[int] = field(default_factory=list)
+    sink_method: str = ""
+    # taint_flows.annotate_flows result ({status, steps, sanitizers, unknown,
+    # ...}); None when the flow was not traced.
+    taint: Optional[Dict[str, Any]] = None
 
     @property
     def entry_key(self) -> str:
@@ -456,6 +466,12 @@ def _collect_locals(method_node: Any, src: bytes) -> Dict[str, str]:
                     ident = _field(ch, "name")
                     if ident is not None and simple:
                         locals_[_text(ident, src)] = simple
+        elif n.type == "resource":
+            # try-with-resources: `try (PreparedStatement ps = ...)` — without
+            # it `ps.executeQuery()` has an unresolved receiver and no sink.
+            tnode, ident = _field(n, "type"), _field(n, "name")
+            if tnode is not None and ident is not None:
+                locals_[_text(ident, src)] = _simple_type_name(tnode, src)
         stack.extend(n.children)
     return locals_
 
@@ -1654,6 +1670,9 @@ def discover_flows(
                     sink_kind=sink.kind,
                     authenticated=_is_authenticated(entry_method),
                     files=files,
+                    method_keys=list(path),
+                    call_lines=list(lines[1:]),
+                    sink_method=sink.method_name,
                 )
                 flows.append(flow)
 
@@ -1796,4 +1815,5 @@ def flow_to_dict(flow: Flow) -> Dict[str, Any]:
             for h in flow.hops
         ],
         "other_sources": list(flow.other_sources),
+        "taint": flow.taint,
     }

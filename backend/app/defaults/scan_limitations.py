@@ -135,6 +135,15 @@ SCAN_LIMITATIONS: tuple[ScanLimitation, ...] = (
         source="pipeline/call_graph.py, pipeline/call_graph_python.py, pipeline/flow_verify.py",
     ),
     ScanLimitation(
+        id="taint-flow-tracking",
+        enabled_by_default=True,
+        category="analysis-check",
+        title="Argument-Level Taint on Call-Graph Flows (Java)",
+        description="Follow the entry point's request input through the arguments of every call on a Java call-graph flow, down to the sink call's dangerous argument (the SQL text, the command, the URL, the file path). A flow whose input reaches it is verified first and gives the finding at that sink a dataflow path as evidence (shown in the UI, exports and grouped confirmation; it raises a confirmed finding's confidence to 0.9). A path that goes only through a library encoder suited to that sink (an HTML encoder before a response write, not before a SQL query) is marked as sanitized, which lowers its CVSS attack complexity. A flow that passes the sink nothing derived from input — literals, constants, numbers, bound parameters — is not sent for LLM verification, though its call chain is still kept as evidence. Best effort: values in fields, collections passed by reference, reflection and callbacks are not followed, and such a flow is verified as before, never skipped. Off: every flow is verified, ranked by the call graph alone.",
+        affected_scope="Java flows of the inter-file call graph; Python flows are not traced",
+        source="pipeline/taint_flows.py, sast_scan_agent.py node_discover_flows",
+    ),
+    ScanLimitation(
         id="runtime-derived-regex",
         enabled_by_default=True,
         category="analysis-check",

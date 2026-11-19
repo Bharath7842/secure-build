@@ -155,3 +155,32 @@ def test_fp_certainty_needs_a_dismissal():
                                 evidence_version=V5)
     assert fp_certainty(Finding(verdict="false_positive"), confirmed) is None
     assert fp_certainty(Finding(verdict="false_positive", reason_tag="stub_no_sink"), None) == 1.0
+
+
+def test_old_sast_scans_sca_vex_rows_are_left_out_of_every_reading(client, seeded):
+    """SCA/VEX findings used to be written into SAST scans by an SBOM -> SCA phase
+    that is gone; old scans keep the rows, but no SAST reading shows them, and they
+    are not counted as hidden false positives."""
+    scan_id, _ids = seeded
+    with db_module.SessionLocal() as db:
+        db.add(Finding(
+            scan_id=scan_id, kind="sca_vex", severity="HIGH", title="GHSA-xxxx: old dependency CVE",
+            rule_id="sca-GHSA-xxxx", cwe="CWE-502", file_path="__sca__", matched_text="pkg:maven/a/b@1",
+            verdict="unverified", unresolved_reason="not_reviewed_sca_vex", issue_class="security",
+        ))
+        db.commit()
+
+    body, titles = _listed(client, scan_id)
+    assert titles == set(CASES) - HIDDEN
+    assert body["hidden_fp_count"] == len(HIDDEN)
+    assert body["unverified_count"] == 1  # only the "unresolved" case
+
+    sheet = load_workbook(BytesIO(client.get(f"/scans/{scan_id}/export.xlsx", headers=HDR).content))["Findings"]
+    issue = [c.value for c in sheet[1]].index("Issue")
+    assert {row[issue] for row in sheet.iter_rows(min_row=2, values_only=True)} == set(CASES) - HIDDEN
+
+    queue = client.get("/feedback", headers=HDR, params={"scan_id": scan_id, "limit": 500}).json()
+    assert {r["title"] for r in queue["items"]} == set(CASES) - HIDDEN
+
+    with db_module.SessionLocal() as db:
+        assert check_report_consistency(db, db.get(Scan, scan_id)) == []

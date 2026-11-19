@@ -63,24 +63,6 @@ def run_live_dast_enabled() -> bool:
     return settings.run_dast
 
 
-def run_sbom_in_sast_enabled() -> bool:
-    """Gate for the SBOM component inventory supplemental phase inside a SAST scan.
-    Reads RUN_SBOM_IN_SAST env var, falls back to settings.run_sbom_in_sast."""
-    env_flag = os.environ.get("RUN_SBOM_IN_SAST")
-    if env_flag is not None:
-        return env_flag.strip().lower() not in ("0", "false", "no", "off")
-    return settings.run_sbom_in_sast
-
-
-def run_sca_vex_enabled() -> bool:
-    """Gate for the SCA/VEX vulnerability analysis supplemental phase inside a SAST scan.
-    Reads RUN_SCA_VEX env var, falls back to settings.run_sca_vex."""
-    env_flag = os.environ.get("RUN_SCA_VEX")
-    if env_flag is not None:
-        return env_flag.strip().lower() not in ("0", "false", "no", "off")
-    return settings.run_sca_vex
-
-
 def run_iac_enabled() -> bool:
     """Gate for the IaC security scan supplemental phase inside a SAST scan.
     Reads RUN_IAC env var, falls back to settings.run_iac."""

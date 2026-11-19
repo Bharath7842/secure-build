@@ -1238,7 +1238,7 @@ UNRESOLVED_REASONS = frozenset({
     "explanation_contradiction",
     # Supplemental scans run as part of SAST (scan_type="sast"):
     "not_reviewed_iac",
-    "not_reviewed_sca_vex",
+    "not_reviewed_sca_vex",  # legacy only: old SAST scans' SCA/VEX rows
 })
 
 

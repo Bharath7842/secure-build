@@ -414,7 +414,8 @@ export interface ReachabilityStep {
   code: string;
 }
 
-/** `path` / `sanitized_path`: Code property graph expression-level taint path.
+/** `path` / `sanitized_path`: argument-level taint path (sast_engine
+ *  pipeline/taint_flows.py; older scans: the removed code-property-graph stage).
  *  `entry_reachable`: call-graph method chain from an entry point (weaker —
  *  doesn't show which value reaches the sink). */
 export interface Reachability {

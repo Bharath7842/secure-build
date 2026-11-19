@@ -4,6 +4,7 @@ import logging
 import time
 from pathlib import Path
 from threading import Lock, Timer
+from typing import Any
 
 logger = logging.getLogger("sbom.cache")
 
@@ -14,7 +15,7 @@ FLUSH_BATCH_SIZE = 20
 class ApiCache:
 
     def __init__(self, cache_dir: Path | None = None, ttl_seconds: int = 3600):
-        self._memory_cache: dict[str, tuple[float, any]] = {}
+        self._memory_cache: dict[str, tuple[float, Any]] = {}
         self._lock = Lock()
         self.ttl_seconds = ttl_seconds
 
@@ -26,13 +27,13 @@ class ApiCache:
 
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-        self._pending_writes: dict[str, any] = {}
+        self._pending_writes: dict[str, Any] = {}
         self._flush_timer: Timer | None = None
 
     def _make_key(self, url: str) -> str:
         return hashlib.sha256(url.encode()).hexdigest()
 
-    def _memory_get(self, key: str) -> any | None:
+    def _memory_get(self, key: str) -> Any | None:
         with self._lock:
             if key in self._memory_cache:
                 ts, value = self._memory_cache[key]
@@ -41,11 +42,11 @@ class ApiCache:
                 del self._memory_cache[key]
         return None
 
-    def _memory_set(self, key: str, value: any):
+    def _memory_set(self, key: str, value: Any):
         with self._lock:
             self._memory_cache[key] = (time.time(), value)
 
-    def _disk_get(self, key: str) -> any | None:
+    def _disk_get(self, key: str) -> Any | None:
         cache_file = self.cache_dir / f"{key}.json"
         if cache_file.exists():
             try:
@@ -57,7 +58,7 @@ class ApiCache:
                 pass
         return None
 
-    def _disk_set(self, key: str, value: any):
+    def _disk_set(self, key: str, value: Any):
         cache_file = self.cache_dir / f"{key}.json"
         try:
             data = {"ts": time.time(), "value": value}
@@ -81,7 +82,7 @@ class ApiCache:
         for key, value in pending.items():
             self._disk_set(key, value)
 
-    def _buffer_disk_write(self, key: str, value: any):
+    def _buffer_disk_write(self, key: str, value: Any):
         with self._lock:
             self._pending_writes[key] = value
             if len(self._pending_writes) >= FLUSH_BATCH_SIZE:
@@ -94,7 +95,7 @@ class ApiCache:
         for k, v in pending.items():
             self._disk_set(k, v)
 
-    def get(self, url: str) -> any | None:
+    def get(self, url: str) -> Any | None:
         key = self._make_key(url)
 
         value = self._memory_get(key)
@@ -108,7 +109,7 @@ class ApiCache:
 
         return None
 
-    def set(self, url: str, value: any):
+    def set(self, url: str, value: Any):
         key = self._make_key(url)
         self._memory_set(key, value)
         self._buffer_disk_write(key, value)

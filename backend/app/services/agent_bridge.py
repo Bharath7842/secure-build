@@ -232,6 +232,7 @@ def run_real_scan(
     suppress_low_confidence_false_positives = enabled("low-confidence-fp-suppressed")
     occurrence_validators = enabled("occurrence-validators")
     inter_file_flow = use_llm and enabled("inter-file-call-graph")
+    taint_flows = enabled("taint-flow-tracking")
     derive_runtime_rules = enabled("runtime-derived-regex")
     deep_scan_critical_only = enabled("deep-scan-critical-only")
     triage_mode = (
@@ -269,6 +270,7 @@ def run_real_scan(
         "suppress_low_confidence_false_positives": suppress_low_confidence_false_positives,
         "occurrence_validators": occurrence_validators,
         "inter_file_flow": inter_file_flow,
+        "taint_flows": taint_flows,
         "derive_runtime_rules": derive_runtime_rules,
         "deep_scan_critical_only": deep_scan_critical_only,
         "triage_mode": triage_mode,
