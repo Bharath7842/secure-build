@@ -1264,6 +1264,101 @@ _IAC_CATEGORY_OWASP: dict[str, str] = {
 }
 
 
+# Map the most common CWEs that appear in OSV/GHSA records to OWASP Top 10.
+# Used by _sca_to_findings to derive owasp_category from cwe_ids.
+_SCA_CWE_OWASP: dict[str, str] = {
+    "CWE-20": "A03:2021",   # Improper Input Validation
+    "CWE-22": "A01:2021",   # Path Traversal
+    "CWE-78": "A03:2021",   # OS Command Injection
+    "CWE-79": "A03:2021",   # XSS
+    "CWE-89": "A03:2021",   # SQL Injection
+    "CWE-94": "A03:2021",   # Code Injection
+    "CWE-200": "A02:2021",  # Information Exposure
+    "CWE-269": "A01:2021",  # Improper Privilege Management
+    "CWE-284": "A01:2021",  # Improper Access Control
+    "CWE-285": "A01:2021",  # Improper Authorization
+    "CWE-287": "A07:2021",  # Improper Authentication
+    "CWE-295": "A07:2021",  # Improper Certificate Validation
+    "CWE-306": "A07:2021",  # Missing Authentication
+    "CWE-311": "A02:2021",  # Missing Encryption
+    "CWE-326": "A02:2021",  # Inadequate Encryption Strength
+    "CWE-327": "A02:2021",  # Broken Crypto
+    "CWE-330": "A02:2021",  # Weak PRNG
+    "CWE-400": "A05:2021",  # Uncontrolled Resource Consumption
+    "CWE-434": "A04:2021",  # Unrestricted File Upload
+    "CWE-502": "A08:2021",  # Deserialization
+    "CWE-532": "A09:2021",  # Info Exposure via Log
+    "CWE-601": "A01:2021",  # Open Redirect
+    "CWE-611": "A05:2021",  # XXE
+    "CWE-770": "A05:2021",  # Resource Allocation
+    "CWE-798": "A07:2021",  # Hardcoded Credentials
+    "CWE-918": "A10:2021",  # SSRF
+}
+
+
+def _sca_to_findings(sca_result: dict) -> list[dict]:
+    """Convert sca_service output to Finding-dict format."""
+    from app.services.sca_service import MATCH_NOT_AFFECTED_BY_VERSION
+    findings: list[dict] = []
+    for entry in sca_result.get("vulnerabilities") or []:
+        purl = entry.get("purl", "")
+        pkg = entry.get("package_name") or purl
+        version = entry.get("version", "")
+        for vuln in entry.get("vulns") or []:
+            # Drop findings where version range evaluation confirmed not affected
+            match_status = vuln.get("match_status", "")
+            if match_status == MATCH_NOT_AFFECTED_BY_VERSION:
+                continue
+
+            vuln_id = vuln.get("id", "") or vuln.get("vulnerability_id", "")
+            description = vuln.get("summary") or vuln.get("details") or None
+            cwe_ids: list[str] = vuln.get("cwe_ids") or []
+            cwe = cwe_ids[0] if cwe_ids else None
+            owasp = next((_SCA_CWE_OWASP[c] for c in cwe_ids if c in _SCA_CWE_OWASP), None)
+            severity = vuln.get("severity") or "MEDIUM"
+            if severity == "UNKNOWN":
+                severity = "MEDIUM"
+
+            # Build a descriptive title: prefer CVE id, include summary when present
+            summary_text = vuln.get("summary") or ""
+            if summary_text and len(summary_text) > 120:
+                summary_text = summary_text[:117] + "…"
+            title = f"{vuln_id}: {summary_text}".strip(": ") if vuln_id else (summary_text or "Unknown vulnerability")
+
+            fixed = vuln.get("fixed_versions") or []
+            ai_fix = f"Upgrade to {', '.join(fixed[:3])}" if fixed else None
+
+            verdict_parts = [f"Package {pkg} {version}".strip()]
+            if match_status:
+                verdict_parts.append(f"match_status={match_status}")
+            cvss = vuln.get("cvss_score")
+            if cvss is not None:
+                verdict_parts.append(f"CVSS {cvss:.1f}")
+
+            findings.append({
+                "kind": "sca_vex",
+                "verdict": "unverified",
+                "unresolved_reason": "not_reviewed_sca_vex",
+                "issue_class": "security",
+                "rule_id": f"sca-{vuln_id}" if vuln_id else "sca-unknown",
+                "title": title,
+                "severity": severity,
+                "cvss": cvss,
+                "cvss_vector": vuln.get("cvss_vector") or None,
+                "cwe": cwe,
+                "owasp_category": owasp,
+                "file_path": "__sca__",
+                "matched_text": purl,
+                "snippet": description,
+                "verdict_reason": " — ".join(verdict_parts) if verdict_parts else None,
+                "source": None,
+                "sink": None,
+                "data_flow": None,
+                "ai_fix": ai_fix,
+            })
+    return findings
+
+
 def _iac_to_findings(raw_findings: list[dict]) -> list[dict]:
     """Normalize IaC query engine output to Finding-dict format."""
     findings: list[dict] = []

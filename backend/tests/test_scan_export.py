@@ -527,71 +527,68 @@ def test_sca_export_filenames_include_kind():
     assert names["xlsx"].endswith("-sca-v3.xlsx")
 
 
-def test_sca_pdf_uses_dependency_layout_not_sast_furniture():
+def test_sca_pdf_uses_sast_report_format():
     from pypdf import PdfReader
 
     project, scan, findings = _sca_sample()
     data = build_pdf_report(project, scan, findings)
     assert data[:4] == b"%PDF"
     text = "\n".join((page.extract_text() or "") for page in PdfReader(BytesIO(data)).pages)
-    assert "Dependency Vulnerability (SCA) Report" in text
-    assert "OSV.dev" in text
-    assert "ADVISORIES INDEX" in text
-    assert "DETAILED ADVISORIES" in text
-    assert "SUGGESTED UPGRADE" in text
-    assert "ADVISORY SUMMARY" in text
+    # SCA report now uses the unified SAST report format
+    assert "SCA Report" in text
+    assert "FINDINGS INDEX" in text
+    assert "DETAILED FINDINGS" in text
+    assert "OWASP DISTRIBUTION" in text
+    assert "QUALITY GATE" in text
+    # Finding content should appear (purl as location, advisory text as description)
     assert "requests@2.25.0" in text
     assert "CVE-2021-1234" in text
     assert "2.26.0" in text
-    assert "requirements.txt" in text
+    assert "request smuggling" in text
+    # SAST-only text that should NOT appear for SCA
     for sast_only in (
         "SAST Scan Report",
-        "QUALITY GATE",
-        "OWASP DISTRIBUTION",
         "CODE CONTEXT",
         "DATA FLOW",
         "EXAMPLE FIX",
         "Unverified (regex)",
         "Analysis engine",
     ):
-        assert sast_only not in text, f"SCA PDF still contains SAST furniture: {sast_only}"
+        assert sast_only not in text, f"SCA PDF contains unexpected SAST furniture: {sast_only}"
 
 
-def test_sca_excel_uses_dependency_columns():
+def test_sca_excel_uses_sast_report_format():
     project, scan, findings = _sca_sample()
     data = build_excel_report(project, scan, findings)
     assert data[:2] == b"PK"
     wb = load_workbook(BytesIO(data))
 
-    summary = wb["Summary"]
-    assert summary["A1"].value == "Secure Build — Dependency Vulnerability (SCA) Report"
-    labels = [summary.cell(r, 1).value for r in range(1, summary.max_row + 1)]
-    assert "Lookup source" in labels
-    assert "Vulnerable packages" in labels
-    assert "OWASP distribution" not in labels
-    assert "QUALITY GATE PASSED" not in labels
-    assert summary["A2"].value != "QUALITY GATE PASSED"
+    # SCA now uses unified SAST format: 3 sheets with verdict breakdown + OWASP
+    assert "Summary" in wb.sheetnames
+    assert "Findings" in wb.sheetnames
+    assert "Issue Groups" in wb.sheetnames
 
+    summary = wb["Summary"]
+    assert summary["A1"].value == "Secure Build — SCA Report"
+    labels = [summary.cell(r, 1).value for r in range(1, summary.max_row + 1)]
+    assert "OWASP distribution" in labels
+
+    # SAST-format Findings sheet has Scanner Verdict, CWE, CVSS, etc.
     sheet = wb["Findings"]
     headers = [cell.value for cell in sheet[1]]
-    assert headers == [
-        "#",
-        "Severity",
-        "Package",
-        "Advisory",
-        "CVSS",
-        "Manifest",
-        "Summary",
-        "Suggested fix",
-    ]
-    row = [cell.value for cell in sheet[2]]
-    assert row[1] == "CRITICAL"
-    assert row[2] == "requests@2.25.0"
-    assert row[3] == "CVE-2021-1234"
-    assert row[4] == 9.8
-    assert row[5] == "requirements.txt"
-    assert "request smuggling" in (row[6] or "")
-    assert "2.26.0" in (row[7] or "")
+    assert "Severity" in headers
+    assert "Scanner Verdict" in headers
+    assert "CWE" in headers
+    assert "CVSS" in headers
+    assert "Issue" in headers
+
+    # Finding data should appear in the sheet
+    row_values = [cell.value for cell in sheet[2]]
+    all_text = " ".join(str(v or "") for v in row_values)
+    assert "CRITICAL" in all_text
+    assert "9.8" in all_text or 9.8 in row_values
+    assert "CVE-2021-1234" in all_text
+    assert "2.26.0" in all_text or "request smuggling" in all_text
 
 
 def test_sca_empty_findings_still_exports():

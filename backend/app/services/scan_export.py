@@ -549,6 +549,9 @@ def _severity_text(finding: Finding) -> str:
 
 
 def _description_text(finding: Finding) -> str:
+    # SCA findings: use the advisory prose (snippet) as the primary description.
+    if (finding.kind or "") in ("sca", "sca_vex"):
+        return (finding.snippet or finding.verdict_reason or finding.title or "").strip()
     return (finding.verdict_reason or _risk_text(finding) or finding.title or "").strip()
 
 
@@ -616,6 +619,10 @@ def _reachability_text(finding: Finding) -> str:
 
 
 def _location_paths(finding: Finding) -> list[str]:
+    # SCA findings: use the purl (matched_text) as the location identifier.
+    if (finding.kind or "") in ("sca", "sca_vex"):
+        purl = (finding.matched_text or "").strip()
+        return [purl] if purl else []
     if finding.affected_files:
         return [to_module_path(p) or p for p in finding.affected_files if p]
     path = to_module_path(finding.file_path) or ""
@@ -685,6 +692,9 @@ def _location_paths_display(finding: Finding, *, max_paths: int = 8) -> str:
 def _location_code(finding: Finding) -> str:
     # Masked again on the way out: a scan stored before `secret-masking` (or with
     # it off) still must not put a credential value into a report (LLM02).
+    # SCA findings: snippet holds advisory prose, not source code — shown via description.
+    if (finding.kind or "") in ("sca", "sca_vex"):
+        return ""
     return secret_masking.mask_text((finding.snippet or "").strip())
 
 
@@ -1269,7 +1279,7 @@ def _xl_header_row(sheet: Any, row: int, headers: list[str], *, widths: list[int
             sheet.column_dimensions[get_column_letter(idx)].width = width
 
 
-def _build_summary_sheet(sheet: Any, project: Project, scan: Scan, gate: dict, counts: dict[str, Any]) -> None:
+def _build_summary_sheet(sheet: Any, project: Project, scan: Scan, gate: dict, counts: dict[str, Any], *, report_label: str = "SAST Scan Report") -> None:
     """Row positions are computed as we go. The previous version hardcoded
     `A14` for the severity header while the metadata block above it had a
     conditional extra row — one more metadata field would have overwritten it.
@@ -1282,7 +1292,7 @@ def _build_summary_sheet(sheet: Any, project: Project, scan: Scan, gate: dict, c
     label_font = Font(name="Calibri", size=11, color="64748B")
     value_font = Font(name="Calibri", size=11, color="152238")
 
-    sheet["A1"] = "Secure Build — SAST Scan Report"
+    sheet["A1"] = f"Secure Build — {report_label}"
     sheet["A1"].font = title_font
     sheet.merge_cells("A1:B1")
 
@@ -1713,8 +1723,6 @@ def build_excel_report(project: Project, scan: Scan, findings: list[Finding]) ->
         from app.services.dast_export import build_dast_xlsx  # lazy: dast_export builds on this module
 
         return build_dast_xlsx(project, scan, findings)
-    if _is_sca_scan(scan):
-        return _build_excel_sca_report(project, scan, findings)
     if _is_sbom_scan(scan):
         return _build_excel_sbom_report(project, scan)
 
@@ -1725,9 +1733,10 @@ def build_excel_report(project: Project, scan: Scan, findings: list[Finding]) ->
     gate = build_gate_summary(project, units, counts=counts)
     wb = Workbook()
 
+    _report_label = "SCA Report" if _is_sca_scan(scan) else "SAST Scan Report"
     summary = wb.active
     summary.title = "Summary"
-    _build_summary_sheet(summary, project, scan, gate, counts)
+    _build_summary_sheet(summary, project, scan, gate, counts, report_label=_report_label)
 
     _build_findings_sheet(wb.create_sheet("Findings"), units)
     _build_findings_sheet(wb.create_sheet("Issue Groups"), findings)
@@ -2840,8 +2849,6 @@ def build_pdf_report(project: Project, scan: Scan, findings: list[Finding]) -> b
         from app.services.dast_export import build_dast_pdf  # lazy: dast_export builds on this module
 
         return build_dast_pdf(project, scan, findings)
-    if _is_sca_scan(scan):
-        return _build_pdf_sca_report(project, scan, findings)
     if _is_sbom_scan(scan):
         return _build_pdf_sbom_report(project, scan)
 
@@ -2858,6 +2865,9 @@ def build_pdf_report(project: Project, scan: Scan, findings: list[Finding]) -> b
     top, bottom = 12 * mm, 18 * mm
     content_width = page[0] - left - right
 
+    _is_sca = _is_sca_scan(scan)
+    report_label = "SCA Report" if _is_sca else "SAST Scan Report"
+    report_subject = "Software composition analysis report" if _is_sca else "Static application security testing report"
     doc = SimpleDocTemplate(
         buf,
         pagesize=page,
@@ -2865,16 +2875,16 @@ def build_pdf_report(project: Project, scan: Scan, findings: list[Finding]) -> b
         rightMargin=right,
         topMargin=top,
         bottomMargin=bottom,
-        title=f"{project.name} — Secure Build SAST Report v{scan.version}",
+        title=f"{project.name} — Secure Build {report_label} v{scan.version}",
         author="Secure Build",
-        subject="Static application security testing report",
+        subject=report_subject,
     )
 
     styles = _build_styles()
     story: list[Any] = [
         _Bookmark("Summary", "summary"),
         Paragraph(_esc(project.name or "Application"), styles["ReportTitle"]),
-        Paragraph(f"Secure Build — SAST Scan Report&nbsp;&nbsp;·&nbsp;&nbsp;v{scan.version}"
+        Paragraph(f"Secure Build — {report_label}&nbsp;&nbsp;·&nbsp;&nbsp;v{scan.version}"
                   f"&nbsp;&nbsp;·&nbsp;&nbsp;{_esc(_fmt_dt(scan.created_at))}", styles["ReportSub"]),
     ]
 
