@@ -1,31 +1,19 @@
 """sca_scan.py — deterministic Software Composition Analysis (SCA) pipeline.
 
-MVP scope: walks the repo for dependency manifests already recognized by
-`manifest_parsers.py`, batch-queries OSV.dev for known vulnerabilities
-against each declared dependency, and turns hits into `Finding`-shaped
-dicts (`kind="sca"`). Pure Python (stdlib + `requests`) — no LangGraph, no
-LLM, no boto3 — so it never needs the dynamic `agent_bridge` loader the
-SAST engine requires, and the mock-engine test suite never touches it at
-all unless a test explicitly imports it.
-
-Explicitly deferred (see the SCA plan): cdxgen-based SBOM generation, NVD/
-deps.dev enrichment, Maven `dependency:tree` compatibility checking,
-lockfile/transitive dependency resolution, LLM-generated developer
-comments. All of those can layer on top of this module later without
-touching its public functions.
+Component discovery delegates to the same sbom_app pipeline nodes used by the
+SBOM scan (ecosystem → dependency → normalize, no network calls) so both scans
+always agree on the component inventory.  OSV.dev vulnerability lookup and
+finding construction are self-contained here.
 """
 
 from __future__ import annotations
 
 import math
-import os
 import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
-
-from . import manifest_parsers
 
 OSV_QUERY_BATCH_URL = "https://api.osv.dev/v1/querybatch"
 OSV_VULN_URL = "https://api.osv.dev/v1/vulns/{id}"
@@ -37,33 +25,34 @@ OSV_DETAIL_TIMEOUT = 15
 # advisory history from dominating scan time.
 MAX_VULNS_PER_DEPENDENCY = 20
 
-# Same directory-walk guard spirit as sast_scan_agent.DEFAULT_SKIP_DIRS, kept
-# as a small independent copy here rather than importing that module (which
-# pulls in langgraph/boto3 at import time — exactly what this module exists
-# to avoid needing).
-_SKIP_DIRS_LOWER = {
-    ".git", ".svn", ".hg",
-    "node_modules", "bower_components", "vendor",
-    "target", "build", "dist", "out", "bin", "obj",
-    "__pycache__", ".mypy_cache", ".pytest_cache",
-    ".venv", "venv", "env",
-    ".idea", ".vscode", ".vs",
-    ".gradle", ".mvn", ".angular", ".next", "coverage",
-}
-
-# Same bound dependency_scan.py uses for its own manifest walk.
-_MAX_MANIFESTS = 300
-
-# manifest_parsers.py's lowercase ecosystem key -> OSV.dev's ecosystem name.
+# Ecosystem key (from SBOM collectors or old manifest_parsers) -> OSV.dev ecosystem name.
+# Covers every alias the sbom_app collectors emit so SCA and SBOM agree on identity.
 _OSV_ECOSYSTEM_MAP = {
-    "maven": "Maven",
-    "npm": "npm",
-    "pypi": "PyPI",
-    "go": "Go",
-    "rubygems": "RubyGems",
-    "packagist": "Packagist",
-    "nuget": "NuGet",
-    "cratesio": "crates.io",
+    # Maven / JVM
+    "maven": "Maven", "gradle": "Maven", "kotlin": "Maven",
+    "sbt": "Maven", "scala": "Maven", "clojure": "Maven",
+    # npm
+    "npm": "npm", "deno": "npm",
+    # Python
+    "pypi": "PyPI", "python": "PyPI",
+    # Go
+    "go": "Go", "golang": "Go",
+    # Rust
+    "cratesio": "crates.io", "cargo": "crates.io", "rust": "crates.io",
+    # Ruby
+    "rubygems": "RubyGems", "ruby": "RubyGems",
+    # PHP
+    "packagist": "Packagist", "composer": "Packagist", "php": "Packagist",
+    # .NET
+    "nuget": "NuGet", "dotnet": "NuGet",
+    # Dart / Flutter
+    "pub": "Pub", "dart": "Pub",
+    # Elixir
+    "hex": "Hex", "elixir": "Hex",
+    # R
+    "cran": "CRAN", "r": "CRAN",
+    # Haskell
+    "hackage": "Hackage", "haskell": "Hackage",
 }
 
 _SEVERITY_ORDER = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN")
@@ -75,79 +64,59 @@ _SEVERITY_RANK = {level: idx for idx, level in enumerate(_SEVERITY_ORDER)}
 # ===========================================================================
 
 
-def walk_repo_files(repo_root: Path) -> Dict[str, Any]:
-    """Minimal directory walk producing the ``{"files": [...]}`` shape
-    `manifest_parsers`/this module's own helpers expect — a stripped-down
-    sibling of `sast_scan_agent.node_scan_directory`'s walk, without the
-    tracer/AST/categorization machinery SCA doesn't need."""
-    files: List[Dict[str, Any]] = []
-    for current_root, dirnames, filenames in os.walk(repo_root):
-        pruned = [d for d in dirnames if d.lower() in _SKIP_DIRS_LOWER or d.startswith(".")]
-        for d in pruned:
-            dirnames.remove(d)
-        rel_dir = os.path.relpath(current_root, repo_root)
-        rel_dir = "" if rel_dir == "." else rel_dir.replace(os.sep, "/")
-        for fname in filenames:
-            ext = os.path.splitext(fname)[1].lower()
-            rel_path = f"{rel_dir}/{fname}" if rel_dir else fname
-            files.append({"path": rel_path, "name": fname, "ext": ext})
-    return {"files": files}
-
-
-def _find_manifest_files(scan: Dict[str, Any]) -> List[Dict[str, Any]]:
-    names = set(manifest_parsers.PARSERS_BY_FILENAME)
-    exts = set(manifest_parsers.PARSERS_BY_EXT)
-    return [f for f in scan["files"] if f["name"] in names or f["ext"] in exts]
-
-
-def _read_text(repo_root: Path, rel_path: str) -> Optional[str]:
-    try:
-        return (repo_root / rel_path).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-
-
 def collect_dependencies(repo_root: Path) -> List[Dict[str, Any]]:
-    """Walks the repo and parses every recognized manifest, returning a flat,
-    deduped list of ``{"ecosystem", "name", "version", "scope", "source_file"}``.
+    """Collect all components from *repo_root* using the same SBOM pipeline
+    nodes (ecosystem → dependency → normalize, no network calls) so SCA and
+    SBOM always agree on the component inventory.
 
-    Deliberately a *sibling* of `dependency_scan.analyze_dependencies`, not a
-    caller of it — that function's final `declared_dependencies` output
-    drops `ecosystem` (fine for its own stack-detection use case, since rule
-    `requires_dependency` conditions match on name+version only), which SCA
-    needs in order to build correct OSV.dev queries.
+    Returns a flat, deduped list of dicts with at least:
+    ``{"ecosystem", "name", "version", "scope", "source_file", "group",
+       "direct", "purl"}``.
+
+    The deduplication key is (ecosystem, name, version) — identical to the
+    old manifest_parsers-based approach — so OSV query batching is unaffected.
     """
-    repo_root = Path(repo_root)
-    scan = walk_repo_files(repo_root)
-    manifest_files = _find_manifest_files(scan)[:_MAX_MANIFESTS]
+    from app.services.sbom_app.nodes.ecosystem import ecosystem_node
+    from app.services.sbom_app.nodes.dependency import dependency_node
+    from app.services.sbom_app.nodes.normalize import normalize_node
 
-    # Pre-read pom.xml <properties> across the whole repo so a child module's
-    # ${property} placeholders can resolve against a parent pom found
-    # elsewhere in the walk (best-effort, mirrors dependency_scan.py).
-    merged_pom_properties: Dict[str, str] = {}
-    for f in manifest_files:
-        if f["name"] != "pom.xml":
-            continue
-        text = _read_text(repo_root, f["path"])
-        if text:
-            merged_pom_properties.update(manifest_parsers.extract_pom_properties(text))
+    repo_root = Path(repo_root)
+    state: Dict[str, Any] = {
+        "repository_path": str(repo_root),
+        "scan_id": "",
+        "source_type": "local",
+        "warnings": [],
+        "errors": [],
+    }
+    state.update(ecosystem_node(state))
+    state.update(dependency_node(state))
+    state.update(normalize_node(state))
 
     deps: List[Dict[str, Any]] = []
     seen: set = set()
-    for f in manifest_files:
-        text = _read_text(repo_root, f["path"])
-        if text is None:
+    for comp in state.get("components") or []:
+        name = comp.get("name") or ""
+        ecosystem = comp.get("ecosystem") or ""
+        if not name or not ecosystem:
             continue
-        if f["name"] == "pom.xml":
-            parsed = manifest_parsers.parse_pom_xml(text, merged_pom_properties)
-        else:
-            parsed = manifest_parsers.parse_manifest(f["name"], f["ext"], text)
-        for dep in parsed:
-            key = (dep["ecosystem"], dep["name"], dep.get("version"))
-            if key in seen:
-                continue
-            seen.add(key)
-            deps.append({**dep, "source_file": f["path"]})
+        version = comp.get("version")
+        group = comp.get("group") or ""
+        # Include group in the key so two Maven artifacts with the same
+        # artifactId but different groupIds are not collapsed.
+        key = (ecosystem, group, name, version)
+        if key in seen:
+            continue
+        seen.add(key)
+        deps.append({
+            "ecosystem": ecosystem,
+            "name": name,
+            "version": version,
+            "scope": comp.get("scope") or "",
+            "source_file": comp.get("source_file") or "",
+            "group": comp.get("group") or "",
+            "direct": comp.get("direct", True),
+            "purl": comp.get("purl") or "",
+        })
     return deps
 
 
@@ -173,9 +142,17 @@ def build_osv_query(dependency: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     version = _clean_version(dependency.get("version"))
     if not osv_ecosystem or not dependency.get("name") or not version:
         return None
+    name = dependency["name"]
+    # OSV Maven packages are identified as "groupId:artifactId"; the SBOM
+    # pipeline splits them into separate `group` + `name` fields, so we
+    # recombine here before the query.
+    if osv_ecosystem == "Maven":
+        group = dependency.get("group") or ""
+        if group and not name.startswith(f"{group}:"):
+            name = f"{group}:{name}"
     return {
         "version": version,
-        "package": {"name": dependency["name"], "ecosystem": osv_ecosystem},
+        "package": {"name": name, "ecosystem": osv_ecosystem},
     }
 
 
@@ -352,9 +329,11 @@ def build_findings(dependencies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             vuln_id = full.get("id") or stub.get("id") or "UNKNOWN"
             rule_id = cve or vuln_id
             summary = (full.get("summary") or full.get("details") or "").strip()
-            pkg_label = f"{dependency['name']}@{dependency.get('version') or 'unknown'}"
+            group = dependency.get("group") or ""
+            pkg_name = f"{group}:{dependency['name']}" if group else dependency["name"]
+            pkg_label = f"{pkg_name}@{dependency.get('version') or 'unknown'}"
             ai_fix = (
-                f"Upgrade {dependency['name']} to {fixed_versions[0]} or later."
+                f"Upgrade {pkg_name} to {fixed_versions[0]} or later."
                 if fixed_versions
                 else "No fixed version published yet — track the advisory for an upgrade path."
             )
@@ -425,11 +404,12 @@ def run_sca_scan(
         for file_path, file_findings in findings_by_file.items():
             findings_writer(file_path, file_findings)
 
-    vulnerable_names = {f["matched_text"].rsplit("@", 1)[0] for f in findings if f.get("matched_text")}
+    vulnerable_pkg_versions = {f["matched_text"] for f in findings if f.get("matched_text")}
     discovery = {
         "dependency_summary": {
             "total_dependencies": len(dependencies),
-            "vulnerable_dependencies": len(vulnerable_names),
+            "vulnerable_dependencies": len(vulnerable_pkg_versions),
+            "total_advisories": len(findings),
             "manifests_parsed": sorted(
                 {d["source_file"] for d in dependencies if d.get("source_file")}
             ),

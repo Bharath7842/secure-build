@@ -280,7 +280,7 @@ def test_pdf_findings_include_section_labels_and_summary_furniture():
     for label in (
         "DESCRIPTION",
         "DATA FLOW",
-        "AFFECTED LOCATION(S)",
+        "AFFECTED COMPONENTS",
         "CODE CONTEXT",
         "RISK",
         "RECOMMENDATION",
@@ -538,8 +538,9 @@ def test_sca_pdf_uses_sast_report_format():
     assert "SCA Report" in text
     assert "FINDINGS INDEX" in text
     assert "DETAILED FINDINGS" in text
-    assert "OWASP DISTRIBUTION" in text
     assert "QUALITY GATE" in text
+    # SCA reports omit the OWASP distribution table
+    assert "OWASP DISTRIBUTION" not in text
     # Finding content should appear (purl as location, advisory text as description)
     assert "requests@2.25.0" in text
     assert "CVE-2021-1234" in text

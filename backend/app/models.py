@@ -165,6 +165,7 @@ UNRESOLVED_REASONS = frozenset(
         "not_reviewed_regex",
         "not_reviewed_joern",
         "not_reviewed_sca",
+        "not_reviewed_sbom",
         "llm_missing_verdict",
         "llm_unrecognised_verdict",
         "llm_call_failed",

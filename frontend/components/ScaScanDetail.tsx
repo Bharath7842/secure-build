@@ -5,9 +5,10 @@ import { useEffect, useState } from "react";
 
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import ScanExportButtons from "@/components/ScanExportButtons";
+import ScanFindingsPanel from "@/components/ScanFindingsPanel";
 import ScanStatusBadge from "@/components/ScanStatusBadge";
 import { ApiError, api } from "@/lib/api";
-import type { Finding, Project, ScaDiscovery, Scan, ScanStatus } from "@/lib/types";
+import type { Project, ScaDiscovery, Scan, ScanReport, ScanStatus } from "@/lib/types";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { canStopScan } from "@/lib/access";
 
@@ -83,7 +84,6 @@ export default function ScaScanDetail({ scanId }: ScaScanDetailProps) {
   const [project, setProject] = useState<Project | null>(null);
   const [scanRecord, setScanRecord] = useState<Scan | null>(null);
   const [discovery, setDiscovery] = useState<ScaDiscovery | null>(null);
-  const [findings, setFindings] = useState<Finding[]>([]);
   const [resultsError, setResultsError] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState<string | null>(null);
@@ -182,36 +182,6 @@ export default function ScaScanDetail({ scanId }: ScaScanDetailProps) {
     };
   }, [scanId, status]);
 
-  useEffect(() => {
-    if (!status) return;
-    const terminal = isTerminalStatus(status.status);
-    let active = true;
-    let interval: ReturnType<typeof setInterval> | null = null;
-
-    async function loadFindings() {
-      try {
-        const data = await api.scans.findings(scanId);
-        if (!active) return;
-        setFindings(data.findings);
-        if (terminal && interval) {
-          clearInterval(interval);
-          interval = null;
-        }
-      } catch {
-        // Best-effort — the summary cards above still render from discovery.
-      }
-    }
-
-    loadFindings();
-    if (!terminal) {
-      interval = setInterval(loadFindings, POLL_INTERVAL_MS);
-    }
-    return () => {
-      active = false;
-      if (interval) clearInterval(interval);
-    };
-  }, [scanId, status]);
-
   async function stopScan() {
     if (!(await confirm({ message: "Stop this scan?", confirmLabel: "Stop" }))) return;
     setStopping(true);
@@ -244,7 +214,7 @@ export default function ScaScanDetail({ scanId }: ScaScanDetailProps) {
   }
 
   const terminal = isTerminalStatus(status.status);
-  const canExport = terminal && findings.length > 0;
+  const canExport = terminal && discovery !== null;
   const severityCounts = discovery?.dependency_summary.severity_counts ?? null;
 
   return (
@@ -325,8 +295,8 @@ export default function ScaScanDetail({ scanId }: ScaScanDetailProps) {
             <SummaryStat label="Dependencies" value={discovery.dependency_summary.total_dependencies} />
             <SummaryStat
               label="Vulnerable"
-              value={discovery.dependency_summary.vulnerable_dependencies}
-              tone={discovery.dependency_summary.vulnerable_dependencies > 0 ? "warn" : undefined}
+              value={discovery.dependency_summary.total_advisories ?? discovery.dependency_summary.vulnerable_dependencies}
+              tone={(discovery.dependency_summary.total_advisories ?? discovery.dependency_summary.vulnerable_dependencies) > 0 ? "warn" : undefined}
             />
             <SummaryStat label="Manifests" value={discovery.dependency_summary.manifests_parsed.length} />
             <SummaryStat
@@ -350,50 +320,7 @@ export default function ScaScanDetail({ scanId }: ScaScanDetailProps) {
       )}
 
       <div className="mt-8">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">
-          Vulnerabilities ({findings.length})
-        </h2>
-        {findings.length === 0 ? (
-          <p className="mt-3 text-sm text-[var(--muted)]">
-            {terminal ? "No known vulnerabilities found in declared dependencies." : "Scanning…"}
-          </p>
-        ) : (
-          <table className="mt-4 w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-[var(--muted)]">
-                <th className="py-2 font-medium">Severity</th>
-                <th className="py-2 font-medium">Package</th>
-                <th className="py-2 font-medium">Advisory</th>
-                <th className="py-2 font-medium">CVSS</th>
-                <th className="py-2 font-medium">Manifest</th>
-                <th className="py-2 font-medium">Suggested fix</th>
-              </tr>
-            </thead>
-            <tbody>
-              {findings.map((finding) => (
-                <tr key={finding.id} className="border-b border-slate-100 align-top">
-                  <td className="py-3">
-                    <SeverityBadge severity={finding.severity} />
-                  </td>
-                  <td className="py-3 font-mono text-xs text-[var(--ink)]">
-                    {finding.matched_text ?? "—"}
-                  </td>
-                  <td className="py-3 text-[var(--ink)]">
-                    <div className="font-medium">{finding.rule_id ?? "—"}</div>
-                    {finding.snippet && (
-                      <div className="mt-1 max-w-md text-xs text-[var(--muted)]">{finding.snippet}</div>
-                    )}
-                  </td>
-                  <td className="py-3 text-[var(--muted)]">
-                    {finding.cvss != null ? finding.cvss.toFixed(1) : "—"}
-                  </td>
-                  <td className="py-3 text-xs text-[var(--muted)]">{finding.file_path ?? "—"}</td>
-                  <td className="py-3 text-xs text-[var(--muted)]">{finding.ai_fix ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <ScanFindingsPanel scanId={scanId} report={{} as ScanReport} live={!terminal} />
       </div>
     </div>
   );

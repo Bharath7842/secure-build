@@ -19,12 +19,24 @@ from .nodes.license import license_node
 
 logger = logging.getLogger("sbom.service")
 
+# Errors from these nodes are fatal — no manifests means nothing to scan.
+_FATAL_ERROR_NODES = {"ecosystem"}
+
+
+def _has_fatal_error(state: SBOMState) -> bool:
+    """Return True if any error came from a node whose failure is unrecoverable."""
+    for error in state.get("errors", []):
+        if error.get("node", "") in _FATAL_ERROR_NODES:
+            return True
+    return False
+
 
 def run_sbom(repository_path: str) -> dict:
     """Run the full SBOM pipeline on *repository_path* (includes license lookup).
 
     Returns the merged SBOMState dict on success, or a dict with
     ``{"error": <message>}`` when an unhandled exception occurs.
+    Aborts early if ecosystem detection produces a fatal error (no manifests found).
     """
     try:
         state: SBOMState = {
@@ -37,6 +49,9 @@ def run_sbom(repository_path: str) -> dict:
 
         # Node 1: detect ecosystems and manifest/lockfile paths
         state.update(ecosystem_node(state))
+        if _has_fatal_error(state):
+            logger.warning("SBOM pipeline aborted after ecosystem node: %s", state.get("errors"))
+            return dict(state)
 
         # Node 2: collect raw dependency sightings
         state.update(dependency_node(state))
@@ -66,6 +81,7 @@ def run_sbom_fast(repository_path: str) -> dict:
     and package purls, not full license metadata.
 
     Returns the merged SBOMState dict on success, or ``{"error": ...}`` on failure.
+    Aborts early if ecosystem detection produces a fatal error.
     """
     try:
         state: SBOMState = {
@@ -77,6 +93,10 @@ def run_sbom_fast(repository_path: str) -> dict:
         }
 
         state.update(ecosystem_node(state))
+        if _has_fatal_error(state):
+            logger.warning("SBOM fast pipeline aborted after ecosystem node: %s", state.get("errors"))
+            return dict(state)
+
         state.update(dependency_node(state))
         state.update(normalize_node(state))
         state.update(dependency_graph_node(state))

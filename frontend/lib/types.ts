@@ -930,6 +930,7 @@ export interface ScaDependency {
 export interface ScaDependencySummary {
   total_dependencies: number;
   vulnerable_dependencies: number;
+  total_advisories?: number;
   manifests_parsed: string[];
   ecosystems: string[];
   severity_counts: Record<"CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN", number>;

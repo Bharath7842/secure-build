@@ -27,7 +27,8 @@ def test_collect_dependencies_parses_requirements_txt(tmp_path: Path):
 
     by_name = {d["name"]: d for d in deps}
     assert by_name["requests"]["ecosystem"] == "pypi"
-    assert by_name["requests"]["version"] == "==2.25.0"
+    # SBOM pipeline normalizes versions — operators like == are stripped.
+    assert by_name["requests"]["version"] == "2.25.0"
     assert by_name["requests"]["source_file"] == "requirements.txt"
     assert "flask" in by_name
 
@@ -65,7 +66,9 @@ def test_collect_dependencies_parses_pom_xml(tmp_path: Path):
 
     assert len(deps) == 1
     assert deps[0]["ecosystem"] == "maven"
-    assert deps[0]["name"] == "org.springframework:spring-core"
+    # SBOM pipeline splits Maven coordinates into separate group + name fields.
+    assert deps[0]["name"] == "spring-core"
+    assert deps[0]["group"] == "org.springframework"
     assert deps[0]["version"] == "5.3.0"
     assert deps[0]["source_file"] == "pom.xml"
 

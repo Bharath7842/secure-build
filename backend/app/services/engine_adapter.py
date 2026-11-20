@@ -172,22 +172,19 @@ def run_sbom_scan(
     workspace=None,
     scan_id: str | None = None,
     discovery_writer: Callable[[dict], None] | None = None,
+    findings_writer: Callable[[str, list[dict]], None] | None = None,
 ) -> ScanRunResult:
-    """SBOM counterpart to `run_sca_scan` — deterministic manifest-parsing +
-    PURL/deps.dev-license classification + CycloneDX/SPDX build
-    (`sast_engine/pipeline/sbom_scan.py`), no LangGraph involved. Unlike SCA,
-    this path does make one LLM detour: `run_sbom_llm_enrichment_enabled()`
-    gates a best-effort Bedrock Claude Haiku supplier/license/type fill-in
-    for whatever deps.dev + the static tables left unresolved (see
-    `sbom_scan.llm_enrich_components`) — mock scans never reach it, and it
-    fails open (never raises) even when live. Mirrors the same mock/live
-    gating so the test suite never hits the network regardless of which
-    scan_type is exercised. Produces no findings — SBOM has no
-    vulnerability-detection step of its own."""
+    """SBOM scan using the richer sbom_app pipeline (ClearlyDefined license
+    lookup, lockfile-aware transitive dependency resolution, LicenseDetector
+    text scanning) rather than the older deps.dev-only path. Emits a Finding
+    row per component (kind="sbom") so reviewers can resolve/accept-risk each
+    one via the same workflow as SAST/SCA."""
     if mock_engine_enabled():
         discovery = _mock_sbom_discovery(project)
         if discovery_writer:
             discovery_writer(discovery)
+        if findings_writer:
+            _emit_sbom_findings(discovery["components"], findings_writer)
         return {"discovery": discovery}
 
     if not run_live_sbom_enabled():
@@ -202,14 +199,196 @@ def run_sbom_scan(
             "git_workspace.ensure_workspace must run before the SBOM engine adapter."
         )
 
-    from sast_engine.pipeline import sbom_scan
+    from app.services.sbom_app.service import run_sbom as _run_sbom_app
+    from sast_engine.pipeline import sbom_scan as _sbom_scan_legacy
 
-    return sbom_scan.run_sbom_scan(
-        repo_root=workspace,
-        scan_id=scan_id,
-        discovery_writer=discovery_writer,
-        use_llm_enrichment=run_sbom_llm_enrichment_enabled(),
+    state = _run_sbom_app(str(workspace))
+    if "error" in state:
+        raise RuntimeError(f"SBOM pipeline failed: {state['error']}")
+
+    discovery = _sbom_app_state_to_discovery(state, scan_id or "sbom-scan", _sbom_scan_legacy)
+    if discovery_writer:
+        discovery_writer(discovery)
+    if findings_writer:
+        _emit_sbom_findings(discovery["components"], findings_writer)
+    return {"discovery": discovery}
+
+
+def _emit_sbom_findings(
+    components: list[dict[str, Any]],
+    findings_writer: Callable[[str, list[dict]], None],
+) -> None:
+    """Write one Finding row per SBOM component so reviewers can resolve/accept
+    each one.  Groups by manifest file (the same per-file contract SCA uses).
+
+    Every component gets a finding regardless of its license classification so
+    users can mark even fully-free dependencies as reviewed.  Severity is
+    derived from cost_classification:
+      fully_paid    → HIGH  (commercial license, may require payment)
+      partially_free → MEDIUM (mixed terms)
+      unknown       → LOW   (license undetermined, needs investigation)
+      fully_free    → INFO  (permissive / open-source, no concern)
+    """
+    _COST_SEVERITY: dict[str, str] = {
+        "fully_paid": "HIGH",
+        "partially_free": "MEDIUM",
+        "unknown": "LOW",
+        "fully_free": "INFO",
+    }
+    findings_by_file: dict[str, list[dict]] = {}
+    for comp in components:
+        name = comp.get("name") or ""
+        version = comp.get("version") or ""
+        ecosystem = comp.get("ecosystem") or ""
+        group = comp.get("group") or ""
+        purl = comp.get("purl") or comp.get("bom-ref") or f"{ecosystem}:{name}@{version}"
+        cost_cls = comp.get("cost_classification") or "unknown"
+        severity = _COST_SEVERITY.get(cost_cls, "LOW")
+        source_file = comp.get("source_file") or ""
+
+        license_entries = comp.get("licenses") or []
+        license_name = ""
+        if license_entries:
+            lic = license_entries[0]
+            license_name = lic.get("name") or lic.get("spdx_id") or ""
+
+        display_name = f"{group}/{name}" if group else name
+        title = f"{display_name}@{version}"
+        if license_name and license_name not in ("Unknown License", "LicenseRef-unknown"):
+            title += f" — {license_name}"
+        elif cost_cls != "fully_free":
+            title += f" — {cost_cls.replace('_', ' ').title()} license"
+
+        finding: dict[str, Any] = {
+            "severity": severity,
+            "rule_id": "sbom-component",
+            "title": title[:500],
+            "file_path": source_file,
+            "matched_text": purl[:500],
+            "snippet": f"License: {license_name or 'Unknown'} | Cost: {cost_cls} | Scope: {comp.get('scope') or 'runtime'}",
+            "kind": "sbom",
+            "verdict": "unverified",
+            "issue_class": "quality",
+            "unresolved_reason": "not_reviewed_sbom",
+        }
+        findings_by_file.setdefault(source_file, []).append(finding)
+
+    for file_path, file_findings in findings_by_file.items():
+        findings_writer(file_path, file_findings)
+
+
+def _sbom_app_state_to_discovery(state: dict, scan_id: str, sbom_scan_module: Any) -> dict:
+    """Bridge: convert sbom_app pipeline state → the discovery dict shape that
+    scan_runner._execute_sbom_scan and the SbomDiscovery TypeScript type expect.
+
+    Components are built by joining state["components"] (normalized dependency
+    dicts) with state["licenses"] (ClearlyDefined-enriched license records) on
+    purl. CycloneDX and SPDX are built via the existing sbom_scan builders so
+    the output format is unchanged from the caller's perspective.
+    """
+    raw_components: list[dict] = state.get("components") or []
+    license_records: list[dict] = state.get("licenses") or []
+
+    # Build a purl → license record lookup for O(1) joins.
+    license_by_purl: dict[str, dict] = {
+        r["purl"]: r for r in license_records if r.get("purl")
+    }
+
+    def _origin_type(license_type: str) -> str:
+        return "Proprietary" if license_type == "proprietary" else "Open Source"
+
+    def _dep_relationship(comp: dict) -> str:
+        scope = (comp.get("scope") or "").strip().lower()
+        if scope in ("dev", "development", "devdependencies"):
+            return "Direct (Dev)"
+        if scope == "peer":
+            return "Direct (Peer)"
+        if scope == "provided":
+            return "Direct (Provided)"
+        if comp.get("direct") is False:
+            return "Transitive"
+        return "Direct"
+
+    components: list[dict] = []
+    for comp in raw_components:
+        purl = comp.get("purl") or ""
+        name = comp.get("name") or ""
+        version = comp.get("version")
+        ecosystem = comp.get("ecosystem") or ""
+        group = comp.get("group") or None
+
+        # Strip maven group prefix embedded in name (e.g. "org.springframework:spring-core")
+        if ":" in name and not group:
+            group, _, name = name.partition(":")
+
+        bom_ref = purl or f"{ecosystem}:{comp.get('name', '')}@{version}"
+        lic = license_by_purl.get(purl)
+
+        spdx_id = ""
+        license_name = ""
+        cost_cls = "unknown"
+        vendor = comp.get("vendor")
+        origin = "Open Source"
+
+        if lic:
+            spdx_id = lic.get("spdx_id") or ""
+            license_name = lic.get("license_name") or spdx_id
+            cost_cls = lic.get("cost_classification") or "unknown"
+            vendor = lic.get("vendor") or vendor
+            origin = _origin_type(lic.get("license_type") or "")
+        elif comp.get("license"):
+            # Collector provided a raw license string — use it as a fallback.
+            raw_lic = str(comp["license"])
+            spdx_id = raw_lic
+            license_name = raw_lic
+
+        components.append({
+            "bom-ref": bom_ref,
+            "type": "library",
+            "name": name,
+            "version": version,
+            "purl": purl or None,
+            "group": group,
+            "ecosystem": ecosystem,
+            "scope": comp.get("scope") or "runtime",
+            "source_file": comp.get("source_file"),
+            "licenses": [{"spdx_id": spdx_id, "name": license_name}] if spdx_id or license_name else [],
+            "cost_classification": cost_cls,
+            "vendor": vendor,
+            "origin_type": origin,
+            "dependency_relationship": _dep_relationship(comp),
+            "direct": bool(comp.get("direct", True)),
+        })
+
+    # License summary counts by cost_classification bucket.
+    def _license_summary(comps: list[dict]) -> dict:
+        counts: dict[str, int] = {"fully_free": 0, "partially_free": 0, "fully_paid": 0, "unknown": 0}
+        for c in comps:
+            bucket = c.get("cost_classification", "unknown")
+            counts[bucket] = counts.get(bucket, 0) + 1
+        return counts
+
+    sbom_cyclonedx = sbom_scan_module.build_cyclonedx_sbom(components, scan_id) if components else None
+    sbom_spdx = sbom_scan_module.build_spdx_sbom(components, scan_id) if components else None
+
+    ecosystems: list[str] = state.get("ecosystems") or sorted(
+        {c["ecosystem"] for c in components if c.get("ecosystem")}
     )
+    manifests: list[str] = state.get("dependency_files") or sorted(
+        {c["source_file"] for c in components if c.get("source_file")}
+    )
+
+    return {
+        "component_summary": {
+            "total_components": len(components),
+            "ecosystems": ecosystems,
+            "manifests_parsed": manifests,
+            "license_summary": _license_summary(components),
+        },
+        "components": components,
+        "sbom_cyclonedx": sbom_cyclonedx,
+        "sbom_spdx": sbom_spdx,
+    }
 
 
 def _oast_url() -> str | None:

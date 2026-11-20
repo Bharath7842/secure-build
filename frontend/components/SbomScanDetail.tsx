@@ -40,22 +40,6 @@ const COST_LABELS: Record<string, string> = {
   unknown: "Unknown",
 };
 
-const TYPE_STYLES: Record<string, string> = {
-  "Open Source": "border-emerald-200 bg-emerald-50 text-emerald-700",
-  Proprietary: "border-red-200 bg-red-50 text-red-700",
-  Internal: "border-slate-200 bg-slate-50 text-slate-600",
-};
-
-function TypeBadge({ type }: { type: string }) {
-  const style = TYPE_STYLES[type] ?? TYPE_STYLES["Open Source"];
-  return (
-    <span
-      className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium ${style}`}
-    >
-      {type}
-    </span>
-  );
-}
 
 function CostBadge({ classification }: { classification: SbomCostClassification }) {
   const style = COST_STYLES[classification] ?? COST_STYLES.unknown;
@@ -69,11 +53,29 @@ function CostBadge({ classification }: { classification: SbomCostClassification 
   );
 }
 
-function SummaryStat({ label, value }: { label: string; value: number | string }) {
+function SummaryStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number | string;
+  tone?: "warn";
+}) {
   return (
-    <div className="rounded-md border border-slate-200 bg-white px-4 py-3">
+    <div
+      className={`rounded-md border px-4 py-3 ${
+        tone === "warn" ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"
+      }`}
+    >
       <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-[var(--ink)]">{value}</p>
+      <p
+        className={`mt-1 text-2xl font-semibold ${
+          tone === "warn" ? "text-amber-700" : "text-[var(--ink)]"
+        }`}
+      >
+        {value}
+      </p>
     </div>
   );
 }
@@ -229,6 +231,7 @@ export default function SbomScanDetail({ scanId }: SbomScanDetailProps) {
   const canExport = terminal && Boolean(discovery && discovery.component_summary.total_components > 0);
   const licenseSummary = discovery?.component_summary.license_summary ?? null;
   const components: SbomComponent[] = discovery?.components ?? [];
+  const unknownLicenseCount = licenseSummary?.unknown ?? 0;
 
   return (
     <div className="h-full min-h-0 overflow-auto bg-white px-6 py-6">
@@ -308,14 +311,15 @@ export default function SbomScanDetail({ scanId }: SbomScanDetailProps) {
           </h2>
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <SummaryStat label="Components" value={discovery.component_summary.total_components} />
-            <SummaryStat label="Ecosystems" value={discovery.component_summary.ecosystems.join(", ") || "—"} />
+            <SummaryStat
+              label="Unknown licenses"
+              value={unknownLicenseCount}
+              tone={unknownLicenseCount > 0 ? "warn" : undefined}
+            />
             <SummaryStat label="Manifests" value={discovery.component_summary.manifests_parsed.length} />
             <SummaryStat
-              label="Licenses resolved"
-              value={
-                discovery.component_summary.total_components -
-                (licenseSummary?.unknown ?? 0)
-              }
+              label="Ecosystems"
+              value={discovery.component_summary.ecosystems.join(", ") || "—"}
             />
           </div>
           {licenseSummary && (
@@ -333,57 +337,93 @@ export default function SbomScanDetail({ scanId }: SbomScanDetailProps) {
         </div>
       )}
 
-      <div className="mt-8">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">
-          Components ({components.length})
-        </h2>
-        {components.length === 0 ? (
-          <p className="mt-3 text-sm text-[var(--muted)]">
-            {terminal ? "No components found in declared manifests." : "Scanning…"}
-          </p>
-        ) : (
-          <table className="mt-4 w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-[var(--muted)]">
-                <th className="py-2 font-medium">#</th>
-                <th className="py-2 font-medium">Component Name</th>
-                <th className="py-2 font-medium">Version</th>
-                <th className="py-2 font-medium">Supplier</th>
-                <th className="py-2 font-medium">Type</th>
-                <th className="py-2 font-medium">License</th>
-                <th className="py-2 font-medium">Cost</th>
-                <th className="py-2 font-medium">Dependency Relationship</th>
+      <SbomComponentList components={components} terminal={terminal} />
+    </div>
+  );
+}
+
+function SbomComponentList({
+  components,
+  terminal,
+}: {
+  components: SbomComponent[];
+  terminal: boolean;
+}) {
+  return (
+    <div className="mt-8">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">
+        Components ({components.length})
+      </h2>
+      {components.length === 0 ? (
+        <p className="mt-3 text-sm text-[var(--muted)]">
+          {terminal ? "No components found in declared manifests." : "Scanning…"}
+        </p>
+      ) : (
+        <div className="mt-4 overflow-x-auto rounded-md border border-slate-200">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+                  Component
+                </th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+                  Version
+                </th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+                  License
+                </th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+                  Type
+                </th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+                  Cost
+                </th>
               </tr>
             </thead>
-            <tbody>
-              {components.map((component, idx) => (
-                <tr key={component["bom-ref"]} className="border-b border-slate-100 align-top">
-                  <td className="py-3 text-[var(--muted)]">{idx + 1}</td>
-                  <td className="py-3 text-[var(--ink)]">
-                    <div className="font-medium">
-                      {component.group ? `${component.group}:${component.name}` : component.name}
-                    </div>
-                  </td>
-                  <td className="py-3 text-[var(--muted)]">{component.version ?? "—"}</td>
-                  <td className="py-3 text-[var(--muted)]">{component.vendor ?? "Unknown"}</td>
-                  <td className="py-3">
-                    <TypeBadge type={component.origin_type || "Open Source"} />
-                  </td>
-                  <td className="py-3 text-[var(--muted)]">
-                    {component.licenses[0]?.spdx_id ?? "Unknown"}
-                  </td>
-                  <td className="py-3">
-                    <CostBadge classification={component.cost_classification} />
-                  </td>
-                  <td className="py-3 text-[var(--muted)]">
-                    {component.dependency_relationship || "Direct"}
-                  </td>
-                </tr>
-              ))}
+            <tbody className="divide-y divide-slate-100 bg-white">
+              {components.map((component) => {
+                const ref = component["bom-ref"];
+                const licenseEntry = component.licenses[0];
+                const licenseName =
+                  licenseEntry?.name && licenseEntry.name !== "Unknown License"
+                    ? licenseEntry.name
+                    : licenseEntry?.spdx_id && licenseEntry.spdx_id !== "LicenseRef-unknown"
+                    ? licenseEntry.spdx_id
+                    : null;
+                const depRelationship =
+                  component.dependency_relationship ||
+                  (component.direct ? "Direct" : "Transitive");
+
+                return (
+                  <tr key={ref}>
+                    <td className="px-4 py-3">
+                      <span className="font-medium text-[var(--ink)]">
+                        {component.group ? `${component.group}/` : ""}
+                        {component.name}
+                      </span>
+                      {component.ecosystem && (
+                        <span className="ml-1.5 text-xs text-[var(--muted)]">
+                          {component.ecosystem}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-[var(--ink)]">
+                      {component.version ?? "—"}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-[var(--ink)]">
+                      {licenseName ?? <span className="italic text-[var(--muted)]">Unknown</span>}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-[var(--muted)]">{depRelationship}</td>
+                    <td className="px-4 py-3">
+                      <CostBadge classification={component.cost_classification} />
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

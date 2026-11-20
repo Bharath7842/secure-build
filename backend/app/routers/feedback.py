@@ -19,10 +19,17 @@ def _http(exc: svc.ReviewError) -> HTTPException:
     return HTTPException(status_code=exc.status, detail=str(exc))
 
 
+_REVIEWABLE_SCAN_TYPES = {"sast", "sca", "sbom"}
+
+
 def _sast_scan_and_finding(db: Session, scan_id: str, finding_id: str, principal: Principal) -> tuple[Scan, Finding]:
     scan = authorize_scan(db, principal, scan_id)
-    if (scan.scan_type or "sast") != "sast":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reviewer feedback is for SAST scans.")
+    scan_type = scan.scan_type or "sast"
+    if scan_type not in _REVIEWABLE_SCAN_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Reviewer feedback is not supported for scan type '{scan_type}'.",
+        )
     finding = db.get(Finding, finding_id)
     if finding is None or finding.scan_id != scan_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found")

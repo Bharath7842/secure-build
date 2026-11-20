@@ -990,6 +990,7 @@ def _execute_sbom_scan(db, scan: Scan, project) -> None:
                     workspace=workspace,
                     scan_id=scan.id,
                     discovery_writer=_make_discovery_writer(scan.id),
+                    findings_writer=_make_findings_writer(scan.id),
                 )
                 discovery = engine_result.get("discovery") or {}
             except Exception as exc:  # noqa: BLE001 - surface engine errors on the scan row

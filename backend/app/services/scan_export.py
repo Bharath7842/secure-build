@@ -1611,7 +1611,7 @@ def _build_sbom_summary_sheet(sheet: Any, project: Project, scan: Scan, data: di
         ("Created", _fmt_dt(scan.created_at)),
         ("Lookup source", "deps.dev"),
         ("Total components", data["total_components"]),
-        ("Manifests", ", ".join(data["manifests_parsed"]) or "—"),
+        ("Manifests", len(data["manifests_parsed"])),
         ("Ecosystems", ", ".join(data["ecosystems"]) or "—"),
     ]
     status_note = _scan_status_banner(scan)
@@ -1648,27 +1648,21 @@ def _build_sbom_components_sheet(sheet: Any, components: list[dict[str, Any]]) -
         "#",
         "Component Name",
         "Version",
-        "Supplier",
-        "Type",
         "License",
         "Dependency Relationship",
         "Unique Identifier (PURL/CPE)",
     ]
-    widths = [5, 32, 16, 26, 14, 20, 20, 52]
+    widths = [5, 36, 16, 24, 22, 52]
     _xl_header_row(sheet, 1, headers, widths=widths)
 
     ordered = _sorted_components(components)
     wrap_from = headers.index("Unique Identifier (PURL/CPE)") + 1
-    type_col = headers.index("Type") + 1
 
     for idx, comp in enumerate(ordered, start=1):
-        type_label = _component_type_label(comp)
         row_values = [
             idx,
             _excel_cell(_component_label(comp)),
             _excel_cell(comp.get("version") or "—"),
-            _excel_cell(_component_supplier(comp)),
-            type_label,
             _excel_cell(_component_license_label(comp)),
             _excel_cell(_component_relationship(comp)),
             _excel_cell(comp.get("purl") or "—"),
@@ -1676,16 +1670,11 @@ def _build_sbom_components_sheet(sheet: Any, components: list[dict[str, Any]]) -
         sheet.append([_excel_scalar(v) for v in row_values])
 
         excel_row = idx + 1
-        type_cell = sheet.cell(excel_row, type_col)
-        type_cell.fill = EXCEL_TYPE_FILLS[type_label]
-        type_cell.font = Font(name="Calibri", bold=True, color="FFFFFF")
-        type_cell.alignment = Alignment(horizontal="center", vertical="top")
-
         for col in range(1, len(headers) + 1):
             cell = sheet.cell(excel_row, col)
             cell.border = _THIN
             cell.alignment = Alignment(vertical="top", wrap_text=col >= wrap_from)
-            if excel_row % 2 == 0 and col != type_col:
+            if excel_row % 2 == 0:
                 cell.fill = PatternFill("solid", fgColor="F8FAFC")
 
     sheet.freeze_panes = "A2"
@@ -1957,7 +1946,11 @@ def _finding_story_block(
     else:
         verdict_bg = colors.HexColor("#334155")   # dark slate — outside the contract
 
-    title = finding.title or "Untitled finding"
+    _is_sca_finding = (finding.kind or "") in ("sca", "sca_vex")
+    if _is_sca_finding:
+        title = (finding.matched_text or finding.rule_id or "SCA Finding").strip()
+    else:
+        title = finding.title or "Untitled finding"
     sev_w, verdict_w = 26 * mm, 34 * mm
     title_w = max(40 * mm, inner_width - sev_w - verdict_w - 4 * mm)
     header = Table(
@@ -1979,16 +1972,29 @@ def _finding_story_block(
         ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5 * mm),
     ]))
 
-    meta_fields = [
-        ("OWASP", _owasp_display(finding)),
-        ("CWE", _cwe_display(finding)),
-        ("CVSS", f"{finding.cvss:.1f}" if finding.cvss is not None else "—"),
-        ("Confidence", _confidence_display(finding) or "—"),
-        ("Affected files", str(_affected_file_count(finding))),
-    ]
-    # OWASP labels are long; give that column the room instead of splitting
-    # the width into five equal parts and wrapping it to three lines.
-    meta_weights = [0.36, 0.16, 0.12, 0.18, 0.18]
+    if _is_sca_finding:
+        _cve_id = (finding.rule_id or "—").replace("sca-", "", 1) if finding.rule_id else "—"
+        _manifest_path = (finding.file_path or "").strip()
+        _manifest_display = _manifest_path if _manifest_path and _manifest_path != "__sca__" else None
+        meta_fields = [("CVE", _cve_id)]
+        meta_weights_raw = [0.40]
+        if _manifest_display:
+            meta_fields.append(("Manifest", _manifest_display))
+            meta_weights_raw.append(0.60)
+        if len(meta_fields) == 1:
+            meta_weights_raw = [1.0]
+        meta_weights = meta_weights_raw
+    else:
+        meta_fields = [
+            ("OWASP", _owasp_display(finding)),
+            ("CWE", _cwe_display(finding)),
+            ("CVSS", f"{finding.cvss:.1f}" if finding.cvss is not None else "—"),
+            ("Confidence", _confidence_display(finding) or "—"),
+            ("Affected files", str(_affected_file_count(finding))),
+        ]
+        # OWASP labels are long; give that column the room instead of splitting
+        # the width into five equal parts and wrapping it to three lines.
+        meta_weights = [0.36, 0.16, 0.12, 0.18, 0.18]
     meta = Table(
         [[Paragraph(f'<font color="#64748b"><b>{_esc(label.upper())}</b></font><br/>{_esc(value)}',
                     styles["FindingMeta"]) for label, value in meta_fields]],
@@ -2028,7 +2034,7 @@ def _finding_story_block(
         strips.append(_labelled_block("Severity", severity_text, styles=styles, width=inner_width,
                                       label_color="#334155"))
 
-    def evidence_strips(item: Finding) -> list[Any]:
+    def evidence_strips(item: Finding, *, skip_description: bool = False) -> list[Any]:
         """The evidence and the fix of ONE issue group, from that group's own fields."""
         out_strips: list[Any] = []
         item_description = _description_text(item)
@@ -2039,7 +2045,7 @@ def _finding_story_block(
         item_risk = _risk_text(item)
         item_flow = _taint_flow_text(item)
         item_code = _location_code(item)
-        if item_description:
+        if item_description and not skip_description:
             out_strips.append(_labelled_block("Description", item_description, styles=styles,
                                               width=prose_width, label_color="#1e3a5f"))
         if item_risk and item_risk != item_description:
@@ -2049,7 +2055,7 @@ def _finding_story_block(
             out_strips.append(_labelled_block("Data flow", item_flow, styles=styles,
                                               width=inner_width, label_color="#0369a1", accent="#f0f9ff"))
         if _location_paths(item):
-            out_strips.append(_labelled_block("Affected location(s)", _location_paths_display(item),
+            out_strips.append(_labelled_block("Affected components", _location_paths_display(item),
                                               styles=styles, width=inner_width, label_color="#334155"))
         if item_code:
             out_strips.extend(_code_boxes("Code context", item_code, styles=styles, width=inner_width))
@@ -2074,7 +2080,9 @@ def _finding_story_block(
                 f"Issue {n} of {len(issue_groups)} · {_severity_bucket(group.severity).upper()}",
                 group.title or "Untitled finding", styles=styles, width=inner_width,
                 label_color="#334155"))
-            strips.extend(evidence_strips(group))
+            # For SCA the advisory description is identical across groups (same CVE);
+            # show it once from the first group and skip it for subsequent groups.
+            strips.extend(evidence_strips(group, skip_description=(_is_sca_finding and n > 1)))
         if len(issue_groups) > _PDF_ISSUE_DETAIL_MAX:
             strips.append(_labelled_block(
                 "More issue groups",
@@ -2083,13 +2091,14 @@ def _finding_story_block(
                 styles=styles, width=inner_width, label_color="#64748b"))
     else:
         strips.extend(evidence_strips(finding))
-    occurrence_ids = _occurrence_ids(finding)
-    if occurrence_ids:
-        shown = ", ".join(occurrence_ids[:6])
-        if len(occurrence_ids) > 6:
-            shown += f" (+{len(occurrence_ids) - 6} more)"
-        strips.append(_labelled_block("Occurrence ID", shown, styles=styles,
-                                      width=inner_width, label_color="#64748b"))
+    if not _is_sca_finding:
+        occurrence_ids = _occurrence_ids(finding)
+        if occurrence_ids:
+            shown = ", ".join(occurrence_ids[:6])
+            if len(occurrence_ids) > 6:
+                shown += f" (+{len(occurrence_ids) - 6} more)"
+            strips.append(_labelled_block("Occurrence ID", shown, styles=styles,
+                                          width=inner_width, label_color="#64748b"))
 
     # Spacers between strips would show as gaps in the rail; drop them and let
     # the strip padding do the spacing instead.
@@ -2258,14 +2267,29 @@ def _findings_index(ordered: list[Finding], styles: Any, width: float) -> Table 
     if not ordered:
         return None
     shown = ordered[:_INDEX_MAX_ROWS]
-    data: list[list[Any]] = [[
-        Paragraph("<b>#</b>", styles["TableHeadCenter"]),
-        Paragraph("<b>SEVERITY</b>", styles["TableHeadCenter"]),
-        Paragraph("<b>ISSUE</b>", styles["TableHead"]),
-        Paragraph("<b>OWASP</b>", styles["TableHead"]),
-        Paragraph("<b>LOCATION</b>", styles["TableHead"]),
-        Paragraph("<b>VERDICT</b>", styles["TableHead"]),
-    ]]
+    _is_sca = any((f.kind or "") in ("sca", "sca_vex") for f in shown[:1])
+
+    if _is_sca:
+        data: list[list[Any]] = [[
+            Paragraph("<b>#</b>", styles["TableHeadCenter"]),
+            Paragraph("<b>SEVERITY</b>", styles["TableHeadCenter"]),
+            Paragraph("<b>PACKAGE</b>", styles["TableHead"]),
+            Paragraph("<b>CVE</b>", styles["TableHead"]),
+            Paragraph("<b>ISSUE</b>", styles["TableHead"]),
+            Paragraph("<b>VERDICT</b>", styles["TableHead"]),
+        ]]
+        col_weights = (0.04, 0.09, 0.26, 0.14, 0.35, 0.12)
+    else:
+        data = [[
+            Paragraph("<b>#</b>", styles["TableHeadCenter"]),
+            Paragraph("<b>SEVERITY</b>", styles["TableHeadCenter"]),
+            Paragraph("<b>ISSUE</b>", styles["TableHead"]),
+            Paragraph("<b>OWASP</b>", styles["TableHead"]),
+            Paragraph("<b>LOCATION</b>", styles["TableHead"]),
+            Paragraph("<b>VERDICT</b>", styles["TableHead"]),
+        ]]
+        col_weights = (0.04, 0.09, 0.34, 0.17, 0.24, 0.12)
+
     cmds: list[tuple] = [
         ("BACKGROUND", (0, 0), (-1, 0), INK),
         ("BOX", (0, 0), (-1, -1), 0.5, RULE),
@@ -2278,22 +2302,38 @@ def _findings_index(ordered: list[Finding], styles: Any, width: float) -> Table 
     ]
     for idx, finding in enumerate(shown, start=1):
         sev = _severity_bucket(finding.severity)
-        data.append([
-            Paragraph(str(idx), styles["TableCellCenter"]),
-            Paragraph(f'<font color="{_hex(SEVERITY_COLORS[sev])}">'
-                      f"<b>{sev.upper()}</b></font>", styles["TableCellCenter"]),
-            Paragraph(_esc(_truncate_text(finding.title or "Untitled finding", 150)), styles["TableCell"]),
-            Paragraph(_esc(_owasp_header(finding)), styles["TableCell"]),
-            Paragraph(_esc(_primary_location(finding)), styles["TableCellMono"]),
-            Paragraph(_esc(_display_verdict(_scanner_verdict(finding))), styles["TableCell"]),
-        ])
+        if _is_sca:
+            _cve = (finding.rule_id or "—").replace("sca-", "", 1) if finding.rule_id else "—"
+            _pkg = (finding.matched_text or "—").strip()
+            _issue_title = _truncate_text(finding.title or "—", 120)
+            # strip leading "CVE-XXXX-YYYY: " prefix from title for the ISSUE column
+            _issue_title = re.sub(r"^CVE-\d+-\d+:\s*", "", _issue_title)
+            data.append([
+                Paragraph(str(idx), styles["TableCellCenter"]),
+                Paragraph(f'<font color="{_hex(SEVERITY_COLORS[sev])}">'
+                          f"<b>{sev.upper()}</b></font>", styles["TableCellCenter"]),
+                Paragraph(_esc(_pkg), styles["TableCellMono"]),
+                Paragraph(_esc(_cve), styles["TableCell"]),
+                Paragraph(_esc(_issue_title), styles["TableCell"]),
+                Paragraph(_esc(_display_verdict(_scanner_verdict(finding))), styles["TableCell"]),
+            ])
+        else:
+            data.append([
+                Paragraph(str(idx), styles["TableCellCenter"]),
+                Paragraph(f'<font color="{_hex(SEVERITY_COLORS[sev])}">'
+                          f"<b>{sev.upper()}</b></font>", styles["TableCellCenter"]),
+                Paragraph(_esc(_truncate_text(finding.title or "Untitled finding", 150)), styles["TableCell"]),
+                Paragraph(_esc(_owasp_header(finding)), styles["TableCell"]),
+                Paragraph(_esc(_primary_location(finding)), styles["TableCellMono"]),
+                Paragraph(_esc(_display_verdict(_scanner_verdict(finding))), styles["TableCell"]),
+            ])
         if idx % 2 == 0:
             cmds.append(("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#f8fafc")))
         cmds.append(("LINEBEFORE", (0, idx), (0, idx), 2.5, SEVERITY_COLORS[sev]))
 
     table = Table(
         data,
-        colWidths=[width * w for w in (0.04, 0.09, 0.34, 0.17, 0.24, 0.12)],
+        colWidths=[width * w for w in col_weights],
         repeatRows=1,
     )
     table.hAlign = "LEFT"
@@ -2490,7 +2530,7 @@ def _sbom_meta_grid(project: Project, scan: Scan, data: dict[str, Any], styles: 
         ("Repository", redact_git_url(scan.git_url) or "—"),
         ("Lookup source", "deps.dev"),
         ("Total components", str(data["total_components"])),
-        ("Manifests", ", ".join(data["manifests_parsed"]) or "—"),
+        ("Manifests", str(len(data["manifests_parsed"]))),
         ("Ecosystems", ", ".join(data["ecosystems"]) or "—"),
     ]
     cols = 4
@@ -2547,8 +2587,6 @@ def _sbom_components_table(components: list[dict[str, Any]], styles: Any, width:
         Paragraph("<b>#</b>", styles["TableHeadCenter"]),
         Paragraph("<b>COMPONENT NAME</b>", styles["TableHead"]),
         Paragraph("<b>VERSION</b>", styles["TableHeadCenter"]),
-        Paragraph("<b>SUPPLIER</b>", styles["TableHead"]),
-        Paragraph("<b>TYPE</b>", styles["TableHeadCenter"]),
         Paragraph("<b>LICENSE</b>", styles["TableHead"]),
         Paragraph("<b>DEPENDENCY RELATIONSHIP</b>", styles["TableHead"]),
         Paragraph("<b>UNIQUE IDENTIFIER (PURL/CPE)</b>", styles["TableHead"]),
@@ -2564,26 +2602,20 @@ def _sbom_components_table(components: list[dict[str, Any]], styles: Any, width:
         ("BOTTOMPADDING", (0, 0), (-1, -1), 1.4 * mm),
     ]
     for idx, comp in enumerate(shown, start=1):
-        type_label = _component_type_label(comp)
-        type_color = TYPE_COLORS[type_label]
         data.append([
             Paragraph(str(idx), styles["TableCellCenter"]),
             Paragraph(_esc(_truncate_text(_component_label(comp), 80)), styles["TableCellMono"]),
             Paragraph(_esc(comp.get("version") or "—"), styles["TableCellCenter"]),
-            Paragraph(_esc(_component_supplier(comp)), styles["TableCell"]),
-            Paragraph(f'<font color="{_hex(type_color)}"><b>{_esc(type_label.upper())}</b></font>',
-                      styles["TableCellCenter"]),
             Paragraph(_esc(_component_license_label(comp)), styles["TableCell"]),
             Paragraph(_esc(_component_relationship(comp)), styles["TableCell"]),
             Paragraph(_esc(comp.get("purl") or "—"), styles["TableCellMono"]),
         ])
         if idx % 2 == 0:
             cmds.append(("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#f8fafc")))
-        cmds.append(("LINEBEFORE", (0, idx), (0, idx), 2.5, type_color))
 
     table = Table(
         data,
-        colWidths=[width * w for w in (0.03, 0.18, 0.09, 0.16, 0.09, 0.12, 0.15, 0.18)],
+        colWidths=[width * w for w in (0.04, 0.24, 0.10, 0.18, 0.18, 0.26)],
         repeatRows=1,
     )
     table.hAlign = "LEFT"
@@ -2910,13 +2942,14 @@ def build_pdf_report(project: Project, scan: Scan, findings: list[Finding]) -> b
         styles["FindingBody"]))
     story.append(Spacer(1, 6 * mm))
 
-    owasp_table = _owasp_table(summary["by_owasp"], styles, content_width * 0.7)
-    if owasp_table is not None:
-        story.append(KeepTogether([
-            Paragraph("OWASP DISTRIBUTION", styles["SectionHeading"]),
-            owasp_table,
-        ]))
-        story.append(Spacer(1, 6 * mm))
+    if not _is_sca:
+        owasp_table = _owasp_table(summary["by_owasp"], styles, content_width * 0.7)
+        if owasp_table is not None:
+            story.append(KeepTogether([
+                Paragraph("OWASP DISTRIBUTION", styles["SectionHeading"]),
+                owasp_table,
+            ]))
+            story.append(Spacer(1, 6 * mm))
 
     ordered = _report_order(findings)
     index = _findings_index(ordered, styles, content_width)
