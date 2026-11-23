@@ -135,7 +135,24 @@ def llm_usage_options(project: Project, scan: Scan | None = None) -> dict:
         "provider_options": options,
         "mask_secrets": bool(limitations_config.get("secret-masking", _LIMITATION_DEFAULTS["secret-masking"])),
         "endpoint_policy": llm_policy.engine_policy(policy),
+        # Optional local call log for tools/llm_monitor; None unless LLM_EVENTS_FILE is set.
+        "event_context": (
+            {"file": settings.llm_events_file, "scan_id": getattr(scan, "id", None)}
+            if settings.llm_events_file else None
+        ),
+        # The model's streamed reasoning goes to the scan's engine log from any
+        # worker thread (print() reaches it only from a captured thread).
+        "log_sink": _scan_log_sink(scan.id) if getattr(scan, "id", None) else None,
     }
+
+
+def _scan_log_sink(scan_id: str):
+    from app.services import scan_log
+
+    def sink(line: str, stage: str | None = None) -> None:
+        scan_log.log(scan_id, line, stage=stage)
+
+    return sink
 
 
 def claude_cli_session(scan: Scan) -> dict:
@@ -178,8 +195,12 @@ def run_real_scan(
     reachability_updates_writer: Callable[[str, list[dict]], None] | None = None,
     result_cache: object | None = None,
     state_overrides: dict | None = None,
+    should_abort: Callable[[], bool] | None = None,
 ) -> dict:
     """Run the discovery agent against `workspace` and return its findings.
+
+    `should_abort`, when it returns True, makes every later LLM call of the
+    scan raise `llm_client.LlmScanCancelled` instead of reaching the provider.
 
     `result_cache` (a `get`/`put` object, see `llm_client.RESULT_CACHE_USAGE_KEY`)
     replaces the project's DB-backed LLM result cache, and `state_overrides` is
@@ -306,6 +327,8 @@ def run_real_scan(
         initial_state["deep_scan_file_cap"] = 0
         initial_state["triage_mode"] = agent.llm_file_scan.TRIAGE_MODE_REGEX_ONLY
 
+    if should_abort is not None:
+        initial_state["usage"][agent.llm_client.CANCEL_CHECK_USAGE_KEY] = should_abort
     project_id = getattr(project, "id", None)
     if use_llm and result_cache is not None:
         initial_state["usage"][agent.RESULT_CACHE_USAGE_KEY] = result_cache

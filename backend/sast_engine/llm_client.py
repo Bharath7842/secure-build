@@ -22,6 +22,8 @@ import requests
 from botocore.config import Config as BotoConfig
 
 import endpoint_policy
+import llm_events
+import llm_gate
 import secret_mask
 
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
@@ -40,6 +42,121 @@ OLLAMA_NO_THINK_PREFIXES = tuple(
     for p in os.environ.get("OLLAMA_NO_THINK_PREFIXES", "qwen3").split(",")
     if p.strip()
 )
+# Models that cannot turn reasoning off (gpt-oss ignores `think: false`) run at
+# `think: OLLAMA_THINK_LEVEL`. Ollama counts their reasoning against
+# `num_predict`, so they also get OLLAMA_THINKING_TOKENS on top of the step's
+# answer budget; without it a 512-token step spent everything thinking and
+# returned an empty answer with `done_reason: length`.
+OLLAMA_THINK_LEVEL_PREFIXES = tuple(
+    p.strip().lower()
+    for p in os.environ.get("OLLAMA_THINK_LEVEL_PREFIXES", "gpt-oss").split(",")
+    if p.strip()
+)
+OLLAMA_THINK_LEVEL = os.environ.get("OLLAMA_THINK_LEVEL", "low")
+OLLAMA_THINKING_TOKENS = int(os.environ.get("OLLAMA_THINKING_TOKENS", "2048"))
+
+# The model's reasoning, streamed into the scan's engine log as "[thinking] …"
+# lines (the frontend renders them in italics) so a long local-model call shows
+# progress. Needs a `log_sink(line, stage)` on the usage dict (agent_bridge sets
+# one per scan); Ollama only. The full reasoning is in the LLM monitor.
+LOG_SINK_USAGE_KEY = "_log_sink"
+LOG_THINKING = os.environ.get("LLM_LOG_THINKING", "1").strip().lower() not in ("0", "false", "no", "off")
+THINKING_LOG_LINE_CHARS = 240
+THINKING_LOG_MAX_LINES = int(os.environ.get("LLM_LOG_THINKING_MAX_LINES", "40"))
+
+
+class _ThinkingLog:
+    """Turns streamed reasoning chunks into whole, wrapped log lines."""
+
+    def __init__(self, sink: Any, stage: Optional[str]):
+        self.sink, self.stage = sink, stage
+        self.buf, self.lines, self.dropped = "", 0, 0
+
+    def feed(self, text: str) -> None:
+        self.buf += text
+        while True:
+            newline = self.buf.find("\n")
+            if newline >= 0:
+                line, self.buf = self.buf[:newline], self.buf[newline + 1:]
+            elif len(self.buf) >= THINKING_LOG_LINE_CHARS:
+                cut = self.buf.rfind(" ", 0, THINKING_LOG_LINE_CHARS)
+                cut = cut if cut > THINKING_LOG_LINE_CHARS // 2 else THINKING_LOG_LINE_CHARS
+                line, self.buf = self.buf[:cut], self.buf[cut:].lstrip()
+            else:
+                return
+            self._emit(line)
+
+    def close(self) -> None:
+        if self.buf.strip():
+            self._emit(self.buf)
+        self.buf = ""
+        if self.dropped:
+            self._write(f"… ({self.dropped:,} more chars of reasoning — full text in the LLM monitor)")
+            self.dropped = 0
+
+    def _emit(self, line: str) -> None:
+        line = line.strip()
+        if not line:
+            return
+        if self.lines >= THINKING_LOG_MAX_LINES:
+            self.dropped += len(line)
+            return
+        self.lines += 1
+        self._write(line)
+
+    def _write(self, line: str) -> None:
+        try:
+            self.sink(f"[thinking] {line}", self.stage)
+        except Exception:  # noqa: BLE001 - logging must never fail a call
+            pass
+
+
+def _thinking_log(usage: Optional[Dict[str, Any]], step: str) -> Optional[_ThinkingLog]:
+    sink = (usage or {}).get(LOG_SINK_USAGE_KEY)
+    if sink is None or not LOG_THINKING:
+        return None
+    # Tag the lines with their parallel stage only while that stage runs;
+    # group confirmation (mapped to "triage") runs after the join, untagged.
+    stage = STEP_STAGES.get(step)
+    budget = usage.get(STAGE_BUDGET_USAGE_KEY) if usage else None
+    if not budget or stage in budget.get("finished", ()):
+        stage = None
+    return _ThinkingLog(sink, stage)
+
+
+def _read_ollama_stream(resp: Any, thinking_log: _ThinkingLog, usage: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Fold Ollama's NDJSON chat stream into the non-streamed response shape."""
+    content: List[str] = []
+    thinking: List[str] = []
+    final: Optional[Dict[str, Any]] = None
+    try:
+        for raw in resp.iter_lines():
+            if not raw:
+                continue
+            try:
+                chunk = json.loads(raw)
+            except ValueError as exc:
+                raise requests.RequestException(f"ollama stream: unreadable chunk ({exc})") from exc
+            if chunk.get("error"):
+                raise requests.RequestException(f"ollama stream error: {chunk['error']}")
+            message = chunk.get("message") or {}
+            if message.get("thinking"):
+                thinking.append(message["thinking"])
+                thinking_log.feed(message["thinking"])
+            if message.get("content"):
+                content.append(message["content"])
+            if chunk.get("done"):
+                final = chunk
+                break
+            check_cancelled(usage)
+    finally:
+        thinking_log.close()
+        resp.close()
+    if final is None:
+        raise requests.RequestException("ollama stream ended before the answer was complete")
+    final = dict(final)
+    final["message"] = {"role": "assistant", "content": "".join(content), "thinking": "".join(thinking)}
+    return final
 
 BEDROCK_INPUT_PRICE_PER_MTOK = float(os.environ.get("BEDROCK_INPUT_PRICE_PER_MTOK", "1.00"))
 BEDROCK_OUTPUT_PRICE_PER_MTOK = float(os.environ.get("BEDROCK_OUTPUT_PRICE_PER_MTOK", "5.00"))
@@ -183,7 +300,10 @@ class AdaptiveLimiter:
             self._successes = 0
 
 
-_LIMITER = AdaptiveLimiter(LLM_MAX_CONCURRENCY)
+# Kept across `importlib.reload` (agent_bridge reloads this module at every
+# scan start): a fresh limiter would stop counting the calls a running scan
+# already has in flight, and forget its throttle back-off.
+_LIMITER = globals().get("_LIMITER") or AdaptiveLimiter(LLM_MAX_CONCURRENCY)
 
 
 def is_throttle_error(exc: BaseException) -> bool:
@@ -264,6 +384,76 @@ def _stage_over_budget(usage: Dict[str, Any], step: str, cutoff: float) -> bool:
 
 class LlmBudgetExhausted(RuntimeError):
     """The cost cutoff was reached and no fallback provider is configured."""
+
+
+class LlmScanCancelled(LlmBudgetExhausted):
+    """The scan was cancelled. A subclass of LlmBudgetExhausted so every stage
+    that already stops its LLM work on an exhausted budget stops the same way."""
+
+
+# A zero-argument callable on the usage dict; True means the scan was cancelled.
+CANCEL_CHECK_USAGE_KEY = "_cancel_check"
+
+
+def check_cancelled(usage: Optional[Dict[str, Any]]) -> None:
+    """Raise LlmScanCancelled when the scan's cancel check says so."""
+    check = (usage or {}).get(CANCEL_CHECK_USAGE_KEY)
+    if check is None:
+        return
+    try:
+        cancelled = bool(check())
+    except Exception:  # noqa: BLE001 - an unreadable flag must not stop a running scan
+        return
+    if not cancelled:
+        return
+    with _USAGE_LOCK:
+        first = not usage.get("cancelled")
+        usage["cancelled"] = True
+    if first:
+        print("  [llm] scan cancelled — remaining LLM work is skipped")
+    raise LlmScanCancelled("scan was cancelled")
+
+
+def ollama_num_parallel() -> int:
+    """How many calls the local Ollama server generates at once. Match it to the
+    server's own OLLAMA_NUM_PARALLEL (Ollama's default is 1)."""
+    try:
+        return max(1, int(os.environ.get("OLLAMA_NUM_PARALLEL", "1")))
+    except ValueError:
+        return 1
+
+
+@contextmanager
+def _provider_slot(usage: Optional[Dict[str, Any]], provider: Optional[str]) -> Iterator[None]:
+    if provider == "ollama":
+        # One call at a time (or OLLAMA_NUM_PARALLEL), one scan before the next:
+        # see llm_gate. A waiting call leaves the queue when its scan is cancelled.
+        with llm_gate.GATE.slot(ollama_num_parallel(), usage, lambda: check_cancelled(usage)):
+            yield
+    else:
+        with _LIMITER.slot():
+            yield
+
+
+@contextmanager
+def _call_slot(usage: Optional[Dict[str, Any]], provider: Optional[str] = None) -> Iterator[None]:
+    """A concurrency slot, re-checking cancellation once it is granted: a call
+    queued behind the limit must not be sent after the scan was cancelled."""
+    with _provider_slot(usage, provider):
+        check_cancelled(usage)
+        call_id = getattr(_CALL_STATE, "event_id", None)
+        if call_id:
+            llm_events.emit(usage, "started", call_id)
+        yield
+
+
+def _resend_after_backoff(usage: Optional[Dict[str, Any]], last_exc: Optional[Exception] = None) -> None:
+    """Runs after a provider's retry/backoff sleep, right before it sends again."""
+    check_cancelled(usage)
+    call_id = getattr(_CALL_STATE, "event_id", None)
+    if call_id:
+        reason = f"{type(last_exc).__name__}: {last_exc}" if last_exc is not None else "empty response"
+        llm_events.emit(usage, "retry", call_id, reason=llm_events.preview(reason, llm_events.ERROR_CHARS))
 
 
 # botocore's defaults are a 60 s read timeout and several silent retries of a
@@ -441,11 +631,15 @@ def init_usage(
     provider_options: Optional[Dict[str, Dict[str, Any]]] = None,
     mask_secrets: bool = True,
     endpoint_policy: Optional[Dict[str, Any]] = None,
+    event_context: Optional[Dict[str, Any]] = None,
+    log_sink: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """`provider_options` maps provider name -> {"base_url", "api_key"} for
     this scan (falling back to env). `mask_secrets` False turns off the
     prompt-level secret masking for this scan. `endpoint_policy` carries the
-    server's approved hosts to the HTTP providers."""
+    server's approved hosts to the HTTP providers.
+    `event_context` ({"file", "scan_id"}), when given, logs every call's state
+    changes to a local JSONL file for the live monitor (llm_events; optional)."""
     provider = (provider or DEFAULT_LLM_PROVIDER or "bedrock").strip().lower()
     model = model or _default_model_for(provider)
     # Ollama / Claude CLI primary: nothing billed per call, so no cutoff.
@@ -486,6 +680,10 @@ def init_usage(
             "allowed_hosts": list(endpoint_policy.get("allowed_hosts") or []),
             "allow_loopback": bool(endpoint_policy.get("allow_loopback", True)),
         }
+    if event_context and event_context.get("file"):
+        usage[llm_events.USAGE_KEY] = dict(event_context)
+    if log_sink is not None:
+        usage[LOG_SINK_USAGE_KEY] = log_sink
     if provider_options:
         usage[PROVIDER_OPTIONS_USAGE_KEY] = {
             str(name).strip().lower(): dict(opts or {}) for name, opts in provider_options.items()
@@ -692,6 +890,7 @@ def _resolve_provider_for_call(
     primary_model = model or _default_model_for(primary)
     if usage is None:
         return primary, primary_model
+    check_cancelled(usage)
 
     # Prefer primary from usage when caller omits provider (shared scan usage).
     if provider is None and usage.get("provider"):
@@ -897,6 +1096,22 @@ def call_llm(
     if not model:
         raise ValueError(f"no model configured for LLM provider {provider!r}")
 
+    call_id = llm_events.new_call_id() if llm_events.enabled(usage) else None
+    if call_id:
+        llm_events.emit(
+            usage, "queued", call_id,
+            step=step, provider=provider, model=model, json_mode=json_mode, max_tokens=max_tokens,
+            system_chars=len(system), user_chars=len(user),
+            est_input_tokens=estimate_token_count(system) + estimate_token_count(user),
+            # Ollama's num_ctx; prompt + answer past it is truncated without an error.
+            context_window=OLLAMA_NUM_CTX if provider == "ollama" else None,
+            system=llm_events.preview(system, llm_events.SYSTEM_PREVIEW_CHARS),
+            user=llm_events.preview(user, llm_events.USER_PREVIEW_CHARS),
+            system_sha=llm_events.system_sha(system),
+        )
+        llm_events.store_body(usage, f"system-{llm_events.system_sha(system)}.txt", system)
+        llm_events.store_body(usage, f"{call_id}.user.txt", user)
+
     # Cross-scan result reuse (see RESULT_CACHE_VERSION). Only JSON-mode calls
     # are eligible: their completeness can be checked structurally before a
     # response is stored, so a truncated or garbled answer is never replayed.
@@ -924,12 +1139,81 @@ def call_llm(
                     "input_tokens": 0, "output_tokens": 0, "result_cache_hit": True,
                 })
             _CALL_STATE.cache_hit = True
+            if call_id:
+                llm_events.store_body(usage, f"{call_id}.response.txt", hit["text"])
+                llm_events.emit(
+                    usage, "cache_hit", call_id,
+                    response=llm_events.preview(hit["text"], llm_events.RESPONSE_PREVIEW_CHARS),
+                )
             return hit["text"]
 
     caller_meta = meta_out
     meta_out = {}
+    started_ns = time.time_ns()
+    _CALL_STATE.event_id = call_id
+    try:
+        text = _dispatch_provider(
+            system, user, provider, model, max_tokens, temperature, retries,
+            usage=usage, step=step, json_mode=json_mode, meta_out=meta_out,
+        )
+    except Exception as exc:
+        if call_id:
+            llm_events.store_body(usage, f"{call_id}.error.txt", f"{type(exc).__name__}: {exc}")
+            llm_events.emit(
+                usage, "cancelled" if isinstance(exc, LlmScanCancelled) else "failed", call_id,
+                error=llm_events.preview(f"{type(exc).__name__}: {exc}", llm_events.ERROR_CHARS),
+                duration_ms=(time.time_ns() - started_ns) // 1_000_000,
+            )
+        raise
+    finally:
+        _CALL_STATE.event_id = None
+    if call_id:
+        llm_events.store_body(usage, f"{call_id}.response.txt", text)
+        if meta_out.get("thinking"):
+            llm_events.store_body(usage, f"{call_id}.thinking.txt", meta_out["thinking"])
+        llm_events.emit(
+            usage, "done", call_id,
+            input_tokens=meta_out.get("input_tokens"), output_tokens=meta_out.get("output_tokens"),
+            stop_reason=meta_out.get("stop_reason"),
+            duration_ms=(time.time_ns() - started_ns) // 1_000_000,
+            cost_usd=_call_cost(provider, model, meta_out),
+            response=llm_events.preview(text, llm_events.RESPONSE_PREVIEW_CHARS),
+        )
+    _LIMITER.on_success()
+
+    if cache_key is not None and is_complete_json_response(text, meta_out.get("stop_reason")):
+        try:
+            result_cache.put(
+                cache_key, step=step, model=model, text=text,
+                input_tokens=meta_out.get("input_tokens"),
+                output_tokens=meta_out.get("output_tokens"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [llm] result cache write failed ({exc})")
+    if caller_meta is not None:
+        caller_meta.update(meta_out)
+        caller_meta.update({"provider": provider, "model": model})
+    _CALL_STATE.cache_hit = False
+    return text
+
+
+def _dispatch_provider(
+    system: str,
+    user: str,
+    provider: str,
+    model: str,
+    max_tokens: int,
+    temperature: float,
+    retries: int,
+    *,
+    usage: Optional[Dict[str, Any]],
+    step: str,
+    json_mode: bool,
+    meta_out: Dict[str, Any],
+) -> str:
+    """Send one call to `provider` (under the concurrency limiter)."""
     if provider == "ollama":
-        with _LIMITER.slot():
+        with _call_slot(usage, provider):
             text = _call_ollama(
                 system,
                 user,
@@ -946,7 +1230,7 @@ def call_llm(
             )
     elif provider == PROVIDER_OPENAI_COMPAT:
         options = ((usage or {}).get(PROVIDER_OPTIONS_USAGE_KEY) or {}).get(provider) or {}
-        with _LIMITER.slot():
+        with _call_slot(usage):
             text = _call_openai_compat(
                 system,
                 user,
@@ -963,7 +1247,7 @@ def call_llm(
             )
     elif provider == PROVIDER_CLAUDE_CLI:
         options = ((usage or {}).get(PROVIDER_OPTIONS_USAGE_KEY) or {}).get(provider) or {}
-        with _LIMITER.slot():
+        with _call_slot(usage):
             text = _call_claude_cli(
                 system,
                 user,
@@ -978,7 +1262,7 @@ def call_llm(
             )
     elif provider == PROVIDER_OPENAI_CLI:
         options = ((usage or {}).get(PROVIDER_OPTIONS_USAGE_KEY) or {}).get(provider) or {}
-        with _LIMITER.slot():
+        with _call_slot(usage):
             text = _call_openai_cli(
                 system,
                 user,
@@ -995,7 +1279,7 @@ def call_llm(
         cache_system = should_cache_system_prompt(system, model)
 
         def _bedrock_call() -> str:
-            with _LIMITER.slot():
+            with _call_slot(usage):
                 return _call_bedrock(
                     system,
                     user,
@@ -1027,22 +1311,19 @@ def call_llm(
                     gate.warmed_at = time.monotonic()
         if not leader:
             text = _bedrock_call()
-    _LIMITER.on_success()
-
-    if cache_key is not None and is_complete_json_response(text, meta_out.get("stop_reason")):
-        try:
-            result_cache.put(
-                cache_key, step=step, model=model, text=text,
-                input_tokens=meta_out.get("input_tokens"),
-                output_tokens=meta_out.get("output_tokens"),
-            )
-        except Exception as exc:  # noqa: BLE001
-            print(f"  [llm] result cache write failed ({exc})")
-    if caller_meta is not None:
-        caller_meta.update(meta_out)
-        caller_meta.update({"provider": provider, "model": model})
-    _CALL_STATE.cache_hit = False
     return text
+
+
+def _call_cost(provider: str, model: str, meta: Dict[str, Any]) -> float:
+    """This call's cost for the live call log; 0.0 if it cannot be computed."""
+    try:
+        return round(llm_cost_usd(
+            int(meta.get("input_tokens") or 0), int(meta.get("output_tokens") or 0), provider, model,
+            cache_read_tokens=int(meta.get("cache_read_tokens") or 0),
+            cache_write_tokens=int(meta.get("cache_write_tokens") or 0),
+        ), 6)
+    except Exception:  # noqa: BLE001 - monitoring only
+        return 0.0
 
 
 # Bump whenever prompt construction or response handling changes in a way that
@@ -1209,6 +1490,7 @@ def _call_bedrock(
                         f"retrying in {wait}s..."
                     )
                     time.sleep(wait)
+                    _resend_after_backoff(usage, last_exc)
                     attempt += 1
                     continue
                 print(f"  [bedrock] empty response after {retries} attempt(s) (stop_reason={stop_reason!r})")
@@ -1216,6 +1498,8 @@ def _call_bedrock(
                 meta_out.update(recorded)
                 meta_out["stop_reason"] = stop_reason
             return text
+        except LlmScanCancelled:
+            raise
         except Exception as exc:  # noqa: BLE001 — throttle + network
             last_exc = exc
             if is_throttle_error(exc) and throttles < THROTTLE_RETRIES:
@@ -1228,10 +1512,12 @@ def _call_bedrock(
                 print(f"  [bedrock] throttled; backing off {wait:.1f}s "
                       f"(concurrency limit now {_LIMITER.limit})...")
                 time.sleep(wait)
+                _resend_after_backoff(usage, last_exc)
                 continue
             wait = 2**attempt
             print(f"  [bedrock] error ({exc}), retrying in {wait}s...")
             time.sleep(wait)
+            _resend_after_backoff(usage, last_exc)
             attempt += 1
     raise last_exc  # type: ignore[misc]
 
@@ -1283,16 +1569,28 @@ def _call_ollama(
         payload_body["format"] = "json"
     if model.lower().startswith(OLLAMA_NO_THINK_PREFIXES):
         payload_body["think"] = False
+    elif model.lower().startswith(OLLAMA_THINK_LEVEL_PREFIXES):
+        payload_body["think"] = OLLAMA_THINK_LEVEL
+        payload_body["options"]["num_predict"] = max_tokens + OLLAMA_THINKING_TOKENS
+    thinking_log = _thinking_log(usage, step)
+    if thinking_log is not None:
+        payload_body["stream"] = True
     last_exc: Optional[Exception] = None
     timeout = int(os.environ.get("OLLAMA_REQUEST_TIMEOUT", str(OLLAMA_REQUEST_TIMEOUT)))
     url = f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat"
     assert_endpoint_allowed(url, usage)
     for attempt in range(retries):
         try:
-            resp = requests.post(url, json=payload_body, timeout=timeout, allow_redirects=False)
-            _refuse_redirect(resp, "ollama")
-            resp.raise_for_status()
-            payload = resp.json()
+            if thinking_log is not None:
+                resp = requests.post(url, json=payload_body, timeout=timeout, allow_redirects=False, stream=True)
+                _refuse_redirect(resp, "ollama")
+                resp.raise_for_status()
+                payload = _read_ollama_stream(resp, thinking_log, usage)
+            else:
+                resp = requests.post(url, json=payload_body, timeout=timeout, allow_redirects=False)
+                _refuse_redirect(resp, "ollama")
+                resp.raise_for_status()
+                payload = resp.json()
             text = (payload.get("message") or {}).get("content", "")
             meta = {
                 "input_tokens": payload.get("prompt_eval_count"),
@@ -1313,12 +1611,14 @@ def _call_ollama(
             if meta_out is not None:
                 meta_out.update(recorded)
                 meta_out["stop_reason"] = stop_reason
+                meta_out["thinking"] = (payload.get("message") or {}).get("thinking") or ""
             return text
         except requests.RequestException as exc:
             last_exc = exc
             wait = 2**attempt
             print(f"  [ollama] request failed ({exc}), retrying in {wait}s...")
             time.sleep(wait)
+            _resend_after_backoff(usage, last_exc)
     raise last_exc  # type: ignore[misc]
 
 
@@ -1437,10 +1737,12 @@ def _call_openai_compat(
                 print(f"  [openai_compat] HTTP 429; backing off {wait:.1f}s "
                       f"(concurrency limit now {_LIMITER.limit})...")
                 time.sleep(wait)
+                _resend_after_backoff(usage, last_exc)
                 continue
             wait = 2**attempt
             print(f"  [openai_compat] request failed ({type(exc).__name__}), retrying in {wait}s...")
             time.sleep(wait)
+            _resend_after_backoff(usage, last_exc)
             attempt += 1
     raise last_exc  # type: ignore[misc]
 
@@ -1600,10 +1902,12 @@ def _call_claude_cli(
                 print(f"  [claude] rate limited; backing off {wait:.1f}s "
                       f"(concurrency limit now {_LIMITER.limit})...")
                 time.sleep(wait)
+                _resend_after_backoff(usage, last_exc)
                 continue
             wait = 2**attempt
             print(f"  [claude] call failed ({type(exc).__name__}), retrying in {wait}s...")
             time.sleep(wait)
+            _resend_after_backoff(usage, last_exc)
             attempt += 1
     raise last_exc  # type: ignore[misc]
 
@@ -1784,10 +2088,12 @@ def _call_openai_cli(
                 print(f"  [openai-cli] rate limited; backing off {wait:.1f}s "
                       f"(concurrency limit now {_LIMITER.limit})...")
                 time.sleep(wait)
+                _resend_after_backoff(usage, last_exc)
                 continue
             wait = 2**attempt
             print(f"  [openai-cli] call failed ({type(exc).__name__}), retrying in {wait}s...")
             time.sleep(wait)
+            _resend_after_backoff(usage, last_exc)
             attempt += 1
     raise last_exc  # type: ignore[misc]
 
@@ -1855,7 +2161,12 @@ def _record_llm_usage_from_meta(
         inp = estimate_token_count(system) + estimate_token_count(user)
         out = estimate_token_count(text)
         estimated = True
-    recorded = {"input_tokens": int(inp), "output_tokens": int(out)}
+    recorded = {
+        "input_tokens": int(inp),
+        "output_tokens": int(out),
+        "cache_read_tokens": int(meta.get("cache_read_tokens") or 0),
+        "cache_write_tokens": int(meta.get("cache_write_tokens") or 0),
+    }
     if usage is None:
         return recorded
     record_llm_usage(

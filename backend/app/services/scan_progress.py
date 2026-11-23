@@ -78,6 +78,8 @@ class ProgressTracker:
         self._finished: set[str] = set()
 
     def feed(self, line: str) -> int:
+        if "[thinking]" in line:  # model reasoning text: never a progress marker
+            return self.pct
         tag = STAGE_TAG_RE.match(line)
         if tag:
             if STAGE_FINISHED in line:

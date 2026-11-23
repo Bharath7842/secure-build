@@ -219,14 +219,18 @@ def _append(scan_id: str, line: str) -> None:
         pass
 
 
-def log(scan_id: str, line: str) -> None:
+def log(scan_id: str, line: str, stage: str | None = None) -> None:
     """Manually record a log line for `scan_id` — used for lifecycle events
     the engine itself doesn't print (workspace checkout, persistence, ...).
     Inside a prefixed `capture` for the same scan, the line gets that prefix
-    too, so it lands in the same stage as the thread's printed output."""
+    too, so it lands in the same stage as the thread's printed output.
+    Elsewhere (an engine worker thread) `stage` names the parallel stage the
+    line belongs to and tags it the same way."""
     install()
     if getattr(_thread_local, "scan_id", None) == scan_id:
         line = f"{getattr(_thread_local, 'prefix', '')}{line}"
+    elif stage:
+        line = f"[[stage:{stage}]] {line}"
     _append(scan_id, line)
 
 
@@ -335,7 +339,9 @@ def get_logs(scan_id: str, after: int = 0) -> tuple[list[dict], int]:
     with _lock:
         mem = list(_buffers.get(scan_id, []))
 
-    buf = mem if mem else _load_from_disk(scan_id)
+    # Memory keeps only the newest _MAX_LINES_PER_SCAN lines; when the caller
+    # asks for older ones than that (a page opened mid-scan), read the disk log.
+    buf = mem if mem and mem[0][0] <= after + 1 else (_load_from_disk(scan_id) or mem)
     lines = [{"seq": seq, "line": text} for seq, text in buf if seq > after]
     next_after = buf[-1][0] if buf else after
     return lines, next_after
