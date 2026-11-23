@@ -50,6 +50,7 @@ export const PAGE_ROUTES: ReadonlyArray<{ key: string; match: (path: string) => 
   { key: "page.settings", match: (p) => p === "/dast/settings" || p === "/settings" || p.startsWith("/settings/") },
   { key: "page.dast", match: (p) => p === "/dast" || p.startsWith("/dast/") },
   { key: "page.feedback", match: (p) => p === "/feedback" || p.startsWith("/feedback/") },
+  { key: "page.monitor", match: (p) => p === "/monitor" || p.startsWith("/monitor/") },
   { key: "page.admin_audit", match: (p) => p === "/admin/audit" || p.startsWith("/admin/audit/") },
   { key: "page.admin_users", match: (p) => p === "/admin" || p.startsWith("/admin/") },
 ];

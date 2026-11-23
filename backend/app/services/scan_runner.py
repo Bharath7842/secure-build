@@ -1638,6 +1638,8 @@ def execute_scan(scan_id: str) -> None:
                         discovery_writer=_make_discovery_writer(scan.id),
                         verdict_updates_writer=_make_verdict_updates_writer(scan.id),
                         reachability_updates_writer=_make_reachability_updates_writer(scan.id),
+                        # In-memory flag only: no pause wait and no DB read per LLM call.
+                        should_abort=lambda: is_cancel_requested(scan_id),
                     )
                     discovery = engine_result.get("discovery") or {}
                     usage_summary = engine_result.get("usage_summary") or {}
@@ -1649,6 +1651,11 @@ def execute_scan(scan_id: str) -> None:
                     db.rollback()
                     scan = db.get(Scan, scan_id)
                     if scan is None:
+                        return
+                    if is_cancel_requested(scan_id) or scan.status == "cancelled":
+                        # The engine stopped because of the cancel (LlmScanCancelled
+                        # escaping a stage), not because it failed.
+                        _mark_cancelled(db, scan_id)
                         return
                     # Findings may already have been persisted incrementally
                     # before the engine failed — sweep those for any that

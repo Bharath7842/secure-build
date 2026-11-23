@@ -33,9 +33,12 @@ import type {
   FeedbackList,
   FeedbackRow,
   GitRepo,
+  LlmMonitor,
+  LlmMonitorRange,
   ModelCatalog,
   Project,
   ProjectCreateInput,
+  ProjectCiSetup,
   ProjectDeleteResult,
   ProjectUpdateInput,
   ReviewInput,
@@ -194,6 +197,10 @@ export const api = {
       return request(`/api/admin/audit${search ? `?${search}` : ""}`);
     },
   },
+  monitor: {
+    llm: (range: LlmMonitorRange): Promise<LlmMonitor> =>
+      request(`/api/monitor/llm?${new URLSearchParams({ range }).toString()}`),
+  },
   projects: {
     list: (): Promise<Project[]> => request("/api/projects"),
     create: (input: ProjectCreateInput): Promise<Project> =>
@@ -208,6 +215,7 @@ export const api = {
       }),
     delete: (id: string): Promise<ProjectDeleteResult> =>
       request(`/api/projects/${id}`, { method: "DELETE" }),
+    ciSetup: (id: string): Promise<ProjectCiSetup> => request(`/api/projects/${id}/ci-setup`),
   },
   gitAuth: {
     // `projectId` omitted when connecting from the new-project form, before

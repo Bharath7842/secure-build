@@ -140,6 +140,17 @@ export default function ProjectsPage() {
                         </button>
                       )}
                       <Link
+                        href={`/projects/${project.id}/ci`}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-orange-200 bg-orange-50 px-2.5 py-1 font-medium text-orange-700 transition-colors hover:bg-orange-100"
+                      >
+                        <svg aria-hidden viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5">
+                          <path d="M2.5 4.5h7M2.5 8h11M2.5 11.5h5" strokeLinecap="round" />
+                          <circle cx="12" cy="4.5" r="1.5" />
+                          <circle cx="10" cy="11.5" r="1.5" />
+                        </svg>
+                        GitLab CI
+                      </Link>
+                      <Link
                         href={`/projects/${project.id}`}
                         className="font-medium text-[var(--ink)] hover:text-[var(--accent)]"
                       >

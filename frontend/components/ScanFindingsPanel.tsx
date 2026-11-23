@@ -596,9 +596,6 @@ export default function ScanFindingsPanel({
                 }`}
               >
                 {label}
-                <span className={`ml-1.5 tabular-nums ${selected ? "text-blue-100" : ""}`}>
-                  {cell.groups}
-                </span>
               </button>
             );
           })}

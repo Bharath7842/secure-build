@@ -677,7 +677,7 @@ def test_derive_rules_asks_for_a_number_that_fits_and_sizes_the_ceiling(agent):
         return '{"rules": []}'
 
     dr.llm_derive_rules(
-        stack_context="Java", frameworks=[], surfaces=[], catalog_ids=[], pass_a_names=[],
+        stack_context="Java", frameworks=[], surfaces=[], pass_a_names=[],
         sample_types=[], remaining_slots=50, call_llm_fn=fake,
     )
     assert f"Return at most {dr.PASS_B_MAX_RULES_PER_CALL} objects" in seen["user"]
@@ -685,11 +685,56 @@ def test_derive_rules_asks_for_a_number_that_fits_and_sizes_the_ceiling(agent):
     assert seen["max_tokens"] == expected > 4096  # the old ceiling that truncated every scan
 
     dr.llm_derive_rules(
-        stack_context="Java", frameworks=[], surfaces=[], catalog_ids=[], pass_a_names=[],
+        stack_context="Java", frameworks=[], surfaces=[], pass_a_names=[],
         sample_types=[], remaining_slots=5, call_llm_fn=fake,
     )
     assert "Return at most 5 objects" in seen["user"]
     assert seen["max_tokens"] == 5 * dr.PASS_B_TOKENS_PER_RULE + dr.PASS_B_TOKEN_HEADROOM
+
+
+def test_derive_rules_splits_surfaces_into_small_calls(agent):
+    dr = sys.modules["pipeline.derive_rules"]
+    surfaces = ["S5", "S1", "S4", "S2", "S3", "S6", "S7"]
+    surface_rules = {"S1": ["r1", "shared"], "S2": ["r2", "shared"], "S3": ["r3"]}
+
+    batches = dr.plan_pass_b_batches(surfaces, surface_rules, remaining_slots=50)
+    assert [b["surfaces"] for b in batches] == [["S1", "S2", "S3"], ["S4", "S5", "S6"], ["S7"]]
+    assert batches[0]["catalog_ids"] == ["r1", "shared", "r2", "r3"]  # this call's surfaces only, no repeats
+    assert [b["limit"] for b in batches] == [12, 12, 4]
+    # Same stack, same plan: a rerun hits the per-call result cache.
+    assert dr.plan_pass_b_batches(list(reversed(surfaces)), surface_rules, 50) == batches
+
+    # The calls never ask for more than the derive slots that are left.
+    assert sum(b["limit"] for b in dr.plan_pass_b_batches(surfaces, surface_rules, remaining_slots=5)) <= 5
+    assert dr.plan_pass_b_batches(surfaces, surface_rules, remaining_slots=0) == []
+
+
+def test_derive_rules_caps_the_catalog_ids_sent_per_call(agent):
+    dr = sys.modules["pipeline.derive_rules"]
+    many = {"S1": [f"rule-{i}" for i in range(100)]}
+    (batch,) = dr.plan_pass_b_batches(["S1"], many, remaining_slots=50)
+    assert len(batch["catalog_ids"]) == dr.PASS_B_MAX_CATALOG_IDS_PER_CALL
+
+
+def test_derive_rules_one_failed_call_keeps_the_others(agent):
+    dr = sys.modules["pipeline.derive_rules"]
+    calls, stats = [], {}
+
+    def fake(system, user, **kwargs):
+        calls.append(user)
+        if "Surfaces for this call: S1; S2; S3" in user:
+            raise RuntimeError("provider down")
+        return '{"rules": [{"id": "x", "pattern": "\\\\bfoo\\\\s*\\\\("}]}'
+
+    out = dr.llm_derive_rules(
+        stack_context="Java", frameworks=[], surfaces=["S1", "S2", "S3", "S4"],
+        surface_rules={"S4": ["only-for-s4"]}, pass_a_names=[], sample_types=[],
+        remaining_slots=50, call_llm_fn=fake, stats=stats,
+    )
+    assert [e["id"] for e in out] == ["runtime-llm-x"]
+    assert stats == {"pass_b_calls": 2, "pass_b_failed_calls": 1, "pass_b_returned": 1}
+    (s4_prompt,) = [u for u in calls if "S4" in u]
+    assert "only-for-s4" in s4_prompt and "Existing catalog ids" not in s4_prompt
 
 
 # --- small-file batching in the deep scan -------------------------------------

@@ -19,7 +19,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from llm_client import call_llm, parse_llm_json_array
 
@@ -98,7 +99,6 @@ _PASS_B_SYSTEM = (
     "Rules:\n"
     "- Kind A only: a single API/call site (source or sink). Do NOT write "
     "source-then-sink flow patterns (no [\\s\\S] windows between two calls).\n"
-    "- Do not clone or restate any catalog id already listed.\n"
     "- Do not emit a pattern that is the same regex as a catalog rule.\n"
     "- Prefer project-specific wrappers and unusual names, not JDK/framework "
     "methods the catalog already covers.\n"
@@ -566,39 +566,106 @@ PASS_B_TOKENS_PER_RULE = 220
 PASS_B_TOKEN_HEADROOM = 400
 PASS_B_MAX_TOKENS_CEILING = 8192
 
+# Pass B is split into small calls, a few surfaces each, instead of one call for
+# the whole stack. Every call then asks for a few rules (a short answer that
+# fits any provider's output ceiling and read timeout, and parses reliably on a
+# small model), carries only the catalog ids of its own surfaces, and has its
+# own result-cache entry. These are fixed numbers, not per-provider ones.
+PASS_B_SURFACES_PER_CALL = 3
+PASS_B_RULES_PER_SURFACE = 4
+PASS_B_MAX_CATALOG_IDS_PER_CALL = 25
+PASS_B_MAX_PARALLEL_CALLS = 8
 
-def llm_derive_rules(
+
+def plan_pass_b_batches(
+    surfaces: Sequence[str],
+    surface_rules: Optional[Mapping[str, Sequence[str]]],
+    remaining_slots: int,
+) -> List[Dict[str, Any]]:
+    """Pure: the Pass B calls to make, in a stable order.
+
+    Surfaces are sorted (so the same stack always plans the same calls, and a
+    rerun hits the result cache), chunked `PASS_B_SURFACES_PER_CALL` at a time,
+    and each call is asked for at most `PASS_B_RULES_PER_SURFACE` rules per
+    surface, trimmed so the calls together never ask for more than
+    `remaining_slots`. No surfaces: one call, as before. Each batch is
+    `{"surfaces": [...], "catalog_ids": [...], "limit": n}`.
+    """
+    slots = min(max(0, int(remaining_slots)), PASS_B_MAX_RULES_PER_CALL * PASS_B_MAX_PARALLEL_CALLS)
+    if slots <= 0:
+        return []
+    names = sorted({str(s) for s in surfaces if str(s).strip()})
+    if not names:
+        return [{"surfaces": [], "catalog_ids": [], "limit": min(slots, PASS_B_MAX_RULES_PER_CALL)}]
+    per_surface = min(PASS_B_RULES_PER_SURFACE, max(1, slots // len(names)))
+    rules_of = surface_rules or {}
+    batches: List[Dict[str, Any]] = []
+    left = slots
+    for start in range(0, len(names), PASS_B_SURFACES_PER_CALL):
+        if left <= 0 or len(batches) >= PASS_B_MAX_PARALLEL_CALLS:
+            break
+        chunk = names[start:start + PASS_B_SURFACES_PER_CALL]
+        ids: List[str] = []
+        for name in chunk:
+            for rid in rules_of.get(name) or ():
+                if rid not in ids:
+                    ids.append(rid)
+        limit = min(per_surface * len(chunk), PASS_B_MAX_RULES_PER_CALL, left)
+        left -= limit
+        batches.append({
+            "surfaces": chunk,
+            "catalog_ids": ids[:PASS_B_MAX_CATALOG_IDS_PER_CALL],
+            "limit": limit,
+        })
+    return batches
+
+
+def _pass_b_user_prompt(
+    batch: Mapping[str, Any],
     *,
     stack_context: str,
     frameworks: Sequence[str],
-    surfaces: Sequence[str],
-    catalog_ids: Sequence[str],
     pass_a_names: Sequence[str],
     sample_types: Sequence[str],
-    remaining_slots: int,
-    usage: Optional[Dict[str, Any]] = None,
-    llm_provider: Optional[str] = None,
-    llm_model: Optional[str] = None,
-    call_llm_fn: Callable[..., str] = call_llm,
+) -> str:
+    surfaces = list(batch["surfaces"])
+    lines = [
+        f"Tech stack: {stack_context or 'unknown'}",
+        f"Frameworks: {', '.join(frameworks) or 'none'}",
+    ]
+    if surfaces:
+        lines.append(f"Surfaces for this call: {'; '.join(surfaces)}")
+        if batch["catalog_ids"]:
+            lines.append(
+                "Catalog rules already covering these surfaces (do not re-derive): "
+                + ", ".join(batch["catalog_ids"])
+            )
+    else:
+        lines.append("Active surfaces: none")
+    lines += [
+        f"Already-derived wrapper names: {', '.join(pass_a_names) or 'none'}",
+        f"Project type names (sample): {', '.join(sample_types) or 'none'}",
+        f"Return at most {batch['limit']} objects.",
+        "",
+        "Each object fields: id, title, description, cwe, severity, owasp, "
+        "languages (array), frameworks (array), pattern.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _pass_b_call(
+    user: str,
+    limit: int,
+    *,
+    usage: Optional[Dict[str, Any]],
+    llm_provider: Optional[str],
+    llm_model: Optional[str],
+    call_llm_fn: Callable[..., str],
 ) -> List[Dict[str, Any]]:
-    """Pass B: one LLM call. Empty on parse failure after a single retry."""
-    if remaining_slots <= 0:
-        return []
-    remaining_slots = min(remaining_slots, PASS_B_MAX_RULES_PER_CALL)
+    """One Pass B call: its parsed rule items, retried once on a parse failure."""
     max_tokens = min(
         PASS_B_MAX_TOKENS_CEILING,
-        remaining_slots * PASS_B_TOKENS_PER_RULE + PASS_B_TOKEN_HEADROOM,
-    )
-    user = (
-        f"Tech stack: {stack_context or 'unknown'}\n"
-        f"Frameworks: {', '.join(frameworks) or 'none'}\n"
-        f"Active surfaces: {', '.join(surfaces) or 'none'}\n"
-        f"Existing catalog ids (do not clone): {', '.join(catalog_ids) or 'none'}\n"
-        f"Already-derived wrapper names: {', '.join(pass_a_names) or 'none'}\n"
-        f"Project type names (sample): {', '.join(sample_types) or 'none'}\n"
-        f"Return at most {remaining_slots} objects.\n\n"
-        "Each object fields: id, title, description, cwe, severity, owasp, "
-        "languages (array), frameworks (array), pattern.\n"
+        limit * PASS_B_TOKENS_PER_RULE + PASS_B_TOKEN_HEADROOM,
     )
     raw_text = call_llm_fn(
         _PASS_B_SYSTEM, user, usage=usage, step=LLM_STEP,
@@ -616,8 +683,70 @@ def llm_derive_rules(
         items, parse_err = parse_llm_json_array(raw_text)
     if isinstance(items, dict):
         items = items.get("rules") or []
-    coerced = _coerce_rule_items(items)
-    return [_ensure_runtime_llm_id(entry, i) for i, entry in enumerate(coerced, start=1)]
+    return _coerce_rule_items(items)
+
+
+def llm_derive_rules(
+    *,
+    stack_context: str,
+    frameworks: Sequence[str],
+    surfaces: Sequence[str],
+    pass_a_names: Sequence[str],
+    sample_types: Sequence[str],
+    remaining_slots: int,
+    surface_rules: Optional[Mapping[str, Sequence[str]]] = None,
+    usage: Optional[Dict[str, Any]] = None,
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    call_llm_fn: Callable[..., str] = call_llm,
+    stats: Optional[Dict[str, int]] = None,
+) -> List[Dict[str, Any]]:
+    """Pass B: a few small calls (`plan_pass_b_batches`), run together.
+
+    The calls go through `call_llm`, so the concurrency limiter, cost cutoff,
+    cancel check and result cache apply to each one on every provider. A call
+    that fails (including an exhausted budget or a cancel) contributes no
+    rules and never costs the others'. Results are merged in plan order, so
+    the same inputs always give the same list.
+    """
+    batches = plan_pass_b_batches(surfaces, surface_rules, remaining_slots)
+    if not batches:
+        return []
+    prompts = [
+        _pass_b_user_prompt(
+            batch, stack_context=stack_context, frameworks=frameworks,
+            pass_a_names=pass_a_names, sample_types=sample_types,
+        )
+        for batch in batches
+    ]
+
+    def run(index: int) -> Optional[List[Dict[str, Any]]]:
+        try:
+            return _pass_b_call(
+                prompts[index], batches[index]["limit"], usage=usage,
+                llm_provider=llm_provider, llm_model=llm_model, call_llm_fn=call_llm_fn,
+            )
+        except Exception:  # noqa: BLE001 — one failed call must not cost the others
+            return None
+
+    if len(batches) == 1:
+        results = [run(0)]
+    else:
+        with ThreadPoolExecutor(max_workers=min(len(batches), PASS_B_MAX_PARALLEL_CALLS)) as pool:
+            results = list(pool.map(run, range(len(batches))))
+
+    merged: List[Dict[str, Any]] = []
+    failed = 0
+    for items in results:
+        if items is None:
+            failed += 1
+            continue
+        merged.extend(items)
+    if stats is not None:
+        stats["pass_b_calls"] = len(batches)
+        stats["pass_b_failed_calls"] = failed
+        stats["pass_b_returned"] = len(merged)
+    return [_ensure_runtime_llm_id(entry, i) for i, entry in enumerate(merged, start=1)]
 
 
 def derive_runtime_rules(
@@ -627,6 +756,7 @@ def derive_runtime_rules(
     stack_context: str = "",
     frameworks: Optional[Sequence[str]] = None,
     surfaces: Optional[Sequence[str]] = None,
+    surface_rules: Optional[Mapping[str, Sequence[str]]] = None,
     use_llm: bool = False,
     usage: Optional[Dict[str, Any]] = None,
     llm_provider: Optional[str] = None,
@@ -653,14 +783,13 @@ def derive_runtime_rules(
             dropped.extend(pass_a_dropped)
         return compiled
 
-    catalog_ids = [r.id for r in static_rules]
     pass_a_names = [str(raw.get("wrapper_name") or raw.get("id")) for raw in pass_a_raw]
     try:
         pass_b_raw = llm_derive_rules(
             stack_context=stack_context,
             frameworks=list(frameworks or []),
             surfaces=list(surfaces or []),
-            catalog_ids=catalog_ids,
+            surface_rules=surface_rules,
             pass_a_names=pass_a_names,
             sample_types=sample_type_names(graph),
             remaining_slots=cap - len(compiled),
@@ -668,6 +797,7 @@ def derive_runtime_rules(
             llm_provider=llm_provider,
             llm_model=llm_model,
             call_llm_fn=call_llm_fn,
+            stats=stats,
         )
     except Exception:  # noqa: BLE001 — derive must not fail the scan
         if dropped is not None:

@@ -133,6 +133,12 @@ export default function ProjectDetailPage() {
                 New Scan
               </Link>
             )}
+            <Link
+              href={`/projects/${project.id}/ci`}
+              className="rounded-md border border-gray-300 px-4 py-2 text-center text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+            >
+              GitLab CI setup
+            </Link>
             {isAdmin && can("projects.manage") && (
               <Link
                 href={`/projects/${project.id}/settings`}

@@ -125,6 +125,11 @@ PERMISSIONS: tuple[Permission, ...] = (
         "audit.view", "action", "View audit log", "Read the audit log.",
         user_default=False, grantable_to_user=False,
     ),
+    Permission(
+        "monitor.view", "action", "View LLM monitoring",
+        "Read LLM usage and cost across every scan.",
+        user_default=False, grantable_to_user=False,
+    ),
     # --- Pages ---
     Permission(
         "page.projects", "page", "Projects", "/projects and project details.", user_default=True,
@@ -170,6 +175,10 @@ PERMISSIONS: tuple[Permission, ...] = (
     Permission(
         "page.admin_audit", "page", "Audit log", "/admin/audit.",
         user_default=False, grantable_to_user=False, requires=("audit.view",),
+    ),
+    Permission(
+        "page.monitor", "page", "LLM observability", "/monitor.",
+        user_default=False, grantable_to_user=False, requires=("monitor.view",),
     ),
 )
 

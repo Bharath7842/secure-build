@@ -2076,16 +2076,18 @@ def node_derive_runtime_rules(state: SastState) -> dict:
     dependency_summary = llm_analysis.get("dependency_summary") or {}
     frameworks = sorted(dep_classify.active_framework_labels(dependency_summary))
     try:
-        surfaces = [s.surface for s in _resolve_active_surfaces(state, rules_path)]
+        active = _resolve_active_surfaces(state, rules_path)
+        surfaces = [s.surface for s in active]
+        surface_rules = {s.surface: list(s.rules) for s in active}
     except Exception:  # noqa: BLE001 — surfaces are prompt context only
-        surfaces = []
+        surfaces, surface_rules = [], {}
     usage = state.get("usage") or init_usage(state.get("llm_provider"), state.get("llm_model"))
     cap = state.get("max_derived_regex_rules", derive_rules.DEFAULT_MAX_DERIVED)
     use_llm = bool(state.get("use_llm"))
 
     tracer.log(5, "derive_runtime_rules",
                 "Deriving runtime regex from call-graph wrappers"
-                + (" and one LLM pass" if use_llm else " (no LLM pass)"),
+                + (" and an LLM pass" if use_llm else " (no LLM pass)"),
                 narrative="Deriving regex...")
 
     dropped: List[str] = []
@@ -2096,6 +2098,7 @@ def node_derive_runtime_rules(state: SastState) -> dict:
         stack_context=llm_analysis.get("tech_stack") or "unknown",
         frameworks=frameworks,
         surfaces=surfaces,
+        surface_rules=surface_rules,
         use_llm=use_llm,
         usage=usage,
         llm_provider=state.get("llm_provider"),
@@ -2111,6 +2114,8 @@ def node_derive_runtime_rules(state: SastState) -> dict:
         "failed_by_reason": dropped_by_reason,
         "wrapper_candidates": wrapper_stats.get("candidates", 0),
         "wrappers_derived": wrapper_stats.get("derived", 0),
+        "pass_b_calls": wrapper_stats.get("pass_b_calls", 0),
+        "pass_b_failed_calls": wrapper_stats.get("pass_b_failed_calls", 0),
         # Which derived set the scan ran with (recorded in the scan's versions).
         "sha256": derive_rules.derived_rules_sha256(derived),
     }
@@ -2120,6 +2125,13 @@ def node_derive_runtime_rules(state: SastState) -> dict:
                    "sink-wrapping method(s) pass a parameter to their sink",
                    narrative="Only wrappers whose parameter reaches the sink become rules; fixed-bound, "
                              "zero-argument and getter methods do not.")
+    if wrapper_stats.get("pass_b_calls"):
+        failed_calls = wrapper_stats.get("pass_b_failed_calls", 0)
+        tracer.log(5, "derive_runtime_rules",
+                   f"LLM rule derivation: {wrapper_stats['pass_b_calls']} call(s), "
+                   f"{wrapper_stats.get('pass_b_returned', 0)} candidate rule(s) returned"
+                   + (f", {failed_calls} call(s) failed" if failed_calls else ""),
+                   narrative="Each call covers a few vulnerability surfaces; a failed call loses only its own rules.")
     failed_note = f", {len(dropped)} failed ({dropped_by_reason})" if dropped else ""
     tracer.log(5, "derive_runtime_rules",
                 f"Derived {len(derived)} runtime regex rule(s) (cap={cap}){failed_note}",

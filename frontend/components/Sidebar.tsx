@@ -36,6 +36,7 @@ type NavItem = {
     | "target"
     | "users"
     | "audit"
+    | "activity"
     | "user"
     | "logout";
 };
@@ -155,6 +156,12 @@ function NavIcon({ name }: { name: NonNullable<NavItem["icon"]> }) {
           <path d="M14 2v6h6M8 13h8M8 17h5" />
         </svg>
       );
+    case "activity":
+      return (
+        <svg {...props}>
+          <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+        </svg>
+      );
     case "user":
       return (
         <svg {...props}>
@@ -266,6 +273,10 @@ const SAST_LINKS: NavItem[] = [
   },
   { href: "/projects/new", label: "New Project", short: "NP", exact: true, icon: "plus", page: "page.project_new" },
   { href: "/settings", label: "Settings", short: "Se", exact: true, icon: "settings", page: "page.settings" },
+];
+
+const MONITOR_LINKS: NavItem[] = [
+  { href: "/monitor", label: "LLM observability", short: "LO", icon: "activity", page: "page.monitor" },
 ];
 
 const ADMIN_LINKS: NavItem[] = [
@@ -472,6 +483,7 @@ export default function Sidebar() {
   const pathname = usePathname();
   const params = useSearchParams();
   const visible = (item: NavItem) => !item.page || !!me?.pages.includes(item.page);
+  const monitorLinks = MONITOR_LINKS.filter(visible);
   const adminLinks = ADMIN_LINKS.filter(visible);
 
   // One menu open at a time: opening a menu closes the previous one, and
@@ -566,6 +578,17 @@ export default function Sidebar() {
           {SAST_LINKS.filter(visible).map((link) => (
             <NavLink key={link.href} {...link} />
           ))}
+          {monitorLinks.length > 0 && (
+            <>
+              {!collapsed && (
+                <p className="mt-6 mb-1 px-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Monitor</p>
+              )}
+              {collapsed && <div className="my-3 border-t border-white/10" aria-hidden />}
+              {monitorLinks.map((link) => (
+                <NavLink key={link.href} {...link} />
+              ))}
+            </>
+          )}
           {adminLinks.length > 0 && (
             <>
               {!collapsed && (

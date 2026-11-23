@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     frontend_proxy_secret: SecretStr | None = None
     # Base URL of the web app, used to build invite and reset links.
     public_app_url: str = "http://localhost:3000"
+    # Public URL GitLab runners use to reach this backend (SAST_API_URL in the
+    # GitLab CI guide). Unset: the guide looks for a running ngrok tunnel to
+    # this backend's port instead.
+    public_api_url: str | None = None
     # In-repo engine (backend/sast_engine); no external checkout required.
     sast_framework_path: str = str(ROOT / "backend" / "sast_engine")
     aws_region: str = "us-east-1"

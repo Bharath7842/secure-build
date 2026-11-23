@@ -53,3 +53,6 @@ output/
 
 # accuracy corpus run output
 backend/accuracy_report.json
+
+# Streamlit LLM call monitor
+tools/llm_monitor/.venv/

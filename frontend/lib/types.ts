@@ -41,6 +41,22 @@ export interface Project {
   git_connected?: boolean;
 }
 
+/** GET /projects/{id}/ci-setup: values for the GitLab CI guide. */
+export interface ProjectCiSetup {
+  project_id: string;
+  project_name: string;
+  repo_url: string | null;
+  branch: string | null;
+  /** SAST_API_URL; null when the backend knows no public URL. */
+  api_url: string | null;
+  api_url_source: "setting" | "ngrok" | null;
+  web_url: string;
+  /** SAST_API_TOKEN; only returned to admins. */
+  token: string | null;
+  token_visible: boolean;
+  scan_types: ("sast" | "sca" | "sbom")[];
+}
+
 export interface ProjectDeleteResult {
   project_id: string;
   scans_deleted: number;
@@ -1764,4 +1780,84 @@ export interface FeedbackFilter {
   q?: string;
   limit?: number;
   offset?: number;
+}
+
+// --- Monitor -> LLM observability (GET /api/monitor/llm) ---
+
+export type LlmMonitorRange = "24h" | "7d" | "30d" | "90d";
+
+export interface LlmMonitorTotals {
+  scans: number;
+  scans_with_llm: number;
+  scans_without_usage: number;
+  llm_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  result_cache_hits: number;
+  result_cache_saved_tokens: number;
+  result_cache_hit_rate: number;
+  estimated_scans: number;
+  fallback_scans: number;
+  budget_exhausted_scans: number;
+  failed_scans: number;
+}
+
+export interface LlmMonitorPoint {
+  bucket: string;
+  scans: number;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+}
+
+export interface LlmMonitorModel {
+  provider: string;
+  model: string;
+  scans: number;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+}
+
+export interface LlmMonitorStep {
+  step: string;
+  scan_type: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  result_cache_hits: number;
+  truncated: number;
+}
+
+export interface LlmMonitorScan {
+  scan_id: string;
+  project_id: string;
+  project_name: string | null;
+  scan_type: string;
+  version: number | null;
+  status: string;
+  created_at: string;
+  provider: string | null;
+  model: string | null;
+  calls: number;
+  total_tokens: number;
+  cost_usd: number;
+  result_cache_hits: number;
+}
+
+export interface LlmMonitor {
+  range: LlmMonitorRange;
+  from: string;
+  to: string;
+  granularity: "hour" | "day";
+  totals: LlmMonitorTotals;
+  series: LlmMonitorPoint[];
+  by_type: { scan_type: string; scans: number; calls: number; total_tokens: number; cost_usd: number }[];
+  by_model: LlmMonitorModel[];
+  by_step: LlmMonitorStep[];
+  top_scans: LlmMonitorScan[];
 }

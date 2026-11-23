@@ -212,14 +212,19 @@ def _refusing_provider(unrecorded: list[str]):
 
 @contextmanager
 def _isolated_environment() -> Iterator[None]:
-    """No cloud credentials for the duration of a replayed run."""
+    """No cloud credentials (and no live LLM call log) for the duration of a replayed run."""
+    from app.config import settings
+
     saved = {k: v for k, v in os.environ.items() if k.startswith(_CLOUD_ENV_PREFIXES)}
     for key in saved:
         del os.environ[key]
     os.environ["AWS_EC2_METADATA_DISABLED"] = "true"
+    events_file = settings.llm_events_file
+    settings.llm_events_file = ""
     try:
         yield
     finally:
+        settings.llm_events_file = events_file
         os.environ.pop("AWS_EC2_METADATA_DISABLED", None)
         os.environ.update(saved)
 

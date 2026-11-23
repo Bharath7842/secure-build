@@ -1,12 +1,12 @@
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from pydantic import BaseModel
 
-from app.auth.principal import Principal, require
+from app.auth.principal import Principal, record as audit_record, require
 from app.authz.scope import can_see_project
 from app.config import settings
 from app.db import get_db
@@ -224,3 +224,79 @@ def update_project_limitations(
     db.commit()
     db.refresh(project)
     return project
+
+
+# --- GitLab CI setup guide ---------------------------------------------------
+
+_NGROK_API = "http://127.0.0.1:4040/api/tunnels"
+
+
+class CiSetupOut(BaseModel):
+    project_id: str
+    project_name: str
+    repo_url: str | None
+    branch: str | None
+    # SAST_API_URL: the backend's public URL, or None when none is known.
+    api_url: str | None
+    api_url_source: str | None  # "setting" | "ngrok" | None
+    web_url: str
+    # SAST_API_TOKEN: only for admins; None for everyone else.
+    token: str | None
+    token_visible: bool
+    scan_types: list[str]
+
+
+def _ngrok_backend_url(port: int) -> str | None:
+    """The public HTTPS URL of a local ngrok tunnel to `port`, if one is running."""
+    import json
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(_NGROK_API, timeout=0.5) as resp:  # fixed loopback URL
+            tunnels = json.load(resp).get("tunnels") or []
+    except Exception:
+        return None
+    for tunnel in tunnels:
+        url = str(tunnel.get("public_url") or "")
+        addr = str((tunnel.get("config") or {}).get("addr") or "")
+        if url.startswith("https://") and (addr == str(port) or addr.endswith(f":{port}")):
+            return url.rstrip("/")
+    return None
+
+
+@router.get("/{project_id}/ci-setup", response_model=CiSetupOut)
+def get_ci_setup(
+    project_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require("projects.view")),
+):
+    """Values a user copies into GitLab CI/CD variables for this project.
+    The backend CI token is returned to admins only, and each reveal is audited."""
+    project = _get_project_or_404(db, project_id, principal)
+
+    api_url, source = None, None
+    if settings.public_api_url and settings.public_api_url.strip():
+        api_url, source = settings.public_api_url.strip().rstrip("/"), "setting"
+    else:
+        found = _ngrok_backend_url(request.url.port or 8000)
+        if found:
+            api_url, source = found, "ngrok"
+
+    is_admin = principal.kind == "user" and principal.role == "admin"
+    if is_admin:
+        audit_record(db, request, "ci.token_viewed", principal, target_type="project", target_id=project.id)
+
+    scan_types = [t for t, on in (("sast", project.enable_sast), ("sca", project.enable_sca), ("sbom", project.enable_sbom)) if on]
+    return CiSetupOut(
+        project_id=project.id,
+        project_name=project.name,
+        repo_url=project.default_git_url,
+        branch=project.default_branch,
+        api_url=api_url,
+        api_url_source=source,
+        web_url=settings.public_app_url.rstrip("/"),
+        token=settings.sast_api_token if is_admin else None,
+        token_visible=is_admin,
+        scan_types=scan_types or ["sast"],
+    )

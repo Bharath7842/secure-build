@@ -95,6 +95,7 @@ def run_scan(
     discovery_writer: Callable[[dict], None] | None = None,
     verdict_updates_writer: Callable[[str, list[dict]], None] | None = None,
     reachability_updates_writer: Callable[[str, list[dict]], None] | None = None,
+    should_abort: Callable[[], bool] | None = None,
 ) -> ScanRunResult:
     if mock_engine_enabled():
         discovery = _mock_discovery(project)
@@ -126,6 +127,7 @@ def run_scan(
         discovery_writer=discovery_writer,
         verdict_updates_writer=verdict_updates_writer,
         reachability_updates_writer=reachability_updates_writer,
+        should_abort=should_abort,
     )
 
 
