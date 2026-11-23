@@ -35,6 +35,16 @@ def _isolate_dast_screenshots(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "dast_screenshots_dir", str(tmp_path / "dast_screenshots"))
 
 
+@pytest.fixture(autouse=True)
+def _llm_events_off(monkeypatch):
+    """The live LLM call log is optional and off by default; a developer's
+    LLM_EVENTS_FILE must never be written by the suite. Tests that cover it
+    pass their own event context."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "llm_events_file", "")
+
+
 @pytest.fixture()
 def fake_target() -> FakeTarget:
     """A fresh in-process web target with an admin and a user account."""

@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     codex_cli_path: str = ""
     codex_cli_request_timeout: int = 600  # seconds per call
     openai_cli_dir: str = str(DATA_DIR / "openai_cli")
+    # --- Live LLM call log (optional, for tools/llm_monitor) ---
+    # A JSONL file every SAST LLM call appends its state changes to (queued,
+    # started, retry, done/failed/cancelled/cache_hit). Empty = off.
+    llm_events_file: str = ""
     nvd_api_key: str | None = None
     database_url: str = DEFAULT_DATABASE_URL
     workspaces_dir: str = str(DATA_DIR / "workspaces")

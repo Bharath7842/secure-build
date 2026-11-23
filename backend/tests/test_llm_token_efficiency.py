@@ -349,8 +349,10 @@ def test_db_result_cache_round_trip(tmp_path):
 
 def test_run_real_scan_attaches_cache_unless_bypassed(agent, monkeypatch, tmp_path):
     from app.models import Project
-    from app.services import agent_bridge
+    from app.services import agent_bridge, llm_policy
 
+    monkeypatch.setattr(llm_policy, "load_policy", lambda: {})  # no database in this test
+    monkeypatch.setattr(llm_policy, "engine_policy", lambda _policy: {})
     captured = []
     monkeypatch.setattr(agent, "invoke_graph", lambda graph, state, **_k: captured.append(state) or {})
     monkeypatch.setattr(agent_bridge, "_load_agent_module", lambda: agent)
