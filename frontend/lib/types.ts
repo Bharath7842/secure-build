@@ -2033,6 +2033,10 @@ export interface VulnerabilityReport {
     fixed_total: number;
     by_status: Record<VulnStatus, number>;
     open_by_severity: SeverityCounts;
+    /** CWE groups still confirmed, the same unit as the scan page Confirmed tab. */
+    confirmed_by_severity: SeverityCounts;
+    /** CWE groups still unresolved, the same unit as the scan page Unresolved tab. */
+    unresolved_by_severity: SeverityCounts;
     status_by_severity: Record<VulnStatus, SeverityCounts>;
     fix_rate: number | null;
     mttr_days: number | null;

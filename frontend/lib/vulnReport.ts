@@ -87,11 +87,11 @@ export const SCAN_TYPE_HINT: Record<VulnScanType, string> = {
 };
 
 export const GRADE_HINT: Record<string, string> = {
-  A: "No open critical or high issues.",
-  B: "No open critical issues and at most 3 high.",
-  C: "No open critical issues, but more than 3 high.",
-  D: "1–2 open critical issues.",
-  F: "3 or more open critical issues.",
+  A: "No confirmed critical or high weakness types.",
+  B: "No confirmed critical weakness types and at most 3 high.",
+  C: "No confirmed critical weakness types, but more than 3 high.",
+  D: "1–2 confirmed critical weakness types.",
+  F: "3 or more confirmed critical weakness types.",
 };
 
 export const GRADE_STYLE: Record<string, string> = {
@@ -104,15 +104,15 @@ export const GRADE_STYLE: Record<string, string> = {
 
 /** Rules shown in the security-grade help tooltip (must match `vulnerability_report._grade`). */
 export const GRADE_RULES: { grade: string; rule: string }[] = [
-  { grade: "A", rule: "No open Critical and no open High issues" },
-  { grade: "B", rule: "No open Critical; at most 3 open High" },
-  { grade: "C", rule: "No open Critical; more than 3 open High" },
-  { grade: "D", rule: "1–2 open Critical issues" },
-  { grade: "F", rule: "3 or more open Critical issues" },
+  { grade: "A", rule: "No confirmed Critical and no confirmed High weakness types" },
+  { grade: "B", rule: "No confirmed Critical; at most 3 confirmed High" },
+  { grade: "C", rule: "No confirmed Critical; more than 3 confirmed High" },
+  { grade: "D", rule: "1–2 confirmed Critical weakness types" },
+  { grade: "F", rule: "3 or more confirmed Critical weakness types" },
 ];
 
 export const GRADE_SCOPE_NOTE =
-  "Only open Critical and High issues count. Medium, Low and Info do not change the grade. Fixed, resolved, risk accepted and dismissed issues are excluded. Needs triage and confirmed both count as open.";
+  "Counted the same way as the scan page: one group per CWE. Only confirmed Critical and High groups change the grade. Unresolved groups are shown separately and do not change it. Medium, Low, Info, fixed, resolved, risk accepted and dismissed groups are excluded.";
 
 export function formatDate(value: string | null | undefined): string {
   if (!value) return "—";
