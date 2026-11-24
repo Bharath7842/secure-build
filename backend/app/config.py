@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     # (e.g. granite-code:3b-instruct). Not required when every project uses Bedrock.
     ollama_base_url: str = "http://localhost:11434"
     ollama_request_timeout: int = 600  # seconds per Ollama /api/chat call
+    # Per-finding "Explain with AI" (local Ollama; independent of the scan's LLM provider).
+    sast_explain_ollama_model: str = "gpt-oss:20b"
+    # Shown first in Netra chat pickers (How to fix, Insights, Export to Jira) when pulled.
+    sast_explain_offered_models: list[str] = ["gpt-oss:20b", "gemma4:12b"]
+    sast_explain_max_context_chars: int = 24000
+    sast_explain_file_window_lines: int = 45
+    sast_explain_max_tokens: int = 3000
+    sast_explain_timeout_s: float = 300.0
     # Default OpenAI-compatible endpoint (vLLM, LM Studio, llama.cpp server,
     # OpenAI, ...) for projects with llm_provider == "openai_compat" that don't
     # set their own llm_base_url. Includes the version prefix, e.g. ".../v1".

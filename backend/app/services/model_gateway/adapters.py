@@ -144,10 +144,9 @@ class OllamaAdapter:
         }
         if self.num_ctx:
             kwargs["num_ctx"] = self.num_ctx
-        if self.num_ctx:
-            kwargs["num_ctx"] = self.num_ctx
         if max_tokens:
-            kwargs["num_predict"] = max_tokens + OLLAMA_REASONING_HEADROOM
+            extra = OLLAMA_REASONING_HEADROOM if self.reasoning else 0
+            kwargs["num_predict"] = max_tokens + extra
         return factory(**kwargs)
 
     def stream(

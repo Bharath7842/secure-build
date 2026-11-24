@@ -569,7 +569,9 @@ def test_ollama_retries_without_thinking_when_the_model_rejects_it():
 def test_ollama_adapter_passes_the_reasoning_flag_to_the_client():
     FakeChat.instances.clear()
     OllamaAdapter("http://x", "gemma4:12b", chat_factory=FakeChat, emit=lambda _: None, reasoning=False).call("s", "p", None, 50, None)
-    assert FakeChat.instances[0].kwargs["reasoning"] is False
+    kw = FakeChat.instances[0].kwargs
+    assert kw["reasoning"] is False
+    assert kw["num_predict"] == 50
 
 
 # ---- claude CLI provider --------------------------------------------------------------------

@@ -64,7 +64,14 @@ export function proxy(request: NextRequest) {
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-sb-path", `${pathname}${search}`);
   const response = NextResponse.next({ request: { headers: requestHeaders } });
-  if (isApi) response.headers.set("Cache-Control", "private, no-store");
+  // This header replaces the route's own; `no-transform` keeps Next from gzipping
+  // (and so buffering) server-sent event streams until they end.
+  if (isApi) {
+    response.headers.set(
+      "Cache-Control",
+      pathname.endsWith("/stream") ? "private, no-store, no-transform" : "private, no-store",
+    );
+  }
   return response;
 }
 

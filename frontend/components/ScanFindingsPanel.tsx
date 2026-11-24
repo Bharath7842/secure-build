@@ -34,9 +34,11 @@ import {
   llmVerdictLabel,
 } from "@/lib/review";
 import FindingDecisionHistory from "@/components/FindingDecisionHistory";
+import FindingExplainDrawer from "@/components/FindingExplainDrawer";
 import FindingReviewForm from "@/components/FindingReviewForm";
 import FlowTracePanel, { hopsForFinding } from "@/components/FlowTracePanel";
 import ReachabilityEvidence from "@/components/ReachabilityEvidence";
+import ShortIdChip from "@/components/ShortIdChip";
 
 function ChevronIcon() {
   return (
@@ -147,10 +149,11 @@ interface FindingRowProps {
   onToggle: () => void;
   onConstructFilter: (key: string | null) => void;
   onSaved: () => void;
+  onExplain: () => void;
 }
 
 /** One issue group (a rule/construct row): its verdict, evidence, history and review form. */
-function FindingRow({ scanId, finding, open, onToggle, onConstructFilter, onSaved }: FindingRowProps) {
+function FindingRow({ scanId, finding, open, onToggle, onConstructFilter, onSaved, onExplain }: FindingRowProps) {
   const severity = normalizeSeverity(finding.severity, true);
   const riskStyle = RISK_STYLES[severity];
   const kind = verdictKind(finding.verdict);
@@ -168,11 +171,12 @@ function FindingRow({ scanId, finding, open, onToggle, onConstructFilter, onSave
     <li
       className={`rounded-md border ${VERDICT_ROW[kind]}`}
     >
+      <div className="flex items-start gap-2 px-3 py-2">
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="agent-focus-ring flex w-full items-start gap-2 rounded-md px-3 py-2 text-left"
+        className="agent-focus-ring flex min-w-0 flex-1 items-start gap-2 rounded-md text-left"
       >
         <span
           className={`mt-1 flex-shrink-0 text-[var(--muted)] transition-transform ${
@@ -255,6 +259,7 @@ function FindingRow({ scanId, finding, open, onToggle, onConstructFilter, onSave
             {finding.cwe && (
               <span className="text-xs text-[var(--muted)]">{finding.cwe}</span>
             )}
+            {finding.short_id ? <ShortIdChip id={finding.short_id} /> : null}
           </span>
           <span
             className={`mt-1 block text-sm font-medium text-[var(--ink)] ${
@@ -279,8 +284,32 @@ function FindingRow({ scanId, finding, open, onToggle, onConstructFilter, onSave
           </span>
         </span>
       </button>
-      {open && (
-      <div className="border-t border-slate-200/70 px-3 pb-3 pt-2">
+      <button
+        type="button"
+        data-testid="finding-explain-open"
+        onClick={onExplain}
+        title="Explain the issue and how to fix it, using your local model"
+        className="agent-focus-ring mt-0.5 inline-flex shrink-0 items-center gap-1 rounded-md border border-blue-200 bg-gradient-to-r from-blue-50 to-violet-50 px-2 py-1 text-[11px] font-medium leading-tight text-blue-800 shadow-sm transition-colors hover:border-blue-300 hover:from-blue-100 hover:to-violet-100"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z" />
+        </svg>
+        Netra
+      </button>
+      </div>
+      {open ? (
+        <div className="border-t border-slate-200/70 px-3 pb-3 pt-2">
       <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
         {finding.owasp_category && <span>{finding.owasp_category}</span>}
       </div>
@@ -385,8 +414,8 @@ function FindingRow({ scanId, finding, open, onToggle, onConstructFilter, onSave
         occurrenceCount={finding.occurrence_count ?? 1}
         onSaved={onSaved}
       />
-      </div>
-      )}
+        </div>
+      ) : null}
     </li>
   );
 }
@@ -452,6 +481,7 @@ export default function ScanFindingsPanel({
   const [openCwes, setOpenCwes] = useState<Set<string>>(() => new Set());
   // Bumped after a review is saved so the list (verdicts, counts, badges) is re-fetched.
   const [reloadKey, setReloadKey] = useState(0);
+  const [explainFinding, setExplainFinding] = useState<Finding | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -565,6 +595,7 @@ export default function ScanFindingsPanel({
       onToggle={() => toggle(setOpenIds, finding.id)}
       onConstructFilter={setConstructFilter}
       onSaved={() => setReloadKey((n) => n + 1)}
+      onExplain={() => setExplainFinding(finding)}
     />
   );
 
@@ -783,6 +814,14 @@ export default function ScanFindingsPanel({
           </ul>
         )}
       </section>
+      {explainFinding ? (
+        <FindingExplainDrawer
+          key={explainFinding.id}
+          scanId={scanId}
+          finding={explainFinding}
+          onClose={() => setExplainFinding(null)}
+        />
+      ) : null}
     </div>
   );
 }

@@ -44,7 +44,7 @@ export const PAGE_ROUTES: ReadonlyArray<{ key: string; match: (path: string) => 
   { key: "page.project_settings", match: (p) => /^\/projects\/[^/]+\/settings\/?$/.test(p) },
   { key: "page.projects", match: (p) => p === "/projects" || p.startsWith("/projects/") },
   { key: "page.scan_sast", match: (p) => p === "/scans/new" },
-  { key: "page.history", match: (p) => p === "/scans" || p.startsWith("/scans/") },
+  { key: "page.history", match: (p) => p === "/scans" || p.startsWith("/scans/") || p === "/vulnerabilities" || p === "/agent-reports" || p.startsWith("/agent-reports/") },
   { key: "page.scan_sca", match: (p) => p === "/sca" || p.startsWith("/sca/") },
   { key: "page.scan_sbom", match: (p) => p === "/sbom" || p.startsWith("/sbom/") },
   { key: "page.settings", match: (p) => p === "/dast/settings" || p === "/settings" || p.startsWith("/settings/") },

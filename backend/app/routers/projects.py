@@ -1,7 +1,9 @@
+import json
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from pydantic import BaseModel
@@ -14,8 +16,15 @@ from app.defaults.reference_sources import normalize_sources, sync_legacy_fields
 from app.defaults.scan_limitations import SCAN_LIMITATIONS
 from app.models import FileSnapshot, Finding, FindingReview, FindingReviewEvent, LlmResultCache, Project, Scan
 from app.routers.git_auth import consume_pending_connection
-from app.schemas import ProjectCreate, ProjectDeleteOut, ProjectOut, ProjectUpdate
-from app.services import llm_policy, scan_log
+from app.schemas import (
+    FindingExplainModelsOut,
+    ProjectCreate,
+    ProjectDeleteOut,
+    ProjectOut,
+    ProjectUpdate,
+    VulnerabilityInsightsIn,
+)
+from app.services import finding_explain, llm_policy, scan_log, vulnerability_insights, vulnerability_report
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -264,6 +273,83 @@ def _ngrok_backend_url(port: int) -> str | None:
     return None
 
 
+def resolve_public_api_url(request: Request) -> tuple[str | None, str | None]:
+    """(url, source) a pipeline or a developer's machine can reach this backend at:
+    the `PUBLIC_API_URL` setting, else a running ngrok tunnel; (None, None) when neither."""
+    if settings.public_api_url and settings.public_api_url.strip():
+        return settings.public_api_url.strip().rstrip("/"), "setting"
+    found = _ngrok_backend_url(request.url.port or 8000)
+    if found:
+        return found, "ngrok"
+    return None, None
+
+
+@router.get("/{project_id}/vulnerability-report")
+def get_vulnerability_report(
+    project_id: str,
+    branch: str | None = Query(default=None, description="Branch to report on; '' = every branch"),
+    scan_type: str | None = Query(default=None, pattern="^(sast|sca|sbom|dast)$"),
+    max_scans: int = Query(default=vulnerability_report.DEFAULT_MAX_SCANS, ge=1, le=200),
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require("scans.view_own")),
+):
+    """Every vulnerability the project's scans found, followed across scans."""
+    project = _get_project_or_404(db, project_id, principal)
+    return vulnerability_report.build_report(
+        db, project, principal, branch=branch, scan_type=scan_type, max_scans=max_scans
+    )
+
+
+@router.get("/{project_id}/vulnerability-report/insights/models", response_model=FindingExplainModelsOut)
+def list_vulnerability_insights_models(
+    project_id: str,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require("scans.view_own")),
+):
+    """Models pulled on the local Ollama server that Netra's Insights can use."""
+    _get_project_or_404(db, project_id, principal)
+    return FindingExplainModelsOut(**finding_explain.explain_models_payload())
+
+
+@router.post("/{project_id}/vulnerability-report/insights/stream")
+def stream_vulnerability_insights(
+    project_id: str,
+    body: VulnerabilityInsightsIn,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require("scans.view_own")),
+):
+    """Stream Netra's prioritised fix plan for the project from local Ollama (SSE)."""
+    project = _get_project_or_404(db, project_id, principal)
+    report = vulnerability_report.build_report(
+        db, project, principal, branch=body.branch, scan_type=body.scan_type
+    )
+    brief, refs = vulnerability_insights.build_brief(report)
+    messages = [{"role": m.role, "content": m.content} for m in body.messages]
+    prompt = vulnerability_insights.build_user_prompt(brief, messages)
+    model = finding_explain.resolve_model(body.model)
+
+    def event_generator():
+        ollama_err = finding_explain.preflight_error(model)
+        if ollama_err:
+            yield f"event: error\ndata: {json.dumps({'message': ollama_err})}\n\n"
+            return
+        yield f"event: meta\ndata: {json.dumps({'provider': 'ollama', 'model': model, 'refs': refs})}\n\n"
+        try:
+            for kind, content in finding_explain.stream_explain(
+                prompt,
+                model,
+                system=vulnerability_insights.system_prompt(),
+                max_tokens=vulnerability_insights.MAX_TOKENS,
+            ):
+                event = "thinking" if kind == "thinking" else "chunk"
+                yield f"event: {event}\ndata: {json.dumps({'content': content})}\n\n"
+            yield "event: done\ndata: {}\n\n"
+        except Exception as exc:  # noqa: BLE001 — stream must not break the connection abruptly
+            yield f"event: error\ndata: {json.dumps({'message': str(exc)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
 @router.get("/{project_id}/ci-setup", response_model=CiSetupOut)
 def get_ci_setup(
     project_id: str,
@@ -275,13 +361,7 @@ def get_ci_setup(
     The backend CI token is returned to admins only, and each reveal is audited."""
     project = _get_project_or_404(db, project_id, principal)
 
-    api_url, source = None, None
-    if settings.public_api_url and settings.public_api_url.strip():
-        api_url, source = settings.public_api_url.strip().rstrip("/"), "setting"
-    else:
-        found = _ngrok_backend_url(request.url.port or 8000)
-        if found:
-            api_url, source = found, "ngrok"
+    api_url, source = resolve_public_api_url(request)
 
     is_admin = principal.kind == "user" and principal.role == "admin"
     if is_admin:

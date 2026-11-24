@@ -391,6 +391,8 @@ export interface Finding {
   identity_quality?: "exact" | "file_level" | null;
   /** A grouped row's member occurrence ids. */
   member_occurrence_ids?: string[] | null;
+  /** `SB-XXXXXXXX`, the id a developer gives the `secure-fix` Claude skill; stable across rescans. */
+  short_id?: string | null;
   /** The human review workflow, apart from `verdict` (what the scanner decided). */
   review_state?: "pending" | "agreed" | "overridden" | "resolved" | null;
   /** Raw rows this grouped finding stands for (1 when ungrouped). */
@@ -533,6 +535,45 @@ export interface FindingHistory {
   scan_id: string;
   finding_id: string;
   entries: FindingHistoryEntry[];
+}
+
+/** A summary + ordered issue list pushed by Claude or Codex (`/agent-reports`). */
+export type AgentReportSource = "claude" | "codex" | "scheduler" | "other";
+
+export interface AgentPriorityItem {
+  rank: number;
+  short_id: string | null;
+  title: string;
+  severity: string | null;
+  reason: string | null;
+  file_path: string | null;
+}
+
+export interface AgentReportSummary {
+  id: string;
+  source: AgentReportSource;
+  title: string;
+  project_id: string | null;
+  actor_label: string;
+  created_at: string;
+  summary: string;
+  item_count: number;
+}
+
+export interface AgentReport extends AgentReportSummary {
+  context: string;
+  items: AgentPriorityItem[];
+}
+
+/** Local models AI Remediation can use — `GET /scans/{id}/explain/models`. */
+export interface ExplainModels {
+  provider: string;
+  default_model: string;
+  models: string[];
+  /** Models Netra runs with thinking off (gemma4:12b, phi4, granite4, …). */
+  no_think?: string[];
+  /** Set when the Ollama server could not be reached. */
+  error: string | null;
 }
 
 export interface ScanFindings {
@@ -1860,4 +1901,154 @@ export interface LlmMonitor {
   by_model: LlmMonitorModel[];
   by_step: LlmMonitorStep[];
   top_scans: LlmMonitorScan[];
+}
+
+// --- Per-project vulnerability report (GET /projects/{id}/vulnerability-report) ---
+
+export type VulnSeverity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
+export type VulnStatus = "needs_triage" | "confirmed" | "dismissed" | "resolved" | "risk_accepted" | "fixed";
+export type VulnScanType = "sast" | "sca" | "sbom" | "dast";
+export type SeverityCounts = Record<VulnSeverity, number>;
+
+export interface VulnReportScanRef {
+  id: string;
+  version: number;
+  scan_type: VulnScanType;
+  branch: string | null;
+  commit_sha: string | null;
+  created_at: string | null;
+  triggered_by: string | null;
+}
+
+export interface VulnReportItem {
+  id: string;
+  scan_type: VulnScanType;
+  title: string;
+  severity: VulnSeverity;
+  cvss: number | null;
+  cwe: string | null;
+  owasp: string | null;
+  rule_id: string | null;
+  kind: string | null;
+  issue_class: string;
+  file_path: string | null;
+  line: number | null;
+  status: VulnStatus;
+  still_detected: boolean;
+  verdict: "true_positive" | "false_positive" | "unverified";
+  scanner_verdict: string | null;
+  unresolved_reason: string | null;
+  reachability: string | null;
+  review: {
+    reviewer: string | null;
+    reviewer_verdict: string | null;
+    resolution_status: string | null;
+    reviewed_at: string | null;
+    comment: string | null;
+  } | null;
+  first_detected_at: string | null;
+  first_scan_version: number;
+  last_detected_at: string | null;
+  last_scan_version: number;
+  last_scan_id: string;
+  last_finding_id: string;
+  fixed_at: string | null;
+  fixed_in_version: number | null;
+  resolved_at: string | null;
+  detections: number;
+  occurrences: number;
+  reintroduced: boolean;
+  age_days: number | null;
+  overdue: boolean;
+  present_in_versions: number[];
+  ai_fix: string | null;
+  example_fix: string | null;
+  risk: string | null;
+  verdict_reason: string | null;
+  snippet: string | null;
+  matched_text: string | null;
+  source: string | null;
+  sink: string | null;
+  data_flow: string | null;
+  cvss_vector: string | null;
+  remediation_ref: string | null;
+  target: string | null;
+  param: string | null;
+  /** Occurrences of this issue (one per location), open ones counted in `open_count`. */
+  /** `SB-XXXXXXXX`, the id for "fix SB-…" with the secure-fix skill; null for DAST/SCA rows. */
+  short_id?: string | null;
+  member_count: number;
+  open_count: number;
+  member_status_counts: Partial<Record<VulnStatus, number>>;
+  file_count: number;
+  locations: VulnReportLocation[];
+}
+
+export interface VulnReportLocation {
+  file_path: string | null;
+  line: number | null;
+  status: VulnStatus;
+  severity: VulnSeverity;
+  last_scan_id: string;
+  last_scan_version: number;
+  last_finding_id: string;
+  fixed_in_version: number | null;
+}
+
+export interface VulnReportTopEntry {
+  name: string;
+  count: number;
+  by_severity: SeverityCounts;
+}
+
+export interface VulnReportTrendPoint extends VulnReportScanRef {
+  open: number;
+  open_by_severity: SeverityCounts;
+  detected: number;
+  new: number;
+  reappeared: number;
+  fixed: number;
+}
+
+export interface VulnerabilityReport {
+  project: { id: string; name: string; default_branch: string };
+  filters: { branch: string | null; scan_type: VulnScanType | null; max_scans: number };
+  branches: string[];
+  generated_at: string;
+  scans: {
+    total: number;
+    successful: number;
+    failed: number;
+    running: number;
+    cancelled: number;
+    analysed: number;
+    by_type: Partial<Record<VulnScanType, number>>;
+    first_scan_at: string | null;
+    last_scan_at: string | null;
+    latest: Partial<Record<VulnScanType, VulnReportScanRef>>;
+  };
+  summary: {
+    total: number;
+    open: number;
+    fixed_total: number;
+    by_status: Record<VulnStatus, number>;
+    open_by_severity: SeverityCounts;
+    status_by_severity: Record<VulnStatus, SeverityCounts>;
+    fix_rate: number | null;
+    mttr_days: number | null;
+    median_ttr_days: number | null;
+    overdue: number;
+    overdue_by_severity: SeverityCounts;
+    reintroduced: number;
+    resolved_still_detected: number;
+    age_buckets: { label: string; count: number }[];
+    top_cwes: VulnReportTopEntry[];
+    top_files: VulnReportTopEntry[];
+    by_owasp: VulnReportTopEntry[];
+    by_tool: Partial<Record<VulnScanType, { open: number; fixed: number; dismissed: number; total: number }>>;
+    grade: "A" | "B" | "C" | "D" | "F";
+    sla_days: Record<VulnSeverity, number>;
+  };
+  trend: VulnReportTrendPoint[];
+  vulnerabilities: VulnReportItem[];
 }

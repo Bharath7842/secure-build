@@ -3,10 +3,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, computed_field, field_validator, model_validator
 
 from app.config import settings
 from app.services.llm_policy import SAST_FALLBACK_PROVIDERS, SAST_LLM_PROVIDERS
+from app.services.occurrence import group_short_id
 
 
 class ReferenceSource(BaseModel):
@@ -631,6 +632,57 @@ class FindingOut(BaseModel):
     # apart from `verdict` (what the scanner decided).
     review_state: str | None = None
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def short_id(self) -> str | None:
+        """`SB-XXXXXXXX`: the id a person types ("fix SB-7F3A9C21"). Derived from the
+        occurrence id, so it survives rescans and shifted lines; None on rows without one."""
+        return group_short_id(self.occurrence_id, self.member_occurrence_ids)
+
+
+class IssueScanOut(BaseModel):
+    """Which scan an `issues` answer was read from."""
+
+    id: str
+    version: int | None = None
+    status: str
+    branch: str | None = None
+    commit_sha: str | None = None
+    created_at: datetime | None = None
+
+
+class IssueSummaryOut(BaseModel):
+    """One line of the project's priority list: enough to choose, `GET .../issues/{short_id}` has the rest."""
+
+    short_id: str | None = None
+    severity: str
+    cvss: float | None = None
+    cwe: str | None = None
+    title: str
+    verdict: str | None = None
+    file_path: str | None = None
+    line: int | None = None
+    occurrence_count: int = 1
+    affected_files: list[str] | None = None
+
+
+class ProjectIssuesOut(BaseModel):
+    project_id: str
+    project_name: str
+    repo_url: str | None = None
+    scan: IssueScanOut
+    # Issue groups matching the filter, before `limit` cut the list.
+    total: int
+    issues: list[IssueSummaryOut]
+
+
+class ProjectIssueOut(BaseModel):
+    project_id: str
+    project_name: str
+    repo_url: str | None = None
+    scan: IssueScanOut
+    issue: FindingOut
+
 
 class DastTrafficOut(BaseModel):
     """What the scan sent for this finding (audit log + snippet). Response bodies live on
@@ -725,6 +777,33 @@ class FindingHistoryOut(BaseModel):
     scan_id: str
     finding_id: str
     entries: list[DecisionHistoryEntryOut]
+
+
+class FindingExplainMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=8000)
+
+
+class FindingExplainIn(BaseModel):
+    messages: list[FindingExplainMessage] = Field(default_factory=list, max_length=40)
+    # A model pulled on the local Ollama server; None = settings.sast_explain_ollama_model.
+    model: str | None = Field(default=None, max_length=200)
+    # `explain` is How to fix; `jira` writes a Jira-formatted ticket (Export to Jira).
+    purpose: Literal["explain", "jira"] = "explain"
+
+
+class VulnerabilityInsightsIn(FindingExplainIn):
+    branch: str | None = Field(default=None, max_length=255)
+    scan_type: Literal["sast", "sca", "sbom", "dast"] | None = None
+
+
+class FindingExplainModelsOut(BaseModel):
+    provider: str = "ollama"
+    default_model: str
+    models: list[str]
+    # Subset of `models` that Netra runs with thinking off (gemma, phi4, granite4, …).
+    no_think: list[str] = Field(default_factory=list)
+    error: str | None = None
 
 
 class DecisionDiffStateOut(BaseModel):

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import ClaudeSkillCard from "@/components/ci/ClaudeSkillCard";
 import GitlabCiGuide from "@/components/ci/GitlabCiGuide";
 import PageContainer from "@/components/PageContainer";
 import { ApiError, api } from "@/lib/api";
@@ -43,8 +44,11 @@ export default function ProjectGitlabCiPage() {
         ) : !setup ? (
           <p className="mt-6 text-sm text-[var(--muted)]">Loading…</p>
         ) : (
-          <div className="mt-8">
+          <div className="mt-8 space-y-14">
             <GitlabCiGuide setup={setup} />
+            <div className="border-t border-slate-200 pt-10">
+              <ClaudeSkillCard setup={setup} />
+            </div>
           </div>
         )}
       </div>

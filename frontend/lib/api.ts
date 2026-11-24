@@ -45,6 +45,7 @@ import type {
   Scan,
   ScanCreateInput,
   DecisionDiff,
+  ExplainModels,
   FindingHistory,
   ScanFindings,
   ScanLimitation,
@@ -55,6 +56,9 @@ import type {
   ScanStatus,
   ScanTrigger,
   TokenRepo,
+  VulnerabilityReport,
+  AgentReport,
+  AgentReportSummary,
 } from "@/lib/types";
 
 /** A readable message from a FastAPI error body: a plain string, a list of validation problems, or
@@ -201,6 +205,13 @@ export const api = {
     llm: (range: LlmMonitorRange): Promise<LlmMonitor> =>
       request(`/api/monitor/llm?${new URLSearchParams({ range }).toString()}`),
   },
+  agentReports: {
+    list: (projectId?: string | null): Promise<AgentReportSummary[]> => {
+      const q = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+      return request(`/api/agent-reports${q}`);
+    },
+    get: (id: string): Promise<AgentReport> => request(`/api/agent-reports/${id}`),
+  },
   projects: {
     list: (): Promise<Project[]> => request("/api/projects"),
     create: (input: ProjectCreateInput): Promise<Project> =>
@@ -216,6 +227,18 @@ export const api = {
     delete: (id: string): Promise<ProjectDeleteResult> =>
       request(`/api/projects/${id}`, { method: "DELETE" }),
     ciSetup: (id: string): Promise<ProjectCiSetup> => request(`/api/projects/${id}/ci-setup`),
+    insightsModels: (id: string): Promise<ExplainModels> =>
+      request(`/api/projects/${id}/vulnerability-report/insights/models`),
+    vulnerabilityReport: (
+      id: string,
+      opts: { branch?: string | null; scanType?: string | null } = {}
+    ): Promise<VulnerabilityReport> => {
+      const params = new URLSearchParams();
+      if (opts.branch != null) params.set("branch", opts.branch);
+      if (opts.scanType) params.set("scan_type", opts.scanType);
+      const query = params.toString();
+      return request(`/api/projects/${id}/vulnerability-report${query ? `?${query}` : ""}`);
+    },
   },
   gitAuth: {
     // `projectId` omitted when connecting from the new-project form, before
@@ -287,6 +310,8 @@ export const api = {
     /** Every machine and human decision on one finding, in time order. */
     findingHistory: (id: string, findingId: string): Promise<FindingHistory> =>
       request(`/api/scans/${id}/findings/${findingId}/history`),
+    /** Models pulled on the local Ollama server, for AI Remediation. */
+    explainModels: (id: string): Promise<ExplainModels> => request(`/api/scans/${id}/explain/models`),
     logs: (id: string, after = 0): Promise<ScanLogs> =>
       request(`/api/scans/${id}/logs?after=${after}`),
     narration: (id: string): Promise<DastNarration> => request(`/api/scans/${id}/narration`),

@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from app import db as app_db
 from app.auth.principal import ApiError, api_error_handler
 from app.db import init_db
+from app.routers.agent_reports import router as agent_reports_router
 from app.routers.admin_audit import router as admin_audit_router
 from app.routers.admin_users import router as admin_users_router
 from app.routers.auth import router as auth_router
@@ -15,6 +16,7 @@ from app.routers.dast_settings import router as dast_settings_router
 from app.routers.dast_training import router as dast_training_router
 from app.routers.feedback import router as feedback_router
 from app.routers.git_auth import router as git_auth_router
+from app.routers.issues import router as issues_router
 from app.routers.llm_policy import router as llm_policy_router
 from app.routers.llm_presets import router as llm_presets_router
 from app.routers.model_settings import router as model_settings_router
@@ -64,6 +66,8 @@ app.include_router(auth_router)
 app.include_router(admin_users_router)
 app.include_router(admin_audit_router)
 app.include_router(projects_router)
+app.include_router(issues_router)
+app.include_router(agent_reports_router)
 app.include_router(scans_router)
 app.include_router(ci_router)
 app.include_router(feedback_router)

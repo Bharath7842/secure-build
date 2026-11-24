@@ -108,3 +108,39 @@ def occurrence_id(project_id: str, f: Mapping[str, Any], file_path: str = "") ->
         )
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+# --- The short id a person can type -----------------------------------------
+#
+# `SB-7F3A9C21`: the first 8 hex characters of an occurrence id, upper-cased.
+# It is as stable as the occurrence id (a rescan or a shifted line keeps it) and
+# is what a developer says to the `secure-fix` Claude skill. 32 bits is plenty
+# inside one project; a lookup that matches more than one issue says so instead
+# of guessing (`issue_lookup`).
+
+SHORT_ID_PREFIX = "SB-"
+SHORT_ID_HEX_CHARS = 8
+
+
+def short_id(occurrence: str | None) -> str | None:
+    """`SB-XXXXXXXX` for an occurrence id; None when there is no id (DAST, old rows)."""
+    if not occurrence:
+        return None
+    return f"{SHORT_ID_PREFIX}{occurrence[:SHORT_ID_HEX_CHARS].upper()}"
+
+
+def group_short_id(occurrence: str | None, member_occurrence_ids: list[str] | None) -> str | None:
+    """The short id of an issue group: that of its lowest member id, so it does not
+    change when a different member becomes the group's displayed representative."""
+    members = [m for m in (member_occurrence_ids or []) if m]
+    return short_id(min(members) if members else occurrence)
+
+
+def normalize_short_id(text: str | None) -> str | None:
+    """`sb-7f3a9c21`, `SB7F3A9C21` or `7f3a9c21` -> `SB-7F3A9C21`; None if it is not one."""
+    raw = (text or "").strip().upper()
+    if raw.startswith("SB"):
+        raw = raw[2:].lstrip("-_ ")
+    if len(raw) != SHORT_ID_HEX_CHARS or any(c not in "0123456789ABCDEF" for c in raw):
+        return None
+    return f"{SHORT_ID_PREFIX}{raw}"

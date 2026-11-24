@@ -750,3 +750,24 @@ class AuditEvent(Base):
     ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     user_agent: Mapped[str | None] = mapped_column(String(256), nullable=True)
     details: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class AgentReport(Base):
+    """A summary + priority list pushed by Claude Code or Codex (not a full scan report).
+    Own table so ingest never writes scans or findings."""
+
+    __tablename__ = "agent_reports"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    source: Mapped[str] = mapped_column(String(20), default="claude")  # claude | codex | scheduler | other
+    title: Mapped[str] = mapped_column(String(500), default="")
+    context: Mapped[str] = mapped_column(Text, default="")
+    # {"summary": str, "items": [{rank, short_id, title, severity, reason, file_path}]}
+    report_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    actor_label: Mapped[str] = mapped_column(String(254), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

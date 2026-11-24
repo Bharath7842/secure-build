@@ -260,6 +260,8 @@ const SCAN_GROUPS: NavGroup[] = [
 ];
 
 const SAST_LINKS: NavItem[] = [
+  { href: "/vulnerabilities", label: "Vulnerability report", short: "VR", exact: true, icon: "shield", page: "page.history" },
+  { href: "/agent-reports", label: "Netra inbox", short: "NI", exact: true, icon: "activity", page: "page.history" },
   { href: "/feedback", label: "Feedback & Review", short: "FR", exact: true, icon: "findings", page: "page.feedback" },
   {
     href: "/projects",

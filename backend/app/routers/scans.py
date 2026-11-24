@@ -21,6 +21,8 @@ from app.schemas import (
     DastRequestAuditPageOut,
     DastScanFindingsOut,
     DecisionDiffOut,
+    FindingExplainIn,
+    FindingExplainModelsOut,
     FindingHistoryOut,
     FindingOut,
     ScanCreate,
@@ -49,6 +51,7 @@ from app.services.dast_findings_query import build_dast_findings
 from app.services.dast_scan_setup import DastSetupError, prepare_dast_scan
 from app.services.decision_diff import DiffError, build_decision_diff_xlsx, compare_scans
 from app.services.decision_history import finding_history
+from app.services import finding_explain
 from app.services.feedback import apply_effective_verdicts, effective_scan_findings
 from app.services.fp_visibility import hide_confident_false_positives
 from app.services.ollama_check import DEFAULT_FALLBACK_OLLAMA_MODEL, ollama_model_error
@@ -654,6 +657,68 @@ def get_finding_history(
     if finding is None or finding.scan_id != scan.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found")
     return {"scan_id": scan.id, "finding_id": finding.id, "entries": finding_history(db, finding)}
+
+
+@router.get("/{scan_id}/explain/models", response_model=FindingExplainModelsOut)
+def list_finding_explain_models(
+    scan_id: str,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require("scans.view_own")),
+):
+    """Models pulled on the local Ollama server that AI Remediation can use."""
+    _get_scan_or_404(db, scan_id, principal)
+    return FindingExplainModelsOut(**finding_explain.explain_models_payload())
+
+
+@router.post("/{scan_id}/findings/{finding_id}/explain/stream")
+def stream_finding_explain(
+    scan_id: str,
+    finding_id: str,
+    body: FindingExplainIn,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require("scans.view_own")),
+):
+    """Stream a finding explanation or follow-up chat from local Ollama (SSE)."""
+    from fastapi.responses import StreamingResponse
+
+    scan = _get_scan_or_404(db, scan_id, principal)
+    purpose = body.purpose or "explain"
+    # How to fix is SAST-only; Export to Jira writes a ticket for any scan type.
+    if purpose != "jira" and (scan.scan_type or "sast") != "sast":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Finding explain is only available for SAST scans.",
+        )
+    finding = db.get(Finding, finding_id)
+    if finding is None or finding.scan_id != scan.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found")
+    project = db.get(Project, scan.project_id)
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    messages = [{"role": m.role, "content": m.content} for m in body.messages]
+    model = finding_explain.resolve_model(body.model)
+
+    def event_generator():
+        ollama_err = finding_explain.preflight_error(model)
+        if ollama_err:
+            yield f"event: error\ndata: {json.dumps({'message': ollama_err})}\n\n"
+            return
+        yield f"event: meta\ndata: {json.dumps({'provider': 'ollama', 'model': model})}\n\n"
+        prompt = finding_explain.build_user_prompt(db, scan, finding, project, messages, purpose=purpose)
+        try:
+            for kind, content in finding_explain.stream_explain(
+                prompt, model, system=finding_explain.system_prompt(purpose)
+            ):
+                if kind == "thinking":
+                    yield f"event: thinking\ndata: {json.dumps({'content': content})}\n\n"
+                else:
+                    yield f"event: chunk\ndata: {json.dumps({'content': content})}\n\n"
+            yield "event: done\ndata: {}\n\n"
+        except Exception as exc:  # noqa: BLE001 — stream must not break the connection abruptly
+            yield f"event: error\ndata: {json.dumps({'message': str(exc)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 def _decision_diff(db: Session, scan_id: str, base: str, principal: Principal, include_unchanged: bool):
