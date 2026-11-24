@@ -1,9 +1,11 @@
 /**
  * The GitLab CI template the in-app guide (/projects/[id]/ci) hands out: a
- * shared `.secure-build-scan` job plus one job per scan type the project has
- * enabled. Scan only: the job starts a Secure Build scan of the pipeline's
- * commit, waits for it and saves the findings and reports as artifacts. It
- * fails only when the scan itself fails or times out; there is no findings gate.
+ * shared `.secure-build-scan` job plus one job per scan type (SAST, SCA, SBOM).
+ * Scan only: the job asks `POST /ci/scan` to scan the pipeline's repository,
+ * branch and commit (the backend finds or creates the project from the URL and
+ * clones with the job token, so no project id is configured), waits for it and
+ * saves the findings and reports as artifacts. It fails only when the scan itself
+ * fails or times out; there is no findings gate.
  */
 
 export type ScanType = "sast" | "sca" | "sbom";
@@ -21,8 +23,8 @@ const SCRIPT_BLOCK = `  before_script:
       set -eu
       : "\${SAST_API_URL:?Set the Secure Build backend URL in GitLab CI/CD variables}"
       : "\${SAST_API_TOKEN:?Set the Secure Build CI bearer token}"
-      : "\${SAST_PROJECT_ID:?Set the matching Secure Build project ID}"
       : "\${SB_SCAN_TYPE:?Set SB_SCAN_TYPE on the job}"
+      : "\${CI_PROJECT_URL:?Missing GitLab project URL}"
       : "\${CI_COMMIT_SHA:?Missing GitLab commit SHA}"
       : "\${CI_COMMIT_BRANCH:?This job requires a branch pipeline}"
       SAST_API_URL="\${SAST_API_URL%/}"
@@ -33,33 +35,52 @@ const SCRIPT_BLOCK = `  before_script:
       done
       [ "$SB_TIMEOUT_SECONDS" -gt 0 ] && [ "$SB_POLL_SECONDS" -gt 0 ]
       case "$SB_USE_LLM" in true|false) ;; *) echo "SB_USE_LLM must be true or false" >&2; exit 1 ;; esac
+      case "$SB_FORCE" in true|false) ;; *) echo "SB_FORCE must be true or false" >&2; exit 1 ;; esac
       LABEL="$(echo "$SB_SCAN_TYPE" | tr '[:lower:]' '[:upper:]')"
       OUT="\${SB_SCAN_TYPE}-artifacts"
       mkdir -p "$OUT"
 
       api() {
         # ngrok-skip-browser-warning avoids ngrok's free-tier interstitial page.
-        curl --silent --show-error --fail --connect-timeout 10 --max-time 60 \\
+        # --fail-with-body keeps the API's error text in the --output file.
+        curl --silent --show-error --fail-with-body --connect-timeout 10 --max-time 60 \\
           --header "ngrok-skip-browser-warning: 1" \\
           --header "Authorization: Bearer \${SAST_API_TOKEN}" "$@"
       }
 
-      # The backend clones the repository configured on SAST_PROJECT_ID.
-      # Never send CI_REPOSITORY_URL: it can contain GitLab job credentials.
+      # Secure Build finds this repository's project from its URL (creating it on the first
+      # scan) and clones it with this job's token: nothing to set up in the app first.
+      # Never send CI_REPOSITORY_URL: it contains the job token. The token goes only in the
+      # request body; the request.json saved as an artifact is written without it.
+      REQUEST_FILE="$(mktemp)"
+      trap 'rm -f "$REQUEST_FILE"' EXIT
       jq -n \\
-        --arg project "$SAST_PROJECT_ID" --arg commit "$CI_COMMIT_SHA" \\
-        --arg branch "$CI_COMMIT_BRANCH" --arg pipeline "$CI_PIPELINE_URL" \\
-        --arg scan_type "$SB_SCAN_TYPE" --argjson use_llm "$SB_USE_LLM" \\
-        '{project_id:$project, scan_type:$scan_type, use_llm:$use_llm, force:true,
-          commit_sha:$commit, branch:$branch,
-          metadata:{source:"gitlab", pipeline_url:$pipeline}}' > "$OUT/request.json"
+        --arg repo "$CI_PROJECT_URL.git" --arg commit "$CI_COMMIT_SHA" \\
+        --arg branch "$CI_COMMIT_BRANCH" --arg pipeline "$CI_PIPELINE_URL" --arg job "$CI_JOB_URL" \\
+        --arg token "$CI_JOB_TOKEN" --arg scan_type "$SB_SCAN_TYPE" \\
+        --argjson use_llm "$SB_USE_LLM" --argjson force "$SB_FORCE" \\
+        --arg path "$SB_PATH" --arg provider "$SB_LLM_PROVIDER" --arg model "$SB_LLM_MODEL" \\
+        '{repo_url:$repo, branch:$branch, commit_sha:$commit, job_token:$token,
+          scan_types:[$scan_type], use_llm:$use_llm, force:$force,
+          path:(if $path == "" then null else $path end),
+          llm_provider:(if $provider == "" then null else $provider end),
+          llm_model:(if $model == "" then null else $model end),
+          metadata:{source:"gitlab", pipeline_url:$pipeline, job_url:$job}}' > "$REQUEST_FILE"
+      jq 'del(.job_token)' "$REQUEST_FILE" > "$OUT/request.json"
 
       # Do not automatically retry POST: the first request may have started a scan.
-      api --request POST --header "Content-Type: application/json" \\
-        --data-binary @"$OUT/request.json" "$SAST_API_URL/scans" \\
-        --output "$OUT/trigger.json"
-      SCAN_ID="$(jq -er '.scan_id | select(type == "string" and test("^[A-Za-z0-9_-]+$"))' "$OUT/trigger.json")"
+      if ! api --request POST --header "Content-Type: application/json" \\
+        --data-binary @"$REQUEST_FILE" "$SAST_API_URL/ci/scan" \\
+        --output "$OUT/trigger.json"; then
+        echo "Secure Build rejected the scan request:" >&2
+        [ -s "$OUT/trigger.json" ] && jq -r '.detail // .' "$OUT/trigger.json" >&2
+        exit 1
+      fi
+      SCAN_ID="$(jq -er '.scans[0].scan_id | select(type == "string" and test("^[A-Za-z0-9_-]+$"))' "$OUT/trigger.json")"
       echo "Secure Build $LABEL scan: $SCAN_ID"
+      if [ "$(jq -r '.scans[0].reused' "$OUT/trigger.json")" = "true" ]; then
+        echo "Commit $CI_COMMIT_SHORT_SHA was already scanned; showing that scan. Set SB_FORCE=true for a fresh one."
+      fi
 
       # Link to the scan in the Secure Build web app, saved before polling so it is
       # kept even if the scan fails or times out.
@@ -115,14 +136,15 @@ export function buildGitlabCiYaml({ scanTypes, webUrl }: GitlabCiOptions): strin
     "# (Settings -> CI/CD -> Variables):",
     "#   SAST_API_URL    public URL of the Secure Build backend",
     "#   SAST_API_TOKEN  Secure Build CI token (masked)",
-    "#   SAST_PROJECT_ID Secure Build project ID for this repository",
+    "# That is all: the repository, branch and commit come from GitLab, and Secure Build",
+    "# creates the project for this repository on its first scan.",
     ".secure-build-scan:",
     "  stage: test",
     "  image: alpine:3.22",
     "  timeout: 40m",
     "  # Cancelling the job does not stop the backend scan, so don't auto-cancel it.",
     "  interruptible: false",
-    "  # Scans of one Secure Build project share a backend workspace: run them one at a time.",
+    "  # Scans of one repository share a backend checkout: run them one at a time.",
     "  resource_group: secure-build",
     "  # Runs on branch pipelines and scans the full repository at this commit.",
     "  rules:",
@@ -132,6 +154,12 @@ export function buildGitlabCiYaml({ scanTypes, webUrl }: GitlabCiOptions): strin
     '    SB_TIMEOUT_SECONDS: "1800"',
     '    SB_POLL_SECONDS: "20"',
     '    SB_USE_LLM: "false"',
+    "    # Scan the same commit again instead of showing the earlier scan of it.",
+    '    SB_FORCE: "false"',
+    "    # Optional: a monorepo subdirectory to scan; an LLM provider/model for SAST (else the server default).",
+    '    SB_PATH: ""',
+    '    SB_LLM_PROVIDER: ""',
+    '    SB_LLM_MODEL: ""',
     "    # Reports to save as job artifacts: any of pdf xlsx sarif junit.",
     '    SB_EXPORTS: "pdf"',
     "    # Secure Build web app, for the scan link saved in artifacts.",

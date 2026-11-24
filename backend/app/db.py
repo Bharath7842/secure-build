@@ -306,6 +306,24 @@ def _run_light_migrations(engine) -> None:
                 conn.execute(
                     text("ALTER TABLE projects ADD COLUMN git_token_expires_at DATETIME")
                 )
+        if "repo_key" not in existing_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE projects ADD COLUMN repo_key VARCHAR(500)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_repo_key ON projects (repo_key)"))
+        # CI finds a project by repository URL, so every project needs its key.
+        with engine.begin() as conn:
+            from app.services.repo_key import normalize_repo_key
+
+            pending = conn.execute(
+                text("SELECT id, default_git_url FROM projects WHERE repo_key IS NULL")
+            ).fetchall()
+            for project_id, git_url in pending:
+                key = normalize_repo_key(git_url)
+                if key:
+                    conn.execute(
+                        text("UPDATE projects SET repo_key = :k WHERE id = :pid"),
+                        {"k": key, "pid": project_id},
+                    )
 
     if "dast_request_audit" in table_names:
         audit_cols = {col["name"] for col in inspector.get_columns("dast_request_audit")}

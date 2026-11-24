@@ -37,6 +37,10 @@ class Project(Base):
     build_tool: Mapped[str | None] = mapped_column(String(80), nullable=True)
     default_git_url: Mapped[str] = mapped_column(String(500))
     default_branch: Mapped[str] = mapped_column(String(200), default="main")
+    # `normalize_repo_key(default_git_url)`, kept current by the listeners below. It lets a
+    # CI job find its project from the repository URL alone. Not unique: several projects
+    # may point at one repository.
+    repo_key: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
     monorepo_path: Mapped[str | None] = mapped_column(String(300), nullable=True)
     # "Connect GitHub" / "Connect GitLab" OAuth — set once the project owner
     # authorizes access; used to clone private repos. Never serialized back
@@ -100,6 +104,15 @@ class Project(Base):
     @property
     def llm_api_key_set(self) -> bool:
         return bool(self.llm_api_key)
+
+
+@event.listens_for(Project, "before_insert")
+@event.listens_for(Project, "before_update")
+def _sync_project_repo_key(_mapper, _connection, target: "Project") -> None:
+    """Keep `repo_key` equal to the normalized `default_git_url`, however the URL was set."""
+    from app.services.repo_key import normalize_repo_key
+
+    target.repo_key = normalize_repo_key(target.default_git_url)
 
 
 class Scan(Base):

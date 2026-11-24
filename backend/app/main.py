@@ -9,6 +9,7 @@ from app.db import init_db
 from app.routers.admin_audit import router as admin_audit_router
 from app.routers.admin_users import router as admin_users_router
 from app.routers.auth import router as auth_router
+from app.routers.ci import router as ci_router
 from app.routers.dast_rules import router as dast_rules_router
 from app.routers.dast_settings import router as dast_settings_router
 from app.routers.dast_training import router as dast_training_router
@@ -64,6 +65,7 @@ app.include_router(admin_users_router)
 app.include_router(admin_audit_router)
 app.include_router(projects_router)
 app.include_router(scans_router)
+app.include_router(ci_router)
 app.include_router(feedback_router)
 app.include_router(llm_presets_router)
 app.include_router(scan_limitations_router)

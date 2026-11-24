@@ -1,32 +1,33 @@
 # Add Secure Build scans to GitLab CI
 
-**Easiest path: the in-app guide.** In Secure Build open **Projects → GitLab CI** on the project (`/projects/<project-id>/ci`). It shows the real values to copy into GitLab's CI/CD variables (`SAST_API_URL`, `SAST_API_TOKEN` for admins only, `SAST_PROJECT_ID`) and the `.gitlab-ci.yml` to commit. `SAST_API_URL` comes from the backend's `PUBLIC_API_URL` setting, or from a running ngrok tunnel to the backend port when that is unset. The YAML is built by `frontend/lib/gitlabCiTemplate.ts`.
+Two variables and one YAML file. Nothing is set up in the Secure Build app first: no project, no project ID, no "Connect GitLab".
 
-The pipeline has a shared `.secure-build-scan` job and one job per scan type enabled on the project (SAST, SCA, SBOM). Each job starts a Secure Build scan of the pipeline's commit, waits for it and saves the findings and reports into `<type>-artifacts/`. **There is no findings gate for now:** a job fails only when the scan itself fails, times out or the API cannot be reached.
+The pipeline tells Secure Build which repository, branch and commit it is running for. Secure Build finds the project for that repository (creating it on the first scan), clones the commit, scans it and returns the results to the job. Supported scan types: **SAST, SCA and SBOM**.
 
-## 1. Prepare Secure Build
+**Easiest path: the in-app guide.** In Secure Build open **Projects → GitLab CI** (`/projects/<project-id>/ci`). It shows the values to paste into GitLab and the `.gitlab-ci.yml` to commit; the YAML is built by `frontend/lib/gitlabCiTemplate.ts`. `SAST_API_URL` comes from the backend's `PUBLIC_API_URL` setting, or from a running ngrok tunnel to the backend port when that is unset.
 
-- Run the Secure Build backend with real scanning enabled (`USE_MOCK_ENGINE=false`, `RUN_LIVE_SAST=1`) and configure a working model provider.
-- Create a Secure Build project for **the same GitLab repository** where this CI job will run. Set its repository URL and branch. Connect GitLab for private-repository access and verify a manual SAST scan works.
-- Copy the project UUID from its URL: `/projects/<project-id>`.
-- Obtain the backend's configured `SAST_API_TOKEN` from your Secure Build administrator. This is separate from a GitLab access token.
-- Make the backend reachable from your **self-hosted runner**. `SAST_API_URL` must point to the FastAPI backend, not the frontend's `/api` proxy. Inside a Docker job, `localhost` means that job container.
+There is **no findings gate for now:** a job fails only when the scan itself fails, times out or the API cannot be reached.
 
-The flow is: **GitLab job → Secure Build API → backend clones the selected commit → SAST analysis → findings → CI pass/fail**. The backend needs its own repository access; the runner's checkout credentials are not automatically available to it.
+## 1. What you need
+
+| Where | What |
+| --- | --- |
+| GitLab repository | Two CI/CD variables (below) and the `.gitlab-ci.yml` jobs |
+| GitLab repository (private repos only) | CI job token access allowed for the repository (below) |
+| Secure Build backend | Real scanning on (`USE_MOCK_ENGINE=false`, `RUN_LIVE_SAST=1`) and a working model provider for SAST with LLM review; reachable from the runner; able to reach your GitLab host over HTTPS |
+
+Nothing else. The repository URL, branch, commit and a short-lived access token all come from GitLab's built-in CI variables (`CI_PROJECT_URL`, `CI_COMMIT_BRANCH`, `CI_COMMIT_SHA`, `CI_JOB_TOKEN`).
 
 ## 2. Add GitLab variables
 
-In your GitLab application project, open **Settings → CI/CD → Variables** and add:
+In the GitLab repository (or its group, to cover many repositories at once) open **Settings → CI/CD → Variables** and add:
 
 | Variable | Value | Setting |
 | --- | --- | --- |
 | `SAST_API_URL` | Backend URL, for example `https://secure-build-api.example.com` | Regular variable |
-| `SAST_API_TOKEN` | Secure Build backend CI token | Masked and protected |
-| `SAST_PROJECT_ID` | UUID of the matching Secure Build project | Regular variable |
+| `SAST_API_TOKEN` | Secure Build backend CI token (ask your Secure Build administrator; it is not a GitLab token) | Masked. Leave "Protect variable" off, or protect every branch you scan |
 
-For the existing **Expense Tracker - B** project, use `SAST_PROJECT_ID=d6c34304-96d2-44de-b431-52b8615ec570`. It maps to `https://gitlab.com/bhrthmahesh09/expense-tracker.git`, branch `main`. Use this ID only when adding the job to that repository.
-
-Choose the backend address for your runner:
+`SAST_API_URL` must point to the FastAPI backend, not the frontend's `/api` proxy. Inside a Docker job `localhost` means the job container.
 
 | Self-hosted runner location | `SAST_API_URL` |
 | --- | --- |
@@ -34,65 +35,90 @@ Choose the backend address for your runner:
 | Docker Desktop executor on the same Mac | `http://host.docker.internal:8000`, after verifying host routing and backend binding |
 | Another machine on the same network | Your reachable internal backend hostname, preferably HTTPS |
 
-The local Mac address observed during preparation was `192.168.0.8`. `http://192.168.0.8:8000` is usable only if the backend listens on a reachable interface and the runner can connect; this LAN route has not been verified and the address may change. The documentation preview backend listens on loopback only.
-
 Test connectivity **from the runner job environment**, not just your browser:
 
 ```sh
 curl --fail --silent --show-error "$SAST_API_URL/health"
 ```
 
-The health response should report `status: ok`. A healthy endpoint does not validate the bearer token or repository access.
+The response should report `status: ok`. A healthy endpoint does not validate the token or repository access.
 
-Use environment scope `*`. Protect every branch that should run the scan so the protected token is available there. The jobs run on **branch pipelines** (`if: $CI_COMMIT_BRANCH`), including pushes and manually started pipelines; they do not run in merge-request pipelines or for tags. See [GitLab variable settings](https://docs.gitlab.com/ci/variables/).
+### Private repositories: job token access
 
-Optional settings are job variables in the YAML; a CI/CD variable of the same name overrides them:
+The backend clones with the pipeline's `CI_JOB_TOKEN`, which GitLab only honors if the repository allows it. In the repository open **Settings → CI/CD → Job token permissions** and make sure job token access is enabled (on newer GitLab versions, add the repository to the allowlist if it is restricted). Public repositories need nothing.
+
+The token is short-lived (it stops working when the job ends) and Secure Build never stores it: it is sent in the request body only, kept in the backend's memory for that one scan, masked in scan logs, and removed from the checkout's git remote afterwards. The job's saved `request.json` artifact is written without it.
+
+## 3. Add the YAML
+
+- If there is no pipeline file, save the generated YAML as `.gitlab-ci.yml` at the repository root.
+- If a pipeline already exists, merge the `.secure-build-scan` and `secure-build-*` jobs into it. Preserve existing jobs and add `test` to your `stages` if needed, or change the stage to one of yours.
+- Use a Docker or Kubernetes runner that supports the Alpine image. Add `tags` if your runners require them. A shell runner needs its own `curl` (7.76 or newer) and `jq` and a replacement for `before_script`.
+- Validate the merged YAML with GitLab's pipeline editor / CI Lint, then commit it.
+
+The jobs run on **branch pipelines** (`if: $CI_COMMIT_BRANCH`); not on merge-request pipelines or tags. There is one job per scan type, sharing a `resource_group` so the scans of one repository run one at a time.
+
+### Options (job variables in the YAML)
+
+All optional; a CI/CD variable of the same name overrides them. They apply to that scan only: they never change a project's saved settings.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `SB_EXPORTS` | `pdf` (SBOM: `pdf xlsx`) | Reports saved as artifacts: any of `pdf xlsx sarif junit` |
 | `SB_USE_LLM` | `false` | LLM review for SAST; SCA/SBOM never use the LLM |
+| `SB_LLM_PROVIDER` / `SB_LLM_MODEL` | empty (server default) | Model for this SAST scan |
+| `SB_PATH` | empty (whole repo) | Subdirectory of a monorepo to scan |
+| `SB_FORCE` | `false` | Scan a commit again instead of showing its earlier scan |
+| `SB_EXPORTS` | `pdf` (SBOM: `pdf xlsx`) | Reports saved as artifacts: any of `pdf xlsx sarif junit` |
 | `SB_WEB_URL` | the Secure Build web app URL | Used for the scan link saved in `scan-url.txt` |
 | `SB_TIMEOUT_SECONDS` / `SB_POLL_SECONDS` | `1800` / `20` | How long to wait, and how often to poll |
 
-## 3. Add the YAML to the application repository
+## 4. What happens on each run
 
-- If there is no pipeline file, save the generated YAML as `.gitlab-ci.yml` at the repository root.
-- If a pipeline already exists, merge the `.secure-build-scan` and `secure-build-*` jobs into it. Preserve existing jobs and add `test` to your existing `stages` list if needed, or change this job's stage to one of yours before deployment.
-- Use a Docker or Kubernetes runner that supports the Alpine image. If your runners require tags, add the appropriate `tags` to the job. A shell runner needs its own installed `curl` and `jq` and a suitable replacement for `before_script`.
-- Validate the merged YAML with GitLab's pipeline editor / CI Lint, then commit it to the default branch. GitLab documents validation in its [YAML reference](https://docs.gitlab.com/ci/yaml/).
-
-The job uses `force:true` to request a fresh assessment of the pipeline commit. It serializes jobs from this GitLab project to reduce conflicts against the shared backend workspace. Avoid simultaneous manual scans against the same Secure Build project while CI is using it.
-
-For an **existing shell executor**, remove `image: alpine:3.22` and replace `before_script` with:
-
-```yaml
-  before_script:
-    - command -v curl
-    - command -v jq
+```
+GitLab job -> POST /ci/scan (repo URL, branch, commit, job token)
+           -> find the project for that URL, or create it       (first scan only)
+           -> scan already exists for this commit?  yes: return it    no: clone/fetch and scan
+           -> job polls the scan, then saves findings and reports as artifacts
 ```
 
-The runner administrator must install these commands first. Set `tags` to an actual tag assigned to your runner under **Settings → CI/CD → Runners**. Do not invent a runner tag; omit tags only if the runner accepts untagged jobs.
+- **First scan of a repository:** Secure Build creates a project named after the repository path (for example `group/repo`), described as created from a CI pipeline, with the default settings. It appears under Projects like any other, and you can open it to review results.
+- **Next scans:** the same project is found by repository URL. Spelling does not matter: `.git`, a trailing slash, upper case or an `ssh` style `git@host:group/repo.git` all name one repository, and so does a project you created by hand in the app. Each new commit is the next scan **version** of the project; the workspace is fetched, not cloned again, and unchanged work is served from the LLM result cache.
+- **Same commit again** (a pipeline re-run, or SAST, SCA and SBOM jobs for one commit): the earlier scan of that commit and scan type is returned (`reused: true`) with no new work. Set `SB_FORCE=true` for a fresh scan.
+- **Branches** are a parameter of each scan, not separate projects: every branch of a repository shares one project and one version history.
+- **Concurrent pipelines** of one repository take turns on the backend (they share one checkout); a scan waiting its turn stays `queued`.
 
-## 4. Read the outcome
+## 5. Read the outcome
 
 Open **Build → Pipelines**, select the pipeline, and open `secure-build-sast` (or `-sca` / `-sbom`).
 
 | Outcome | Meaning |
 | --- | --- |
 | Passed | The scan completed; review its findings in Secure Build |
-| Failed | Missing variables, API/network errors, scan failure, or timeout |
+| Failed | Missing variables, API/network errors, scan failure, or timeout. The job prints the API's error message |
 
-Download `sast-artifacts/` (or `sca-artifacts/` / `sbom-artifacts/`) for the scan link, reports, the scan ID, latest status and findings. Open the scan in Secure Build for detailed review. These files are ordinary job artifacts; this example does not configure GitLab's security dashboard ingestion.
+Download `sast-artifacts/` (or `sca-artifacts/` / `sbom-artifacts/`) for the scan link, reports, the scan ID, latest status and findings. A passing job means the scan completed, not that there are no findings. These files are ordinary job artifacts; this example does not configure GitLab's security dashboard ingestion.
 
-To block deployment, put deployment after the scan stage and avoid `needs` or `when: always` settings that bypass the scan. A default-branch job checks code after it reaches that branch; it is not a pre-merge gate.
+## The API
 
-## Important implementation details
+`POST /ci/scan` (CI bearer token) is what the job calls; you can use it from any CI system.
 
-- This example uses `GET /scans/{id}/findings`. The current `GET /scans/{id}/results` returns discovery/usage metadata, **not** the `gate_summary` shown in older CI guides.
-- A passing job means the scan completed, not that there are no findings: review them in Secure Build.
-- Cancelling or timing out the GitLab job does not automatically cancel the backend scan. Use an authorized Secure Build account to stop it if necessary.
-- A live pipeline run still requires your actual endpoint, token, project, runner, and repository access. This template was checked with mock API responses; no live GitLab scan was executed during documentation preparation.
+```json
+{
+  "repo_url": "https://gitlab.example.com/group/repo.git",
+  "branch": "main",
+  "commit_sha": "<sha>",
+  "job_token": "<CI_JOB_TOKEN, private repos only>",
+  "scan_types": ["sast", "sca", "sbom"],
+  "use_llm": false,
+  "llm_provider": null,
+  "llm_model": null,
+  "path": null,
+  "force": false,
+  "metadata": {"pipeline_url": "…"}
+}
+```
+
+Only `repo_url` is required. The response lists `project_id`, `project_created` and one entry per scan type (`scan_id`, `status`, `status_url`, `scan_url`, `version`, `reused`). A project created in the app with a scan type switched off answers `400` naming it; enable it in the project's settings or drop it from `scan_types`. Poll `GET /scans/{id}/status`, then `GET /scans/{id}/findings` as before.
 
 ## Common setup problems
 
@@ -100,9 +126,13 @@ To block deployment, put deployment after the scan stage and avoid `needs` or `w
 | --- | --- |
 | Job absent | The jobs run only in branch pipelines; check existing `workflow` rules too |
 | Job pending | Check runner availability and any required runner tags |
-| Missing token | Verify the branch is protected and variable scope is `*` |
-| HTTP 401/403 | Verify the backend CI token and permissions; do not use a GitLab token as `SAST_API_TOKEN` |
-| HTTP 404 | Check the backend URL and Secure Build project ID |
+| Missing token variable | If the variable is protected, protect the branch too, and use environment scope `*` |
+| HTTP 401/403 | Verify the backend CI token; do not use a GitLab token as `SAST_API_TOKEN` |
+| `scanning is disabled for the project` | A project made in the app has that type off; enable it or drop it from the job |
+| HTTP 404 | Check the backend URL |
 | Connection refused/timeout | Check runner-to-backend routing, firewall, and TLS trust |
-| Repository checkout failed | Check backend GitLab authentication and that the requested commit belongs to the configured repository |
-| Model/preflight error | Verify the project's model settings and credentials on the Secure Build server |
+| Repository checkout failed | Private repo: check the job token permissions above, and that the backend can reach your GitLab host |
+| Model/preflight error | Verify the model settings and credentials on the Secure Build server |
+| Scan stays `queued` | Another scan of the same repository is running; it starts when that one ends |
+
+Cancelling or timing out the GitLab job does not cancel the backend scan; stop it from Secure Build if needed.

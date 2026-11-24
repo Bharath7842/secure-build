@@ -22,6 +22,7 @@ from app.dast.domain.identities import identity_from_public
 from app.dast.domain.redaction import redact_json, redact_text
 from app.services import (
     agent_bridge,
+    ci_credentials,
     decisions,
     engine_adapter,
     git_token,
@@ -64,6 +65,15 @@ _dast_credentials: dict[str, dict[str, dict[str, str]]] = {}
 def set_dast_credentials(scan_id: str, credentials: dict[str, dict[str, str]]) -> None:
     with _dast_secrets_lock:
         _dast_credentials[scan_id] = credentials
+
+
+def _clone_credentials(scan_id: str, project) -> tuple[str | None, str | None]:
+    """(provider, token) for git: the pipeline's job token when the scan came from CI with
+    one, else the project's own "Connect GitLab/GitHub" token."""
+    job_token = ci_credentials.get_job_token(scan_id)
+    if job_token:
+        return git_workspace.GITLAB_JOB_PROVIDER, job_token
+    return project.git_provider, git_token.fresh_access_token(project)
 
 
 def _pop_dast_credentials(scan_id: str) -> dict[str, dict[str, str]]:
@@ -370,8 +380,7 @@ def reconcile_unverified_findings(scan_id: str, *, capped: bool = False) -> None
                 scan.git_url,
                 scan.branch,
                 scan.commit_sha,
-                project.git_provider,
-                git_token.fresh_access_token(project),
+                *_clone_credentials(scan_id, project),
             )
             scope = (
                 (meta.get("repo_path") or "").strip()
@@ -838,8 +847,7 @@ def _execute_sca_scan(db, scan: Scan, project) -> None:
                         scan.git_url,
                         scan.branch,
                         scan.commit_sha,
-                        project.git_provider,
-                        git_token.fresh_access_token(project),
+                        *_clone_credentials(scan_id, project),
                     )
                 except Exception as exc:  # noqa: BLE001 - surface checkout errors on the scan row
                     db.rollback()
@@ -955,8 +963,7 @@ def _execute_sbom_scan(db, scan: Scan, project) -> None:
                         scan.git_url,
                         scan.branch,
                         scan.commit_sha,
-                        project.git_provider,
-                        git_token.fresh_access_token(project),
+                        *_clone_credentials(scan_id, project),
                     )
                 except Exception as exc:  # noqa: BLE001 - surface checkout errors on the scan row
                     db.rollback()
@@ -1485,6 +1492,23 @@ def _collect_parallel_scanners(
 
 
 def execute_scan(scan_id: str) -> None:
+    """Run a scan; scans of one project take turns because they share its checkout
+    (see `git_workspace.workspace_lock`). A scan waiting its turn stays `queued`."""
+    db = db_module.SessionLocal()
+    try:
+        scan = db.get(Scan, scan_id)
+        project_id = scan.project_id if scan is not None else None
+        uses_workspace = scan is not None and (scan.scan_type or "sast") != "dast"
+    finally:
+        db.close()
+    if not uses_workspace or not project_id:
+        _execute_scan_unlocked(scan_id)
+        return
+    with git_workspace.workspace_lock(project_id):
+        _execute_scan_unlocked(scan_id)
+
+
+def _execute_scan_unlocked(scan_id: str) -> None:
     # Look up SessionLocal via the module (not a direct import) because
     # tests call init_db(tmp_url) *after* this module has already been
     # imported, which rebinds app.db.SessionLocal to a fresh sessionmaker.
@@ -1586,8 +1610,7 @@ def execute_scan(scan_id: str) -> None:
                             scan.git_url,
                             scan.branch,
                             scan.commit_sha,
-                            project.git_provider,
-                            git_token.fresh_access_token(project),
+                            *_clone_credentials(scan_id, project),
                         )
                     except Exception as exc:  # noqa: BLE001 - surface checkout errors on the scan row
                         db.rollback()

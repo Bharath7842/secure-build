@@ -375,6 +375,63 @@ class ScanTriggerOut(BaseModel):
     reused_reason: str | None = None
 
 
+CI_SCAN_TYPES = ("sast", "sca", "sbom")
+
+
+class CiScanRequest(BaseModel):
+    """`POST /ci/scan`: everything a pipeline knows about itself, and nothing about Secure Build.
+
+    The repository is identified by its URL; the project is found (or created) from it, so
+    the pipeline never needs a project id.
+    """
+
+    repo_url: str = Field(min_length=1, max_length=500)
+    branch: str | None = Field(default=None, max_length=200)
+    # The pipeline's commit. With it a re-run of the same commit reuses the earlier scan.
+    commit_sha: str | None = Field(default=None, max_length=64)
+    # The pipeline's CI_JOB_TOKEN: lets the backend clone a private repository for the
+    # length of the job. SecretStr so it never shows up in a validation error or a log.
+    job_token: SecretStr | None = None
+    scan_types: list[str] = Field(default_factory=lambda: ["sast"])
+    use_llm: bool = False
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    # Subdirectory of a monorepo to scan (the scan's `repo_path`).
+    path: str | None = Field(default=None, max_length=300)
+    force: bool = False
+    # Free-form, non-secret pipeline details (pipeline URL, job URL) kept on the scan.
+    metadata: dict = Field(default_factory=dict)
+
+    @field_validator("scan_types")
+    @classmethod
+    def _known_scan_types(cls, value):
+        cleaned = list(dict.fromkeys((v or "").strip().lower() for v in (value or []))) or ["sast"]
+        bad = [v for v in cleaned if v not in CI_SCAN_TYPES]
+        if bad:
+            raise ValueError(f"scan_types must be any of {', '.join(CI_SCAN_TYPES)}; got {', '.join(bad)}")
+        return cleaned
+
+    @field_validator("llm_provider")
+    @classmethod
+    def _known_llm_provider(cls, value):
+        return _check_choice("llm_provider", value or None, SAST_LLM_PROVIDERS)
+
+
+class CiScanItemOut(ScanTriggerOut):
+    scan_type: str
+    version: int | None = None
+    # Link to the scan in the web app.
+    scan_url: str
+
+
+class CiScanOut(BaseModel):
+    project_id: str
+    project_name: str
+    # True when this request created the project (the repository's first scan).
+    project_created: bool
+    scans: list[CiScanItemOut]
+
+
 class ScanOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

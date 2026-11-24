@@ -99,7 +99,7 @@ export default function GitlabCiGuide({ setup }: { setup: ProjectCiSetup }) {
         </div>
         <p className="mt-2 text-sm text-[var(--muted)]">Add each one below: copy the key, then the value. Leave Environment scope as <span className="font-mono">All (default)</span>.</p>
 
-        <div className="mt-5 grid gap-4 lg:grid-cols-3">
+        <div className="mt-5 grid gap-4 lg:grid-cols-2">
           <VariableCard
             name="SAST_API_URL"
             value={setup.api_url}
@@ -121,8 +121,12 @@ export default function GitlabCiGuide({ setup }: { setup: ProjectCiSetup }) {
             settings="Visibility: Masked. Leave “Protect variable” unticked so every branch can use it."
             missing="Only an admin can see this token. Ask your Secure Build admin to add it."
           />
-          <VariableCard name="SAST_PROJECT_ID" value={setup.project_id} settings="Visibility: Visible." />
         </div>
+        <p className="mt-4 text-sm text-[var(--muted)]">
+          That is everything to configure. The repository, branch and commit come from GitLab itself, and the first scan of a repository sets up its project
+          here automatically. For a private repository, the backend clones with the pipeline&apos;s job token: in GitLab, open{" "}
+          <span className="font-mono text-[var(--ink)]">Settings → CI/CD → Job token permissions</span> and make sure this repository allows it.
+        </p>
       </section>
 
       <section>

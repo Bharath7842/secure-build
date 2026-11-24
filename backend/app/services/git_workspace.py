@@ -10,9 +10,32 @@ import base64
 import re
 import subprocess
 from pathlib import Path
-from urllib.parse import urlparse, urlunparse
+import threading
+from contextlib import contextmanager
+from urllib.parse import quote, urlparse, urlunparse
 
 from app.config import settings
+
+# Provider name for a credential that is a GitLab pipeline's CI_JOB_TOKEN, not a project's
+# OAuth connection. Never stored on a project (see `app.services.ci_credentials`).
+GITLAB_JOB_PROVIDER = "gitlab_job"
+
+_workspace_locks_guard = threading.Lock()
+_workspace_locks: dict[str, threading.Lock] = {}
+
+
+@contextmanager
+def workspace_lock(project_id: str):
+    """One checkout of a project's workspace at a time.
+
+    Every scan of a project shares `workspaces_dir/<project_id>`; a second scan checking
+    out another commit while the first one is still reading files would change the code
+    under it. Scans of one project therefore take turns (different projects don't wait).
+    """
+    with _workspace_locks_guard:
+        lock = _workspace_locks.setdefault(project_id, threading.Lock())
+    with lock:
+        yield
 
 
 _LS_REMOTE_TIMEOUT = 15
@@ -62,11 +85,15 @@ def authenticated_clone_url(
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         return url
-    username = "x-access-token" if git_provider == "github" else "oauth2"
+    if git_provider == GITLAB_JOB_PROVIDER:
+        # A pipeline's CI_JOB_TOKEN: `gitlab-ci-token` is the username GitLab expects for it.
+        username = "gitlab-ci-token"
+    else:
+        username = "x-access-token" if git_provider == "github" else "oauth2"
     host = parsed.hostname or ""
     if parsed.port:
         host = f"{host}:{parsed.port}"
-    netloc = f"{username}:{git_access_token}@{host}"
+    netloc = f"{username}:{quote(git_access_token, safe='')}@{host}"
     return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
 
 
@@ -213,6 +240,10 @@ def ensure_workspace(
     _git(["checkout", "--force", checkout_target], cwd=workspace)
     reset_target = commit_sha or f"origin/{branch}"
     _git(["reset", "--hard", reset_target], cwd=workspace)
+
+    if git_provider == GITLAB_JOB_PROVIDER:
+        # A job token is only good while its pipeline runs; don't leave it in .git/config.
+        _git(["remote", "set-url", "origin", normalize_git_url(git_url)], cwd=workspace)
 
     return workspace
 

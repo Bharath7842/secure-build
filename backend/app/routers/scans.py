@@ -31,7 +31,15 @@ from app.schemas import (
     ScanStatusOut,
     ScanTriggerOut,
 )
-from app.services import dast_narration, git_token, git_workspace, llm_policy, scan_log, scan_runner
+from app.services import (
+    ci_credentials,
+    dast_narration,
+    git_token,
+    git_workspace,
+    llm_policy,
+    scan_log,
+    scan_runner,
+)
 from app.services import dast_settings
 from app.services.dast_authz import build_authz_matrix
 from app.services.dast_diff import build_diff
@@ -195,6 +203,21 @@ def trigger_scan(
     db: Session = Depends(get_db),
     principal: Principal = Depends(require("projects.view", "scans.view_own")),
 ):
+    return create_scan(payload, request, db, principal)
+
+
+def create_scan(
+    payload: ScanCreate,
+    request: Request,
+    db: Session,
+    principal: Principal,
+    clone_token: str | None = None,
+) -> ScanTriggerOut:
+    """Start (or reuse) a scan. The one implementation behind `POST /scans` and `POST /ci/scan`.
+
+    `clone_token` is a CI pipeline's job token: it is used to resolve the branch head and
+    to clone, is held in memory for this scan only, and is never stored.
+    """
     scan_type = (payload.scan_type or "sast").strip().lower()
     if scan_type not in _VALID_SCAN_TYPES:
         raise HTTPException(
@@ -259,9 +282,11 @@ def trigger_scan(
     # "scan again" with no changes can be recognized as a no-op below instead
     # of always kicking off a brand-new full scan.
     if not commit_sha and not payload.force and not is_dast:
-        commit_sha = git_workspace.resolve_remote_head(
-            git_url, branch, project.git_provider, git_token.fresh_access_token(project)
-        )
+        if clone_token:
+            head_provider, head_token = git_workspace.GITLAB_JOB_PROVIDER, clone_token
+        else:
+            head_provider, head_token = project.git_provider, git_token.fresh_access_token(project)
+        commit_sha = git_workspace.resolve_remote_head(git_url, branch, head_provider, head_token)
         resolved_from_git = commit_sha is not None
 
     if not payload.force and not is_dast:
@@ -388,6 +413,9 @@ def trigger_scan(
 
     if is_dast and prepared.credentials:
         scan_runner.set_dast_credentials(scan.id, prepared.credentials)
+    if clone_token and not is_dast:
+        # Before the worker starts: it reads the token when it clones.
+        ci_credentials.set_job_token(scan.id, clone_token)
     scan_runner.start_scan_background(scan.id)
     db.refresh(scan)
 
