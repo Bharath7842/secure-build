@@ -57,9 +57,9 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_request_timeout: int = 600  # seconds per Ollama /api/chat call
     # Per-finding "Explain with AI" (local Ollama; independent of the scan's LLM provider).
-    sast_explain_ollama_model: str = "gpt-oss:20b"
+    sast_explain_ollama_model: str = "gpt-oss:latest"
     # Shown first in Netra chat pickers (How to fix, Insights, Export to Jira) when pulled.
-    sast_explain_offered_models: list[str] = ["gpt-oss:20b", "gemma4:12b"]
+    sast_explain_offered_models: list[str] = ["gpt-oss:latest", "gpt-oss:20b", "gemma4:12b"]
     sast_explain_max_context_chars: int = 24000
     sast_explain_file_window_lines: int = 45
     sast_explain_max_tokens: int = 3000

@@ -61,7 +61,7 @@ export function savePreferredModel(model: string) {
 }
 
 /** Always listed in Netra chat pickers (How to fix, Insights, Export to Jira). */
-export const NETRA_CHAT_MODELS = ["gpt-oss:20b", "gemma4:12b"] as const;
+export const NETRA_CHAT_MODELS = ["gpt-oss:latest", "gpt-oss:20b", "gemma4:12b"] as const;
 
 const NO_THINK_PREFIXES = ["gemma", "phi4", "granite4"];
 

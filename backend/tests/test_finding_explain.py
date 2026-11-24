@@ -172,11 +172,12 @@ def test_models_endpoint_lists_pulled_models(client, sast_scan, monkeypatch):
 def test_offered_netra_models_lead_the_list_when_pulled():
     assert finding_explain.merge_explain_models(
         ["phi4-mini:3.8b", "gemma4:12b", "gpt-oss:20b", "qwen2.5-coder:14b"]
-    ) == ["gpt-oss:20b", "gemma4:12b", "phi4-mini:3.8b", "qwen2.5-coder:14b"]
+    ) == ["gpt-oss:latest", "gpt-oss:20b", "gemma4:12b", "phi4-mini:3.8b", "qwen2.5-coder:14b"]
 
 
 def test_offered_netra_models_appear_even_if_not_pulled():
     assert finding_explain.merge_explain_models(["phi4-mini:3.8b"]) == [
+        "gpt-oss:latest",
         "gpt-oss:20b",
         "gemma4:12b",
         "phi4-mini:3.8b",
