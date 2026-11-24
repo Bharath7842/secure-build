@@ -1276,7 +1276,7 @@ def test_scan_triage_files_passes_shared_usage_to_llm(tmp_path, llm_file_scan, r
 
 
 def test_scan_file_cutoff_routes_shared_usage_to_ollama(tmp_path, llm_file_scan, rules, monkeypatch):
-    """Passing the scan usage dict (not an empty local copy) lets the $2 cutoff fire."""
+    """Passing the scan usage dict (not an empty local copy) lets the cost cutoff fire."""
     import sys
 
     llm = sys.modules["llm_client"]

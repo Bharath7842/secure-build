@@ -24,7 +24,7 @@ filenames.
 
 Findings come from two passes (`pipeline/llm_file_scan.py`):
 
-- **The top `DEEP_SCAN_FILE_CAP` (100) CRITICAL / HIGH files, by priority** —
+- **The top `DEEP_SCAN_FILE_CAP` (150) CRITICAL / HIGH files, by priority** —
   the LLM scans the whole file. These patterns are only *prompt guidance*
   there (title/cwe/severity/owasp; the regex itself is never sent), and they
   never gate: every file that makes it into this tier is scanned whether or

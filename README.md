@@ -36,7 +36,7 @@ Secure Build is an application-security platform with a **FastAPI** backend and 
 - Deterministic tech-stack detection (marker files, dependency manifests, tree-sitter) and risk ranking of every file (CRITICAL / HIGH / MEDIUM / LOW).
 - LLM deep scan of the highest-risk files, guided by a regex rule catalog and per-stack "vulnerability surfaces". Remaining files get a fast regex triage tier, and every hit is then confirmed or dismissed by the LLM.
 - Verdicts: `true_positive`, `false_positive`, and `unverified` (a pattern matched and nobody has reviewed it yet).
-- Token-efficiency features: prompt caching on Bedrock, JSON-envelope outputs, batched confirmations, and a cross-scan LLM result cache. A per-scan spend cutoff (default $2) caps cost.
+- Token-efficiency features: prompt caching on Bedrock, JSON-envelope outputs, batched confirmations, and a cross-scan LLM result cache. A per-scan spend cutoff (default $3) caps cost.
 - Pluggable LLM providers: AWS Bedrock, the local Claude CLI (one Claude session per scan), any OpenAI-compatible endpoint (vLLM, LM Studio, llama.cpp, OpenAI), and Ollama. A per-project `local_only` data policy blocks any non-local provider.
 
 **DAST**
@@ -449,12 +449,12 @@ scan_directory → analyze_tech_stack → categorize_files → map_modules_and_r
 |---|---|
 | Tech stack | Deterministic: marker files, dependency manifests, tree-sitter. No LLM. |
 | Risk mapping | Every file is classified CRITICAL / HIGH / MEDIUM / LOW, by directory and filename conventions per stack. |
-| Deep scan | The top 100 CRITICAL/HIGH files (spare slots are backfilled with MEDIUM files) go to the LLM in full, with the rule catalog as guidance. Findings are written incrementally. |
+| Deep scan | The top 150 CRITICAL/HIGH files (spare slots are backfilled with MEDIUM files) go to the LLM in full, with the rule catalog as guidance. Findings are written incrementally. |
 | Triage | All remaining files get a local regex pass. Hits become `unverified` findings, grouped by construct. |
 | Confirmation | The LLM confirms or dismisses every group, so a finished scan should not leave findings `unverified`. |
 | Report | True-positive, false-positive and unverified totals plus OWASP category counts. |
 
-Generated code and vendored or minified assets are skipped by content, not by path. A spend cutoff (default $2) bounds LLM cost.
+Generated code and vendored or minified assets are skipped by content, not by path. A spend cutoff (default $3) bounds LLM cost.
 
 For depth, see [docs/how-scan-works.md](docs/how-scan-works.md), [backend/sast_engine/README.md](backend/sast_engine/README.md) and [CLAUDE.md](CLAUDE.md).
 
@@ -539,7 +539,7 @@ There is no frontend test runner. Use lint and the Next.js build.
 | Scans return mock-looking results | `USE_MOCK_ENGINE` is still `true`. Set it to `false`, set `RUN_LIVE_SAST=1`, and restart the backend. |
 | `ModuleNotFoundError: boto3` / `langgraph` during a live scan | Install the full requirements in the backend venv: `pip install -r requirements.txt`. |
 | Bedrock `AccessDenied` / `ResourceNotFound` | Check the AWS credentials and region, and that the model is enabled in Bedrock for your account. |
-| Scan stops with LLM budget exhausted | The $2 cutoff was reached. Remaining work is recorded as `unverified`. |
+| Scan stops with LLM budget exhausted | The $3 cutoff was reached. Remaining work is recorded as `unverified`. |
 | Private repo clone fails | Connect GitHub/GitLab for the project or supply an access token. |
 | DAST crawl fails to start a browser | Run `python -m playwright install --with-deps chromium` in the backend venv. |
 | `npm run dev` fails on Node version | Next.js 16 needs Node 20.9+. |

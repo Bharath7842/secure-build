@@ -229,7 +229,7 @@ UNCAPPED_PROVIDERS = (PROVIDER_OLLAMA, PROVIDER_CLAUDE_CLI, PROVIDER_OPENAI_CLI)
 # Disabled when the primary provider is ollama or claude_cli (a local model, or
 # a subscription with nothing billed per call). Parallel workers may slightly
 # overshoot before the next call sees the updated total.
-LLM_COST_CUTOFF_USD = float(os.environ.get("LLM_COST_CUTOFF_USD", "2.0"))
+LLM_COST_CUTOFF_USD = float(os.environ.get("LLM_COST_CUTOFF_USD", "3.0"))
 DEFAULT_FALLBACK_LLM_PROVIDER = os.environ.get("FALLBACK_LLM_PROVIDER", PROVIDER_NONE)
 DEFAULT_FALLBACK_LLM_MODEL = os.environ.get("FALLBACK_LLM_MODEL", "")
 

@@ -160,7 +160,7 @@ UNVERIFIED_FINDING_SEVERITIES = LLM_RISK_LEVELS | TRIAGE_RISK_LEVELS
 # CRITICAL/HIGH risk_level are routed into the regex-gated triage tier instead
 # of the whole-file scan — see node_map_modules_and_risk. Overridable per-scan
 # via state["deep_scan_file_cap"].
-DEEP_SCAN_FILE_CAP = 100
+DEEP_SCAN_FILE_CAP = 150
 
 # How the MEDIUM/LOW (+ deep-scan overflow) tier turns regex hits into findings.
 #
@@ -2119,7 +2119,7 @@ def scan_chunk(
     it still fails the error is returned rather than silently yielding zero
     findings, which is how the old version lost whole chunks.
 
-    `usage` must be the shared scan usage dict so the $2 Bedrock cutoff in
+    `usage` must be the shared scan usage dict so the Bedrock cost cutoff in
     `llm_client._resolve_provider_for_call` can see running cost_usd.
     """
     system = system_prompt or build_system_prompt(catalog, stack_context)
@@ -2612,7 +2612,7 @@ def scan_deep_files(
     Files and the chunks within them run concurrently, bounded globally by
     MAX_INFLIGHT_LLM_CALLS. `findings_writer(file_path, findings)` is called
     once per file (TP and FP together). Pass the shared scan `usage` dict so
-    the $2 Bedrock cutoff applies across calls.
+    the Bedrock cost cutoff applies across calls.
 
     `entries`, when given, is the exact working set (already resolved by the
     caller, e.g. via `files_for_paths`) and `module_plan`'s own files are

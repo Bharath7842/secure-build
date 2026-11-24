@@ -64,7 +64,7 @@ flowchart TD
    module boundary discovery (e.g. multi-module Maven builds). Test code —
    by directory or by name (`FooTest.java`, `*.spec.ts`, ...) — stays in
    Discovery but leaves both scan tiers.
-5. **Deep LLM scan (top `DEEP_SCAN_FILE_CAP` CRITICAL / HIGH)** — the top 100
+5. **Deep LLM scan (top `DEEP_SCAN_FILE_CAP` CRITICAL / HIGH)** — the top 150
    CRITICAL/HIGH files by priority (CRITICAL first, then HIGH; once the call
    graph exists the set is re-picked by framework entry points, then typed
    sinks, per file — cap overridable via `deep_scan_file_cap`) are
@@ -118,8 +118,8 @@ precision in this tier come entirely from the catalog: anything no pattern
 describes is not reported, and a noisy pattern produces noisy `unverified`
 findings with nothing downstream to filter them.
 
-Bedrock scans keep a **$2 spend cutoff** (`LLM_COST_CUTOFF_USD`): once
-estimated Bedrock cost reaches $2, remaining calls in that scan continue on
+Bedrock scans keep a **$3 spend cutoff** (`LLM_COST_CUTOFF_USD`): once
+estimated Bedrock cost reaches $3, remaining calls in that scan continue on
 fallback Ollama. Both finding stages share one usage dict so the cutoff applies
 across the whole run — though in the default `regex_only` mode step 6 makes no
 LLM calls, so the deep scan is effectively the only spender.

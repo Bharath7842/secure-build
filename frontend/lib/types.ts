@@ -316,7 +316,7 @@ export interface ScanDiscoveryAstFindings {
 }
 
 /** Output of `generate_report` — aggregate TP/FP totals from the LLM-primary
- * scan of the top 100 CRITICAL/HIGH files plus the regex-gated triage of
+ * scan of the top 150 CRITICAL/HIGH files plus the regex-gated triage of
  * MEDIUM/LOW and any CRITICAL/HIGH overflow past that cap (per-finding
  * detail lives behind `GET /scans/{id}/findings`). */
 export interface ScanReport {

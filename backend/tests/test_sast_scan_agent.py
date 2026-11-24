@@ -284,7 +284,7 @@ def test_node_map_modules_and_risk_flags_critical_and_low(agent, project_tree):
     assert by_path["tests/test_app.py"] == "LOW"
     assert len(module_plan["scan_priority"]) == 2
     assert {f["path"]: f.get("lang") for f in module_plan["files"]}["app/auth.py"] == "python"
-    # Only 2 CRITICAL files against the default 100-file cap, so backfill
+    # Only 2 CRITICAL files against the default 150-file cap, so backfill
     # (default on) fills the rest of the budget with the MEDIUM file — nothing
     # is left for regex-gated triage in this tiny fixture.
     # risk_level (asserted above) stays MEDIUM/LOW regardless of which tier
@@ -480,11 +480,13 @@ def test_schema_cvs_log4j_are_dropped_from_discovery(agent, tmp_path):
 
 
 def test_node_map_modules_and_risk_caps_deep_scan_and_overflows_to_triage(agent, tmp_path):
-    """A repo with more CRITICAL files than DEEP_SCAN_FILE_CAP (100) only sends
-    the first 100 (bucket order) to the full LLM scan; the rest join the
+    """A repo with more CRITICAL files than DEEP_SCAN_FILE_CAP only sends
+    the first cap (bucket order) to the full LLM scan; the rest join the
     regex-gated triage tier instead of being dropped."""
+    cap = agent.llm_file_scan.DEEP_SCAN_FILE_CAP
+    total = cap + 20
     (tmp_path / "requirements.txt").write_text("flask==3.0\n", encoding="utf-8")
-    for i in range(120):
+    for i in range(total):
         (tmp_path / f"auth_{i}").mkdir(exist_ok=True)
         (tmp_path / f"auth_{i}" / "auth.py").write_text("def login():\n    pass\n", encoding="utf-8")
 
@@ -495,9 +497,9 @@ def test_node_map_modules_and_risk_caps_deep_scan_and_overflows_to_triage(agent,
     result = agent.node_map_modules_and_risk(state)
     module_plan = result["module_plan"]
 
-    assert module_plan["risk_counts"]["CRITICAL"] == 120  # true risk count is untouched by the cap
-    assert len(module_plan["deep_scan_paths"]) == agent.llm_file_scan.DEEP_SCAN_FILE_CAP == 100
-    assert set(module_plan["deep_scan_paths"]) <= {f"auth_{i}/auth.py" for i in range(120)}
+    assert module_plan["risk_counts"]["CRITICAL"] == total  # true risk count is untouched by the cap
+    assert len(module_plan["deep_scan_paths"]) == cap == 150
+    assert set(module_plan["deep_scan_paths"]) <= {f"auth_{i}/auth.py" for i in range(total)}
 
     # The 20 overflow CRITICAL files join triage ahead of requirements.txt (MEDIUM).
     triage = module_plan["triage_scan_paths"]
@@ -505,7 +507,7 @@ def test_node_map_modules_and_risk_caps_deep_scan_and_overflows_to_triage(agent,
     assert triage[-1] == "requirements.txt"
     overflow = set(triage[:-1])
     assert len(overflow) == 20
-    assert overflow <= {f"auth_{i}/auth.py" for i in range(120)}
+    assert overflow <= {f"auth_{i}/auth.py" for i in range(total)}
     # No file is scheduled for both tiers.
     assert overflow.isdisjoint(module_plan["deep_scan_paths"])
 
