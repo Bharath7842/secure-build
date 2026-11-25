@@ -46,6 +46,7 @@ import type {
   ScanCreateInput,
   DecisionDiff,
   ExplainModels,
+  FindingDetail,
   FindingHistory,
   ScanFindings,
   ScanLimitation,
@@ -307,6 +308,9 @@ export const api = {
           includeUnchanged ? "&include_unchanged=true" : ""
         }`,
       ),
+    /** Everything stored about one finding. */
+    finding: (id: string, findingId: string): Promise<FindingDetail> =>
+      request(`/api/scans/${id}/findings/${findingId}`),
     /** Every machine and human decision on one finding, in time order. */
     findingHistory: (id: string, findingId: string): Promise<FindingHistory> =>
       request(`/api/scans/${id}/findings/${findingId}/history`),

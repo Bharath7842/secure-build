@@ -425,6 +425,13 @@ export interface Finding {
   roles?: string[];
 }
 
+/** One finding in full (a single row, not a group; nothing shortened). */
+export interface FindingDetail extends Finding {
+  risk?: string | null;
+  example_fix?: string | null;
+  owasp_ref?: string | null;
+}
+
 export interface ReachabilityStep {
   file: string;
   line: number;

@@ -12,6 +12,7 @@ import {
   VERDICT_ROW,
   VERDICT_TEXT,
   normalizeSeverity,
+  severityExplanation,
 } from "@/lib/findingStyles";
 import {
   VERDICT_TABS,
@@ -123,23 +124,6 @@ function AffectedLines({ locations }: { locations: { file_path: string; line: nu
       )}
     </div>
   );
-}
-
-/** "HIGH · CVSS 3.1 8.8 · CWE-89 baseline: … · PR:L — … · was MEDIUM", or null. */
-function severityExplanation(finding: Finding): string | null {
-  const basis = finding.severity_basis;
-  if (!basis) return null;
-  const parts = [normalizeSeverity(finding.severity, true)];
-  if (finding.cvss != null) parts.push(`CVSS 3.1 ${finding.cvss.toFixed(1)}`);
-  if (basis.source === "cwe") parts.push(`${basis.cwe} baseline${basis.rationale ? `: ${basis.rationale}` : ""}`);
-  else if (basis.source === "rule") parts.push(`rule-specific vector (${basis.cwe ?? "no CWE"})`);
-  else if (basis.note) parts.push(basis.note);
-  for (const a of basis.adjustments ?? []) parts.push(`${a.metric}:${a.to} — ${a.why}`);
-  if ((basis.source === "rule" || basis.source === "cwe") && basis.note) parts.push(basis.note);
-  if (basis.original_severity && basis.original_severity !== normalizeSeverity(finding.severity, true)) {
-    parts.push(`rule/model said ${basis.original_severity}`);
-  }
-  return parts.join(" · ");
 }
 
 interface FindingRowProps {

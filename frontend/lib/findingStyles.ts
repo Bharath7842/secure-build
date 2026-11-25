@@ -1,6 +1,7 @@
 /** Severity and verdict styling shared by every findings view (SAST/SCA/SBOM panel, DAST panel,
  *  report). One place, so a severity or a verdict looks and reads the same everywhere. */
 
+import type { Finding } from "@/lib/types";
 import type { VerdictKind } from "@/lib/verdict";
 
 export const RISK_LEVELS = ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const;
@@ -65,4 +66,21 @@ export function formatConfidence(value: number | null | undefined): string | nul
   const pct = value > 1 ? value / 100 : value;
   const clamped = Math.max(0, Math.min(1, pct));
   return `${Math.round(clamped * 100)}%`;
+}
+
+/** "HIGH · CVSS 3.1 8.8 · CWE-89 baseline: … · PR:L — … · was MEDIUM", or null. */
+export function severityExplanation(finding: Finding): string | null {
+  const basis = finding.severity_basis;
+  if (!basis) return null;
+  const parts = [normalizeSeverity(finding.severity, true)];
+  if (finding.cvss != null) parts.push(`CVSS 3.1 ${finding.cvss.toFixed(1)}`);
+  if (basis.source === "cwe") parts.push(`${basis.cwe} baseline${basis.rationale ? `: ${basis.rationale}` : ""}`);
+  else if (basis.source === "rule") parts.push(`rule-specific vector (${basis.cwe ?? "no CWE"})`);
+  else if (basis.note) parts.push(basis.note);
+  for (const a of basis.adjustments ?? []) parts.push(`${a.metric}:${a.to} — ${a.why}`);
+  if ((basis.source === "rule" || basis.source === "cwe") && basis.note) parts.push(basis.note);
+  if (basis.original_severity && basis.original_severity !== normalizeSeverity(finding.severity, true)) {
+    parts.push(`rule/model said ${basis.original_severity}`);
+  }
+  return parts.join(" · ");
 }

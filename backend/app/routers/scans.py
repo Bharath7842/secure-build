@@ -23,6 +23,7 @@ from app.schemas import (
     DecisionDiffOut,
     FindingExplainIn,
     FindingExplainModelsOut,
+    FindingDetailOut,
     FindingHistoryOut,
     FindingOut,
     ScanCreate,
@@ -47,7 +48,7 @@ from app.services.dast_authz import build_authz_matrix
 from app.services.dast_diff import build_diff
 from app.services.dast_report import build_dast_report
 from app.services.dast_summary import build_summary
-from app.services.dast_findings_query import build_dast_findings
+from app.services.dast_findings_query import build_dast_findings, enrich_dast_findings
 from app.services.dast_scan_setup import DastSetupError, prepare_dast_scan
 from app.services.decision_diff import DiffError, build_decision_diff_xlsx, compare_scans
 from app.services.decision_history import finding_history
@@ -640,6 +641,26 @@ def get_scan_findings(
         hidden_fp_count=hidden_fp_count,
         findings=[FindingOut.model_validate(f) for f in grouped_findings],
     )
+
+
+@router.get("/{scan_id}/findings/{finding_id}", response_model=FindingDetailOut)
+def get_finding(
+    scan_id: str,
+    finding_id: str,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require("scans.view_own")),
+):
+    """One finding in full, with the reviewer's verdict applied (and, for DAST, its HTTP evidence)."""
+    scan = _get_scan_or_404(db, scan_id, principal)
+    finding = db.get(Finding, finding_id)
+    if finding is None or finding.scan_id != scan.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found")
+    apply_effective_verdicts(db, scan, [finding])
+    detail = FindingDetailOut.model_validate(finding)
+    if (scan.scan_type or "sast") == "dast":
+        enriched = enrich_dast_findings(db, scan, [finding])[0]
+        detail.remediation, detail.evidence = enriched.remediation, enriched.evidence
+    return detail
 
 
 @router.get("/{scan_id}/findings/{finding_id}/history", response_model=FindingHistoryOut)

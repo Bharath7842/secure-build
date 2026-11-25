@@ -48,7 +48,7 @@ function requestFromFinding(finding: Finding): DastTraffic | null {
   };
 }
 
-function EvidenceBlock({ finding }: { finding: Finding }) {
+export function EvidenceBlock({ finding }: { finding: Finding }) {
   const evidence = finding.evidence;
   if (!evidence) return null;
   const request = requestFromFinding(finding);

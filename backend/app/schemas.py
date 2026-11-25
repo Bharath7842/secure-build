@@ -740,6 +740,15 @@ class DastFindingOut(FindingOut):
         return value
 
 
+class FindingDetailOut(DastFindingOut):
+    """Everything stored about one finding of any scan type (`GET /scans/{id}/findings/{finding_id}`).
+    Unlike the lists it is one row, not a group, and no text is shortened."""
+
+    risk: str | None = None
+    example_fix: str | None = None
+    owasp_ref: str | None = None
+
+
 class DastScanFindingsOut(BaseModel):
     scan_id: str
     tp_count: int

@@ -39,6 +39,30 @@ def _sort_key(finding: Finding) -> tuple:
     return (rank, finding.target or "", finding.rule_id or "", finding.param or "")
 
 
+def enrich_dast_findings(db: Session, scan: Scan, findings: list[Finding]) -> list[DastFindingOut]:
+    """Findings with their remediation text, standards, roles and HTTP evidence."""
+    evidence_by_finding = _evidence_for(db, [f.id for f in findings])
+    audits = audits_by_seq(db, scan.id, (evidence_by_finding[f.id].audit_ref for f in findings if f.id in evidence_by_finding))
+
+    out: list[DastFindingOut] = []
+    for finding in findings:
+        item = DastFindingOut.model_validate(finding)
+        item.remediation = remediation_text(finding.remediation_ref or "")
+        item.standards = list(finding.standards or [])
+        item.roles = list(finding.roles or [])
+        stored = evidence_by_finding.get(finding.id)
+        if stored is None:
+            item.evidence = DastEvidenceOut(request=DastTrafficOut.model_validate(traffic_for(finding)))
+        else:
+            item.evidence = DastEvidenceOut.model_validate(stored)
+            seq = seq_from_ref(stored.audit_ref)
+            item.evidence.request = DastTrafficOut.model_validate(
+                traffic_for(finding, audit=audits.get(seq) if seq is not None else None, audit_ref=stored.audit_ref)
+            )
+        out.append(item)
+    return out
+
+
 def build_dast_findings(
     db: Session,
     scan: Scan,
@@ -68,26 +92,7 @@ def build_dast_findings(
         return True
 
     filtered = [r for r in rows if keep(r)]
-    grouped = sorted(group_findings_by_issue(filtered), key=_sort_key)
-    evidence_by_finding = _evidence_for(db, [g.id for g in grouped])
-    audits = audits_by_seq(db, scan.id, (evidence_by_finding[g.id].audit_ref for g in grouped if g.id in evidence_by_finding))
-
-    out: list[DastFindingOut] = []
-    for finding in grouped:
-        item = DastFindingOut.model_validate(finding)
-        item.remediation = remediation_text(finding.remediation_ref or "")
-        item.standards = list(finding.standards or [])
-        item.roles = list(finding.roles or [])
-        stored = evidence_by_finding.get(finding.id)
-        if stored is None:
-            item.evidence = DastEvidenceOut(request=DastTrafficOut.model_validate(traffic_for(finding)))
-        else:
-            item.evidence = DastEvidenceOut.model_validate(stored)
-            seq = seq_from_ref(stored.audit_ref)
-            item.evidence.request = DastTrafficOut.model_validate(
-                traffic_for(finding, audit=audits.get(seq) if seq is not None else None, audit_ref=stored.audit_ref)
-            )
-        out.append(item)
+    out = enrich_dast_findings(db, scan, sorted(group_findings_by_issue(filtered), key=_sort_key))
 
     return DastScanFindingsOut(
         scan_id=scan.id,
