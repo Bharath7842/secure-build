@@ -13,6 +13,7 @@ the hosts and models an administrator approved.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 from urllib.parse import urlsplit
@@ -26,6 +27,8 @@ from app.services import engine_files
 SAST_LLM_PROVIDERS = ("bedrock", "openai_compat", "ollama", "claude_cli", "openai_cli")
 # "none": stop LLM work at the cost cutoff instead of switching providers.
 SAST_FALLBACK_PROVIDERS = ("none", *SAST_LLM_PROVIDERS)
+
+logger = logging.getLogger(__name__)
 
 POLICY_KEY = "llm_policy"
 _HOST_ENTRY = re.compile(r"^[A-Za-z0-9._\-]{1,253}(:\d{1,5})?$|^\[[0-9A-Fa-f:.]{2,45}\](:\d{1,5})?$")
@@ -108,6 +111,41 @@ def host_of(url: str | None) -> str | None:
         return urlsplit(url or "").hostname
     except ValueError:
         return None
+
+
+def langfuse_context(project: Any, scan: Any, policy: dict[str, Any]) -> dict[str, Any] | None:
+    """What the engine needs to trace a scan's LLM calls to Langfuse
+    (`init_usage(tracing=...)`), or None when it is not configured or not allowed.
+
+    Stricter than an LLM endpoint: a public https host is not enough. Traces copy
+    prompts (repository code) somewhere nobody chose as this scan's provider, so
+    the host must be loopback or on the approved list. Never raises: a scan does
+    not depend on its monitoring."""
+    host = settings.langfuse_host.strip().rstrip("/")
+    secret = settings.langfuse_secret_key.get_secret_value() if settings.langfuse_secret_key else ""
+    if not (host and settings.langfuse_public_key and secret):
+        return None
+    try:
+        reason = endpoint_error(host, policy)
+        # Asked about plain http, the policy accepts only loopback and approved hosts.
+        if not reason and endpoint_error(re.sub(r"^https:", "http:", host, flags=re.IGNORECASE), policy):
+            reason = "the host is not approved"
+    except Exception as exc:  # noqa: BLE001
+        reason = type(exc).__name__
+    if reason:
+        logger.warning(
+            "Langfuse tracing is off: %s must be loopback or an approved host (LLM_ALLOWED_HOSTS): %s",
+            host_of(host), reason,
+        )
+        return None
+    return {
+        "host": host,
+        "public_key": settings.langfuse_public_key,
+        "secret_key": secret,
+        "scan_id": getattr(scan, "id", None),
+        "project": getattr(project, "name", None),
+        "policy": engine_policy(policy),
+    }
 
 
 def check_config(

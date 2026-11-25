@@ -37,12 +37,13 @@ def _isolate_dast_screenshots(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _llm_events_off(monkeypatch):
-    """The live LLM call log is optional and off by default; a developer's
-    LLM_EVENTS_FILE must never be written by the suite. Tests that cover it
-    pass their own event context."""
+    """The live LLM call log and Langfuse tracing are optional and off by
+    default; a developer's LLM_EVENTS_FILE / LANGFUSE_* must never be used by
+    the suite. Tests that cover them pass their own context."""
     from app.config import settings
 
     monkeypatch.setattr(settings, "llm_events_file", "")
+    monkeypatch.setattr(settings, "langfuse_host", "")
 
 
 @pytest.fixture()

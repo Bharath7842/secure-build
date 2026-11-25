@@ -140,6 +140,8 @@ def llm_usage_options(project: Project, scan: Scan | None = None) -> dict:
             {"file": settings.llm_events_file, "scan_id": getattr(scan, "id", None)}
             if settings.llm_events_file else None
         ),
+        # Optional Langfuse tracing; None unless it is configured and its host allowed.
+        "tracing": llm_policy.langfuse_context(project, scan, policy),
         # The model's streamed reasoning goes to the scan's engine log from any
         # worker thread (print() reaches it only from a captured thread).
         "log_sink": _scan_log_sink(scan.id) if getattr(scan, "id", None) else None,

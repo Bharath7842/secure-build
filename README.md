@@ -116,6 +116,7 @@ secure-build/
 ├── docs/                    CI guides (docs/ci/), "how scanning works", design plans
 ├── spec/                    DAST design/spec documents
 ├── dev/practice-targets/    Docker setup for local practice targets (Juice Shop, DVWA)
+├── dev/langfuse/            Optional Docker setup for tracing SAST LLM calls (Langfuse)
 ├── data/                    Runtime data (SQLite DB, workspaces, scan logs, screenshots) - git-ignored
 ├── CLAUDE.md                Contributor/agent guide to the architecture
 └── DAST_IMPLEMENTATION.md   DAST technical overview
@@ -381,6 +382,7 @@ The backend reads the **root** `.env` file (`secure-build/.env`) via `app/config
 | `OLLAMA_BASE_URL`, `OLLAMA_REQUEST_TIMEOUT` | Local Ollama server (default `http://localhost:11434`). |
 | `OPENAI_COMPAT_BASE_URL`, `OPENAI_COMPAT_API_KEY` | Default OpenAI-compatible endpoint (per-project overrides available). |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | Hosted providers for DAST model routing. Read from the environment only. |
+| `LANGFUSE_HOST`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | Optional Langfuse tracing of SAST LLM calls; off unless all three are set. The host must be loopback or approved. `dev/langfuse/setup.sh` sets them; see [dev/langfuse](dev/langfuse/README.md). |
 
 ### SAST tuning
 

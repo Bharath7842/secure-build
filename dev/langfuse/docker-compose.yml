@@ -1,0 +1,163 @@
+# Langfuse for tracing SAST LLM calls. Optional: Secure Build works the same without it.
+# Start it with ./setup.sh (generates the secrets in ./.env on the first run).
+#
+# Only the web UI is published, and only on 127.0.0.1. The databases and the worker sit on
+# an internal network with no route to the internet. Image versions are pinned; see README.md.
+name: secure-build-langfuse
+
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+
+x-langfuse-env: &langfuse-env
+  NEXTAUTH_URL: http://localhost:3200
+  DATABASE_URL: postgresql://langfuse:${POSTGRES_PASSWORD:?run ./setup.sh}@postgres:5432/langfuse
+  SALT: ${SALT:?run ./setup.sh}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:?run ./setup.sh}
+  TELEMETRY_ENABLED: "false"
+  CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USER: langfuse
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?run ./setup.sh}
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_AUTH: ${REDIS_PASSWORD:?run ./setup.sh}
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_PASSWORD:?run ./setup.sh}
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_PASSWORD:?run ./setup.sh}
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+
+x-depends: &depends
+  postgres: {condition: service_healthy}
+  clickhouse: {condition: service_healthy}
+  redis: {condition: service_healthy}
+  minio: {condition: service_healthy}
+
+services:
+  langfuse-web:
+    <<: *hardening
+    image: docker.langfuse.com/langfuse/langfuse:4.84.0@sha256:98dda704ccb87c5704a29eeac4a9de313fcfe9f3d1f01e1df9b8adba31f92d3b
+    depends_on: *depends
+    networks: [backend, published]
+    ports:
+      - "127.0.0.1:3200:3000"   # 3000 is the Secure Build frontend
+    mem_limit: 1536m
+    environment:
+      <<: *langfuse-env
+      # On two networks the server would otherwise bind only to the internal one's address.
+      HOSTNAME: 0.0.0.0
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?run ./setup.sh}
+      AUTH_DISABLE_SIGNUP: "true"
+      LANGFUSE_INIT_ORG_ID: secure-build
+      LANGFUSE_INIT_ORG_NAME: Secure Build
+      LANGFUSE_INIT_PROJECT_ID: secure-build-sast
+      LANGFUSE_INIT_PROJECT_NAME: Secure Build SAST
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?run ./setup.sh}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:?run ./setup.sh}
+      LANGFUSE_INIT_USER_EMAIL: ${ADMIN_EMAIL:?run ./setup.sh}
+      LANGFUSE_INIT_USER_NAME: admin
+      LANGFUSE_INIT_USER_PASSWORD: ${ADMIN_PASSWORD:?run ./setup.sh}
+
+  langfuse-worker:
+    <<: *hardening
+    image: docker.langfuse.com/langfuse/langfuse-worker:4.84.0@sha256:34c122feaa110afc8b1174d8c9933ec707d670b67e0e58334aaff43d5ce012f6
+    depends_on: *depends
+    networks: [backend]
+    mem_limit: 1536m
+    environment: *langfuse-env
+
+  clickhouse:
+    <<: *hardening
+    image: docker.io/clickhouse/clickhouse-server:26.3.62.3@sha256:de3e47c64078aa196dae2349e048fc98ba81947f651f5c20e06e46baea8ae40a
+    user: "101:101"
+    networks: [backend]
+    mem_limit: 2g
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?run ./setup.sh}
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    <<: *hardening
+    image: cgr.dev/chainguard/minio@sha256:f6243be11aaaa2fe654d260558e2b3fcef50135e78a3abfd0db802b13444f059
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" /data'
+    networks: [backend]
+    mem_limit: 512m
+    environment:
+      MINIO_ROOT_USER: langfuse
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:?run ./setup.sh}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    <<: *hardening
+    image: docker.io/redis:7@sha256:6b645a37f49b0546582468706b32e71a8b7fbb5ba4583d0f9e27a8004716b738
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDISCLI_AUTH\" --maxmemory-policy noeviction"]
+    networks: [backend]
+    mem_limit: 256m
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?run ./setup.sh}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  postgres:
+    <<: *hardening
+    image: docker.io/postgres:17@sha256:87c8b42f423b45d5247e6aa8fdb2e7762fec164c68a50fe3eb07e7bfcaf4dbcf
+    networks: [backend]
+    mem_limit: 512m
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run ./setup.sh}
+      POSTGRES_DB: langfuse
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+networks:
+  backend:
+    internal: true
+  published:
+
+volumes:
+  postgres-data:
+  clickhouse-data:
+  clickhouse-logs:
+  minio-data:
+  redis-data:

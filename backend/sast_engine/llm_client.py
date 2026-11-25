@@ -24,6 +24,7 @@ from botocore.config import Config as BotoConfig
 import endpoint_policy
 import llm_events
 import llm_gate
+import llm_tracing
 import secret_mask
 
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
@@ -441,6 +442,7 @@ def _call_slot(usage: Optional[Dict[str, Any]], provider: Optional[str] = None) 
     queued behind the limit must not be sent after the scan was cancelled."""
     with _provider_slot(usage, provider):
         check_cancelled(usage)
+        _CALL_STATE.sent_ns = time.time_ns()
         call_id = getattr(_CALL_STATE, "event_id", None)
         if call_id:
             llm_events.emit(usage, "started", call_id)
@@ -632,6 +634,7 @@ def init_usage(
     mask_secrets: bool = True,
     endpoint_policy: Optional[Dict[str, Any]] = None,
     event_context: Optional[Dict[str, Any]] = None,
+    tracing: Optional[Dict[str, Any]] = None,
     log_sink: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """`provider_options` maps provider name -> {"base_url", "api_key"} for
@@ -639,7 +642,9 @@ def init_usage(
     prompt-level secret masking for this scan. `endpoint_policy` carries the
     server's approved hosts to the HTTP providers.
     `event_context` ({"file", "scan_id"}), when given, logs every call's state
-    changes to a local JSONL file for the live monitor (llm_events; optional)."""
+    changes to a local JSONL file for the live monitor (llm_events; optional).
+    `tracing`, when given, sends every finished call to Langfuse (llm_tracing;
+    optional)."""
     provider = (provider or DEFAULT_LLM_PROVIDER or "bedrock").strip().lower()
     model = model or _default_model_for(provider)
     # Ollama / Claude CLI primary: nothing billed per call, so no cutoff.
@@ -682,6 +687,8 @@ def init_usage(
         }
     if event_context and event_context.get("file"):
         usage[llm_events.USAGE_KEY] = dict(event_context)
+    if tracing:
+        usage[llm_tracing.USAGE_KEY] = dict(tracing)
     if log_sink is not None:
         usage[LOG_SINK_USAGE_KEY] = log_sink
     if provider_options:
@@ -1145,12 +1152,29 @@ def call_llm(
                     usage, "cache_hit", call_id,
                     response=llm_events.preview(hit["text"], llm_events.RESPONSE_PREVIEW_CHARS),
                 )
+            now_ns = time.time_ns()
+            llm_tracing.record(
+                usage, step=step, provider=provider, model=model, system=system, user=user,
+                output=hit["text"], cache_hit=True, start_ns=now_ns, end_ns=now_ns,
+            )
             return hit["text"]
 
     caller_meta = meta_out
     meta_out = {}
     started_ns = time.time_ns()
     _CALL_STATE.event_id = call_id
+    _CALL_STATE.sent_ns = None
+
+    def trace(**outcome: Any) -> None:
+        # From when the call was sent: waiting for a slot is not model latency.
+        sent_ns = getattr(_CALL_STATE, "sent_ns", None) or started_ns
+        llm_tracing.record(
+            usage, step=step, provider=provider, model=model, system=system, user=user,
+            max_tokens=max_tokens, temperature=temperature,
+            start_ns=sent_ns, end_ns=time.time_ns(), queue_ms=(sent_ns - started_ns) // 1_000_000,
+            **outcome,
+        )
+
     try:
         text = _dispatch_provider(
             system, user, provider, model, max_tokens, temperature, retries,
@@ -1164,6 +1188,7 @@ def call_llm(
                 error=llm_events.preview(f"{type(exc).__name__}: {exc}", llm_events.ERROR_CHARS),
                 duration_ms=(time.time_ns() - started_ns) // 1_000_000,
             )
+        trace(error=f"{type(exc).__name__}: {exc}", cancelled=isinstance(exc, LlmScanCancelled))
         raise
     finally:
         _CALL_STATE.event_id = None
@@ -1178,6 +1203,14 @@ def call_llm(
             duration_ms=(time.time_ns() - started_ns) // 1_000_000,
             cost_usd=_call_cost(provider, model, meta_out),
             response=llm_events.preview(text, llm_events.RESPONSE_PREVIEW_CHARS),
+        )
+    if llm_tracing.enabled(usage):
+        trace(
+            output=text, thinking=meta_out.get("thinking"), stop_reason=meta_out.get("stop_reason"),
+            input_tokens=meta_out.get("input_tokens"), output_tokens=meta_out.get("output_tokens"),
+            cache_read_tokens=meta_out.get("cache_read_tokens"),
+            cache_write_tokens=meta_out.get("cache_write_tokens"),
+            cost_usd=_call_cost(provider, model, meta_out),
         )
     _LIMITER.on_success()
 

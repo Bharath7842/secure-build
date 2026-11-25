@@ -94,6 +94,12 @@ class Settings(BaseSettings):
     # A JSONL file every SAST LLM call appends its state changes to (queued,
     # started, retry, done/failed/cancelled/cache_hit). Empty = off.
     llm_events_file: str = ""
+    # --- Langfuse tracing of SAST LLM calls (optional; see dev/langfuse) ---
+    # Off unless the host and both keys are set. Traces contain repository code,
+    # so the host must be loopback or approved (LLM_ALLOWED_HOSTS / admin page).
+    langfuse_host: str = ""
+    langfuse_public_key: str = ""
+    langfuse_secret_key: SecretStr | None = None
     nvd_api_key: str | None = None
     database_url: str = DEFAULT_DATABASE_URL
     workspaces_dir: str = str(DATA_DIR / "workspaces")
@@ -231,6 +237,7 @@ class Settings(BaseSettings):
     @field_validator(
         "anthropic_api_key",
         "openai_api_key",
+        "langfuse_secret_key",
         "dast_training_admin_token",
         "setup_token",
         "frontend_proxy_secret",
