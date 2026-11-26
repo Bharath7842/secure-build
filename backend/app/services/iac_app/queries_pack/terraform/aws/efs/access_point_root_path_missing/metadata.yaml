@@ -1,0 +1,18 @@
+id: TF.AWS.EFS.ACCESS_POINT_ROOT_PATH_MISSING
+name: "EFS access point does not enforce a root directory"
+description: "The EFS access point does not specify a root path, allowing access to the entire file system root."
+severity: MEDIUM
+category: IAM
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a root_directory block with a non-root path in the aws_efs_access_point resource
+  to restrict access to a specific directory.
+references:
+  - https://docs.aws.amazon.com/efs/latest/ug/efs-access-points.html
+compliance:
+  - framework: NIST_800_53
+    control: "AC-3"

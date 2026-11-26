@@ -1,0 +1,18 @@
+id: TF.AWS.KMS.KEY_IN_PENDING_DELETION
+name: "KMS key is scheduled for deletion"
+description: "A KMS key is configured with a pending deletion window, which will permanently delete the key and make any data encrypted with it unrecoverable."
+severity: CRITICAL
+category: ENCRYPTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Remove deletion_window_in_days or set is_enabled = true to cancel the scheduled deletion.
+  Ensure no active workloads depend on this key before allowing deletion.
+references:
+  - https://docs.aws.amazon.com/kms/latest/developerguide/deleting-keys.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-12"

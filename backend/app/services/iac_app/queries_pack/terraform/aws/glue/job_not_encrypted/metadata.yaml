@@ -1,0 +1,18 @@
+id: TF.AWS.GLUE.JOB_NOT_ENCRYPTED
+name: "Glue job does not have security configuration with encryption"
+description: "The AWS Glue job does not reference a security configuration, leaving job bookmarks, logs, and S3 output unencrypted."
+severity: MEDIUM
+category: ENCRYPTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set security_configuration to reference an aws_glue_security_configuration resource
+  that enables encryption for bookmarks, logs, and S3.
+references:
+  - https://docs.aws.amazon.com/glue/latest/dg/encryption-glue-resources.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-28"

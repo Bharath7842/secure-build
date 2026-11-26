@@ -1,0 +1,17 @@
+id: TF.AWS.NEPTUNE.CLUSTER_NOT_ENCRYPTED
+name: "Neptune cluster storage is not encrypted"
+description: "The Amazon Neptune cluster does not have storage encryption enabled, leaving graph data unprotected at rest."
+severity: HIGH
+category: ENCRYPTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set storage_encrypted = true in the aws_neptune_cluster resource.
+references:
+  - https://docs.aws.amazon.com/neptune/latest/userguide/encrypt.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-28"

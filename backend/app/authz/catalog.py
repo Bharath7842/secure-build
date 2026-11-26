@@ -154,6 +154,9 @@ PERMISSIONS: tuple[Permission, ...] = (
         "page.scan_sbom", "page", "SBOM", "/sbom.", user_default=True, requires=("scans.view_own",),
     ),
     Permission(
+        "page.scan_iac", "page", "IaC", "/iac.", user_default=True, requires=("scans.view_own",),
+    ),
+    Permission(
         "page.dast", "page", "DAST", "/dast.", user_default=False, requires=("scans.view_own",),
     ),
     Permission(

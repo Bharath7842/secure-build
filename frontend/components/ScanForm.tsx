@@ -11,17 +11,18 @@ import { useModelCatalog } from "@/lib/useModelCatalog";
 interface ScanFormProps {
   /** The active project (chosen in the sidebar). */
   project: Project;
-  /** "sast" (default) | "sca" | "sbom" — "sca"/"sbom" hide the LLM fields
-   * (unused by either deterministic engine) and skip them in the submitted
-   * payload. */
-  scanType?: "sast" | "sca" | "sbom";
+  /** "sast" (default) | "sca" | "sbom" | "iac" — "sca"/"sbom"/"iac" hide the
+   * LLM fields (unused by those deterministic engines) and skip them in the
+   * submitted payload. */
+  scanType?: "sast" | "sca" | "sbom" | "iac";
   onSubmit: (input: ScanCreateInput) => Promise<void>;
 }
 
 export default function ScanForm({ project, scanType = "sast", onSubmit }: ScanFormProps) {
   const isSca = scanType === "sca";
   const isSbom = scanType === "sbom";
-  const isLlmFree = isSca || isSbom;
+  const isIac = scanType === "iac";
+  const isLlmFree = isSca || isSbom || isIac;
   const [gitUrl, setGitUrl] = useState("");
   const [repoPath, setRepoPath] = useState("");
   const [branch, setBranch] = useState("");
@@ -153,6 +154,11 @@ export default function ScanForm({ project, scanType = "sast", onSubmit }: ScanF
           SBOM scans parse dependency manifests into a CycloneDX/SPDX component inventory with a
           best-effort license/cost classification — no LLM is used for this scan type.
         </div>
+      ) : isIac ? (
+        <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-[var(--muted)]">
+          IaC scans check Terraform, Dockerfile, Kubernetes, Helm, CloudFormation, Bicep, Pulumi,
+          OpenAPI and gRPC files for security misconfigurations — no LLM is used for this scan type.
+        </div>
       ) : null}
 
       {!isLlmFree && (
@@ -226,7 +232,9 @@ export default function ScanForm({ project, scanType = "sast", onSubmit }: ScanF
               ? "Start SCA scan"
               : isSbom
                 ? "Start SBOM scan"
-                : "Start scan"}
+                : isIac
+                  ? "Start IaC scan"
+                  : "Start scan"}
         </button>
       </div>
     </form>

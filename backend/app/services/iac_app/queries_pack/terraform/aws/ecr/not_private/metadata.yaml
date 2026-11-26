@@ -1,0 +1,18 @@
+id: TF.AWS.ECR.NOT_PRIVATE
+name: "ECR repository image scanning is not enabled"
+description: "The ECR repository does not have image scanning on push enabled, leaving container images unscanned for vulnerabilities."
+severity: MEDIUM
+category: SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add an image_scanning_configuration block with scan_on_push = true in the
+  aws_ecr_repository resource.
+references:
+  - https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-scanning.html
+compliance:
+  - framework: NIST_800_53
+    control: "SI-2"

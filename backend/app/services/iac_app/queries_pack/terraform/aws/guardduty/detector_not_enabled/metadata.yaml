@@ -1,0 +1,19 @@
+id: TF.AWS.GUARDDUTY.DETECTOR_NOT_ENABLED
+name: "GuardDuty detector is not enabled"
+description: "The Amazon GuardDuty detector is not enabled, leaving the account without threat detection."
+severity: HIGH
+category: SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set enable = true in the aws_guardduty_detector resource.
+references:
+  - https://docs.aws.amazon.com/guardduty/latest/ug/guardduty_settingup.html
+compliance:
+  - framework: NIST_800_53
+    control: "SI-4"
+  - framework: PCI_DSS
+    control: "10.6"

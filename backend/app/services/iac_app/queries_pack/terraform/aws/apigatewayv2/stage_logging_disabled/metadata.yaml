@@ -1,0 +1,17 @@
+id: TF.AWS.APIGWV2.STAGE_LOGGING_DISABLED
+name: "API Gateway v2 stage has access logging disabled"
+description: "The API Gateway v2 (HTTP or WebSocket API) stage does not have access logging configured. Access logs provide visibility into API calls and are essential for security monitoring."
+severity: MEDIUM
+category: LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add an access_log_settings block with a destination_arn to the aws_apigatewayv2_stage resource.
+references:
+  - https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-logging.html
+compliance:
+  - framework: PCI_DSS
+    control: "10.2"

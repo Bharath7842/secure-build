@@ -1,0 +1,18 @@
+id: TF.AWS.EMR.CLUSTER_NOT_ENCRYPTED_AT_REST
+name: "EMR cluster does not have at-rest encryption enabled"
+description: "The Amazon EMR cluster security configuration does not have at-rest encryption enabled, leaving HDFS data and local disk data unprotected."
+severity: HIGH
+category: ENCRYPTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  In the aws_emr_security_configuration, set at_rest_encryption_configuration
+  with s3_encryption_configuration and local_disk_encryption_configuration.
+references:
+  - https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-data-encryption-options.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-28"

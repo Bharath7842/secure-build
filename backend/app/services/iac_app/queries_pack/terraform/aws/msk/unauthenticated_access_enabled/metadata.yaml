@@ -1,0 +1,19 @@
+id: TF.AWS.MSK.UNAUTHENTICATED_ACCESS
+name: "MSK cluster allows unauthenticated access"
+description: "The Amazon MSK cluster does not have client authentication configured. Without authentication (IAM, SASL/SCRAM, or mutual TLS), any client that can reach the broker endpoints can connect."
+severity: CRITICAL
+category: IAM
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Configure client_authentication in the aws_msk_cluster resource to use IAM, SASL/SCRAM, or TLS mutual authentication.
+references:
+  - https://docs.aws.amazon.com/msk/latest/developerguide/msk-authentication.html
+compliance:
+  - framework: NIST_800_53
+    control: "IA-2"
+  - framework: PCI_DSS
+    control: "8.2"

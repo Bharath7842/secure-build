@@ -163,8 +163,8 @@ export interface ScanCreateInput {
   repo_path?: string | null;
   branch?: string | null;
   commit_sha?: string | null;
-  /** "sast" (default) | "sca" | "sbom" | "dast". Selects which engine adapter path runs. */
-  scan_type?: "sast" | "sca" | "sbom" | "dast";
+  /** "sast" (default) | "sca" | "sbom" | "dast" | "iac". Selects which engine adapter path runs. */
+  scan_type?: "sast" | "sca" | "sbom" | "dast" | "iac";
   /** Required when scan_type is "dast". */
   dast?: DastInput;
   metadata?: Record<string, unknown>;

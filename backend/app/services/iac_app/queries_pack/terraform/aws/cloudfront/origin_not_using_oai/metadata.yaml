@@ -1,0 +1,18 @@
+id: TF.AWS.CLOUDFRONT.ORIGIN_NOT_USING_OAI
+name: "CloudFront distribution S3 origin is not using OAI or OAC"
+description: "The CloudFront distribution has an S3 origin that is not restricted with an Origin Access Identity (OAI) or Origin Access Control (OAC), allowing direct public access to the S3 bucket."
+severity: HIGH
+category: IAM
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add an s3_origin_config block with origin_access_identity referencing a
+  aws_cloudfront_origin_access_identity, or use an origin_access_control_id.
+references:
+  - https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-restricting-access-to-s3.html
+compliance:
+  - framework: NIST_800_53
+    control: "AC-3"

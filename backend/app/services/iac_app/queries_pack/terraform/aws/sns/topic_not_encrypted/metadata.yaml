@@ -1,0 +1,19 @@
+id: TF.AWS.SNS.TOPIC_NOT_ENCRYPTED
+name: "SNS topic is not encrypted with KMS"
+description: "The SNS topic does not have server-side encryption with a KMS key configured. Messages may contain sensitive data and should be encrypted at rest."
+severity: MEDIUM
+category: ENCRYPTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set kms_master_key_id to the ARN or alias of a KMS key on the aws_sns_topic resource.
+references:
+  - https://docs.aws.amazon.com/sns/latest/dg/sns-server-side-encryption.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-28"
+  - framework: PCI_DSS
+    control: "3.4"

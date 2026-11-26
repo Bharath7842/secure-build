@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 from app.services.iac_app.domain.document import Location, NormalizedDocument, NormalizedResource, ParsedDocument
+
+logger = logging.getLogger(__name__)
 
 
 PROVIDER_PREFIXES = {
@@ -39,8 +42,14 @@ class DocumentNormalizer:
             iac_type = parsed.iac_type
             raw = parsed.raw or {}
             file_path = parsed.file_path
+        elif not isinstance(parsed, dict):
+            logger.warning(
+                "normalize() received unexpected type %s; returning empty document",
+                type(parsed).__name__,
+            )
+            return NormalizedDocument(file="", iac_type=iac_type or "unknown", raw_evidence={})
         else:
-            payload = parsed or {}
+            payload: dict = parsed or {}
             if "raw" in payload and ("file_path" in payload or "iac_type" in payload):
                 raw = payload.get("raw") or {}
                 file_path = payload.get("file_path") or raw.get("file_path", "")
@@ -77,12 +86,23 @@ class DocumentNormalizer:
     def normalize_many(self, documents: list[ParsedDocument | dict]) -> list[NormalizedDocument]:
         result = []
         for doc in documents:
+            if doc is None:
+                continue
             if isinstance(doc, ParsedDocument):
                 if doc.errors and not doc.raw:
                     continue
-            elif isinstance(doc, dict) and doc.get("errors") and not doc.get("raw"):
+            elif not isinstance(doc, dict):
+                logger.warning(
+                    "normalize_many() skipping unexpected type %s",
+                    type(doc).__name__,
+                )
                 continue
-            result.append(self.normalize(doc))
+            elif doc.get("errors") and not doc.get("raw"):
+                continue
+            try:
+                result.append(self.normalize(doc))
+            except Exception as exc:
+                logger.warning("Failed to normalize document (%s): %s", type(doc).__name__, exc)
         return result
 
     def _normalize_terraform(self, file_path: str, raw: dict[str, Any]) -> NormalizedDocument:

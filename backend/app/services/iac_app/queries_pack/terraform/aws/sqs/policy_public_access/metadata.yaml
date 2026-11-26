@@ -1,0 +1,19 @@
+id: TF.AWS.SQS.POLICY_PUBLIC_ACCESS
+name: "SQS queue policy allows public access"
+description: "The SQS queue resource policy grants access to all principals (Principal: '*'). This may allow any AWS principal to send or receive messages from the queue."
+severity: HIGH
+category: IAM
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Remove wildcard Principal from the SQS queue policy. Restrict access to specific AWS accounts or services using Condition keys.
+references:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-security-best-practices.html
+compliance:
+  - framework: CIS_AWS
+    control: "1.22"
+  - framework: NIST_800_53
+    control: "AC-3"

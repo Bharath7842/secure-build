@@ -1,0 +1,20 @@
+id: K8S.NETWORKPOLICY.NO_INGRESS_POLICY
+name: "Namespace has no NetworkPolicy restricting ingress"
+description: "No NetworkPolicy resource in the manifest restricts ingress traffic to pods, allowing unrestricted pod-to-pod communication."
+severity: MEDIUM
+category: NETWORK
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a NetworkPolicy resource that selects pods with podSelector and includes
+  an ingress block with appropriate from rules to restrict incoming traffic.
+references:
+  - https://kubernetes.io/docs/concepts/services-networking/network-policies/
+compliance:
+  - framework: NIST_800_53
+    control: "SC-7"
+  - framework: CIS_KUBERNETES
+    control: "5.3.2"

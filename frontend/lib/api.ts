@@ -281,7 +281,7 @@ export const api = {
       request(`/api/git-auth/${provider}/token`, { method: "POST", body: JSON.stringify(input) }),
   },
   scans: {
-    list: (projectId?: string, scanType?: "sast" | "sca" | "sbom" | "dast"): Promise<Scan[]> => {
+    list: (projectId?: string, scanType?: "sast" | "sca" | "sbom" | "dast" | "iac"): Promise<Scan[]> => {
       const params = new URLSearchParams();
       if (projectId) params.set("project_id", projectId);
       if (scanType) params.set("scan_type", scanType);

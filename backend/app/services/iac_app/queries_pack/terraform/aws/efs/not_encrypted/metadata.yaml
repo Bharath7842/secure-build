@@ -1,0 +1,19 @@
+id: TF.AWS.EFS.NOT_ENCRYPTED
+name: "EFS file system is not encrypted at rest"
+description: "The Amazon EFS file system does not have encryption at rest enabled, leaving stored data unprotected."
+severity: HIGH
+category: ENCRYPTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set encrypted = true and optionally specify a kms_key_id in the aws_efs_file_system resource.
+references:
+  - https://docs.aws.amazon.com/efs/latest/ug/encryption-at-rest.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-28"
+  - framework: PCI_DSS
+    control: "3.4"

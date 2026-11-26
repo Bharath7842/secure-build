@@ -1,0 +1,20 @@
+id: TF.AWS.APIGW.STAGE_LOGGING_DISABLED
+name: "API Gateway stage has access logging disabled"
+description: "API Gateway stage does not have access logging configured. Without access logs, API requests and errors are not recorded, making it difficult to detect abuse or troubleshoot issues."
+severity: MEDIUM
+category: LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add an access_log_settings block with a destination_arn pointing to a CloudWatch log group or Kinesis Firehose stream.
+references:
+  - https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-logging.html
+  - https://www.checkov.io/5.Policy%20Index/terraform.html
+compliance:
+  - framework: CIS_AWS
+    control: "4.1"
+  - framework: PCI_DSS
+    control: "10.2"

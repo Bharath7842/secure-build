@@ -13,11 +13,40 @@ from typing import Any
 from app.services.iac_app.domain.document import NormalizedDocument
 from app.services.iac_app.domain.enums import normalize_severity
 from app.services.iac_app.scanner.queries.loader import LoadedQuery, QueryLoader
+from app.services.iac_app.scanner.security_categories import SECURITY_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
 # Generated "not configured" rules in these categories are not security findings.
 NON_SECURITY_CATEGORIES = frozenset({"COST", "RELIABILITY", "PERFORMANCE"})
+
+# Alias lookups: some query metadata.yaml files use variant category names.
+_CATEGORY_ALIASES: dict[str, str] = {
+    "SECRETS_MANAGEMENT": "SECRETS",
+    "ENCRYPTION_AT_REST": "ENCRYPTION",
+    "ENCRYPTION_IN_TRANSIT": "ENCRYPTION",
+    "ACCESS_CONTROL": "IAM",
+    "NETWORK_SECURITY": "NETWORK",
+    "CONTAINER_SECURITY": "CONTAINER",
+    "AUDIT_LOGGING": "LOGGING",
+    "LOGGING": "LOGGING",
+    "SUPPLY_CHAIN": "SUPPLY_CHAIN",
+    "SECURE_DEFAULTS": "SECURE_DEFAULTS",
+    "DATA_PROTECTION": "ENCRYPTION",
+    "IDENTITY": "IAM",
+}
+
+# Categories missing from SECURITY_CATEGORIES but with known CWE/OWASP.
+_EXTRA_CATEGORY_CWE: dict[str, str] = {
+    "LOGGING": "CWE-778",
+    "SUPPLY_CHAIN": "CWE-829",
+    "SECURE_DEFAULTS": "CWE-1188",
+}
+_EXTRA_CATEGORY_OWASP: dict[str, str] = {
+    "LOGGING": "A09:2021",
+    "SUPPLY_CHAIN": "A08:2021",
+    "SECURE_DEFAULTS": "A05:2021",
+}
 # Placeholder — no duplicate rules in the current ruleset.
 REDUNDANT_QUERY_IDS: frozenset[str] = frozenset()
 
@@ -55,7 +84,14 @@ class QueryEngine:
         iac_types: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
-        normalized = [_as_dict(doc) for doc in documents]
+        normalized = []
+        for doc in documents:
+            if doc is None:
+                continue
+            if not isinstance(doc, (dict, NormalizedDocument)):
+                logger.warning("execute() skipping unexpected document type: %s", type(doc).__name__)
+                continue
+            normalized.append(_as_dict(doc))
 
         for query in self.queries:
             meta = query.metadata
@@ -88,6 +124,9 @@ class QueryEngine:
         cloudformation_docs = []
         other_docs = []
         for doc in all_documents:
+            if not isinstance(doc, dict):
+                logger.warning("execute_global() skipping non-dict document type: %s", type(doc).__name__)
+                continue
             doc_type = (doc.get("document") or {}).get("iac_type") or doc.get("iac_type", "")
             if doc_type in {"terraform", "terraform_plan"}:
                 terraform_docs.append(doc)
@@ -192,6 +231,20 @@ class QueryEngine:
         if _is_placeholder_path(file_path):
             file_path = ""
 
+        # Derive CWE / OWASP from the query metadata category when the hit
+        # itself does not carry them (the helpers.hit() function never injects
+        # these fields — they are only present on explicit rule overrides).
+        category_upper = (meta.category or "").upper()
+        canonical_cat = _CATEGORY_ALIASES.get(category_upper, category_upper)
+        cat_info = SECURITY_CATEGORIES.get(canonical_cat, {})
+
+        raw_cwe = hit.get("cwe")
+        raw_owasp = hit.get("owasp_category")
+        cwe = raw_cwe or cat_info.get("cwe") or _EXTRA_CATEGORY_CWE.get(canonical_cat)
+        owasp_full = raw_owasp or cat_info.get("owasp") or _EXTRA_CATEGORY_OWASP.get(canonical_cat) or ""
+        # Keep only the "A07:2021" token — strip the " - <description>" suffix.
+        owasp = owasp_full.split(" - ")[0].strip() or None
+
         return {
             "rule_id": meta.id,
             "title": meta.name,
@@ -206,16 +259,33 @@ class QueryEngine:
             "scanner": "internal",
             "detected_by": ["internal"],
             "file_path": file_path,
+            "line": line_start,
             "line_start": line_start,
             "line_end": line_end,
-            "evidence": _redact_secrets(hit.get("evidence")),
+            "snippet": _redact_secrets(hit.get("evidence")),
             "remediation": meta.remediation,
             "references": meta.references,
             "compliance": meta.compliance,
             "policy_id": meta.id,
             "policy_version": meta.version,
-            "cwe": hit.get("cwe"),
-            "owasp_category": hit.get("owasp_category"),
+            "cwe": cwe,
+            "owasp_category": owasp,
+            "kind": "iac",
+            "verdict": "unverified",
+            "unresolved_reason": "not_reviewed_iac",
+            "issue_class": "security",
+            # Surfaces the remediation as an AI-readable fix hint so the findings
+            # panel can render actionable guidance without an LLM call.
+            "ai_fix": meta.remediation or None,
+            # Unique per occurrence — resource first (endpoint / resource name) since
+            # evidence is often a generic message shared across many occurrences.
+            # Always include file + line so two violations of the same rule at
+            # different locations are never collapsed into one group.
+            "matched_text": "::".join(filter(None, [
+                hit.get("resource") or hit.get("evidence") or None,
+                file_path or None,
+                str(line_start) if line_start is not None else None,
+            ])) or None,
         }
 
 

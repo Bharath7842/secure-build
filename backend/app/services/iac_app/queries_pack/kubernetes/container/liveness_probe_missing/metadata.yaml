@@ -1,0 +1,18 @@
+id: K8S.CONTAINER.LIVENESS_PROBE_MISSING
+name: "Container does not have a liveness probe configured"
+description: "One or more containers do not define a liveness probe, preventing Kubernetes from detecting and restarting hung or deadlocked containers."
+severity: LOW
+category: CONFIGURATION
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a livenessProbe block to each container definition with an appropriate
+  httpGet, tcpSocket, or exec check.
+references:
+  - https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+compliance:
+  - framework: CIS_KUBERNETES
+    control: "5.1.4"

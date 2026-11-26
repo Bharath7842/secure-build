@@ -1,0 +1,17 @@
+id: TF.AWS.RDS.AUTO_MINOR_UPGRADE_DISABLED
+name: "RDS instance auto minor version upgrade is disabled"
+description: "The RDS database instance does not have automatic minor version upgrades enabled, leaving it on an older minor version that may contain security vulnerabilities."
+severity: LOW
+category: SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set auto_minor_version_upgrade = true in the aws_db_instance resource.
+references:
+  - https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_UpgradeDBInstance.Maintenance.html
+compliance:
+  - framework: NIST_800_53
+    control: "SI-2"

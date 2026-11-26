@@ -1,0 +1,18 @@
+id: TF.AWS.S3.MFA_DELETE_DISABLED
+name: "S3 bucket MFA delete is not enabled"
+description: "The S3 bucket versioning configuration does not require MFA for object deletion, allowing accidental or unauthorized deletion without a second factor."
+severity: MEDIUM
+category: IAM
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  In the aws_s3_bucket_versioning resource, set mfa_delete = "Enabled" in the
+  versioning_configuration block.
+references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/MultiFactorAuthenticationDelete.html
+compliance:
+  - framework: NIST_800_53
+    control: "AC-3"

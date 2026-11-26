@@ -1,0 +1,17 @@
+id: TF.AWS.SECRETSMANAGER.NOT_USING_KMS
+name: "Secrets Manager secret is not encrypted with a customer-managed KMS key"
+description: "The Secrets Manager secret does not specify a customer-managed KMS key, using the default AWS-managed key instead."
+severity: MEDIUM
+category: ENCRYPTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set kms_key_id to a customer-managed KMS key ARN in the aws_secretsmanager_secret resource.
+references:
+  - https://docs.aws.amazon.com/secretsmanager/latest/userguide/security-encryption.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-28"

@@ -1,0 +1,17 @@
+id: TF.AWS.ES.NODE_TO_NODE_NOT_ENCRYPTED
+name: "Elasticsearch/OpenSearch domain node-to-node encryption is disabled"
+description: "Node-to-node encryption is not enabled on the Elasticsearch or OpenSearch domain. Without it, traffic between nodes in the cluster is unencrypted."
+severity: MEDIUM
+category: ENCRYPTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a node_to_node_encryption block with enabled = true to the resource.
+references:
+  - https://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/ntn.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-8"

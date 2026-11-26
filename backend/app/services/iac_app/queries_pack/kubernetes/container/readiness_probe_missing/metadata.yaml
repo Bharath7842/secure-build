@@ -1,0 +1,18 @@
+id: K8S.CONTAINER.READINESS_PROBE_MISSING
+name: "Container does not have a readiness probe configured"
+description: "One or more containers do not define a readiness probe, so Kubernetes cannot determine when the container is ready to receive traffic."
+severity: LOW
+category: CONFIGURATION
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a readinessProbe block to each container definition with an appropriate
+  httpGet, tcpSocket, or exec check.
+references:
+  - https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+compliance:
+  - framework: CIS_KUBERNETES
+    control: "5.1.4"

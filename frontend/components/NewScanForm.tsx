@@ -11,7 +11,7 @@ import { api } from "@/lib/api";
 import type { Project, ScanCreateInput } from "@/lib/types";
 
 interface NewScanFormProps {
-  scanType?: "sast" | "sca" | "sbom" | "dast";
+  scanType?: "sast" | "sca" | "sbom" | "dast" | "iac";
   /** DAST only: an earlier scan whose saved settings fill the form. */
   fromScanId?: string;
 }
@@ -20,7 +20,7 @@ interface NewScanFormProps {
 function setupProblem(project: Project, scanType: NonNullable<NewScanFormProps["scanType"]>): string | null {
   if (scanType === "dast") return null;
   if (!project.default_git_url?.trim()) {
-    return "This project has no repository yet. SAST, SCA and SBOM scan source code, so add a repository URL in the project settings.";
+    return "This project has no repository yet. SAST, SCA, SBOM and IaC scan source code, so add a repository URL in the project settings.";
   }
   if (scanType === "sca" && !project.enable_sca) return "SCA is turned off for this project.";
   if (scanType === "sbom" && !project.enable_sbom) return "SBOM is turned off for this project.";

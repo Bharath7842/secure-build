@@ -1,0 +1,20 @@
+id: K8S.POD.SECCOMP_NOT_SET
+name: "Pod does not have a seccomp profile configured"
+description: "The Kubernetes pod does not have a seccomp profile defined in its security context, leaving it without syscall filtering."
+severity: MEDIUM
+category: SECURITY
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Add securityContext.seccompProfile.type = "RuntimeDefault" or "Localhost" to
+  the pod spec to restrict syscalls.
+references:
+  - https://kubernetes.io/docs/tutorials/security/seccomp/
+compliance:
+  - framework: NIST_800_53
+    control: "SI-3"
+  - framework: CIS_KUBERNETES
+    control: "5.7.2"

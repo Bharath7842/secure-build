@@ -1,0 +1,20 @@
+id: TF.AWS.LAMBDA.POLICY_ALLOWS_PUBLIC_ACCESS
+name: "Lambda function resource policy allows public access"
+description: "The Lambda function's resource-based policy grants access to all principals (*), allowing any AWS account to invoke the function."
+severity: HIGH
+category: IAM
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  In the aws_lambda_permission resource, set principal to a specific AWS account ID,
+  service, or IAM ARN rather than "*".
+references:
+  - https://docs.aws.amazon.com/lambda/latest/dg/access-control-resource-based.html
+compliance:
+  - framework: NIST_800_53
+    control: "AC-3"
+  - framework: PCI_DSS
+    control: "7.1"

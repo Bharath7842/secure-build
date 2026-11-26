@@ -101,7 +101,10 @@ def build_finding_row(
         first_seen_scan_id=scan_id if is_dast else None,
         last_seen_scan_id=scan_id if is_dast else None,
     )
-    if not is_dast:
+    # IaC findings carry policy-engine severity (not an LLM/rule estimate), so
+    # CVSS re-scoring would only add noise and misleading "rule/model said X" labels.
+    is_iac = f.get("kind") == "iac"
+    if not is_dast and not is_iac:
         # The rule's or model's severity becomes `severity_basis.original_severity`;
         # the stored one is the CVSS band (`severity.py`).
         apply_severity(row)

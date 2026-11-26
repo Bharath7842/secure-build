@@ -1,0 +1,18 @@
+id: TF.AWS.EC2.NO_INSTANCE_PROFILE
+name: "EC2 instance does not have an IAM instance profile"
+description: "The EC2 instance does not have an IAM instance profile attached. Without one, the instance must use long-lived credentials stored in the instance."
+severity: MEDIUM
+category: IAM
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add iam_instance_profile to the aws_instance resource, referencing an
+  aws_iam_instance_profile that grants only the permissions the instance needs.
+references:
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2_instance-profiles.html
+compliance:
+  - framework: NIST_800_53
+    control: "AC-6"

@@ -1,0 +1,20 @@
+id: TF.AWS.CONFIG.RECORDER_NOT_ENABLED
+name: "AWS Config recorder is not enabled"
+description: "The AWS Config configuration recorder is not set to record all resource types, leaving configuration changes untracked."
+severity: MEDIUM
+category: LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  In the aws_config_configuration_recorder resource, set recording_group.all_supported = true
+  and ensure the recorder is started with aws_config_configuration_recorder_status.
+references:
+  - https://docs.aws.amazon.com/config/latest/developerguide/stop-start-recorder.html
+compliance:
+  - framework: NIST_800_53
+    control: "AU-2"
+  - framework: PCI_DSS
+    control: "10.1"

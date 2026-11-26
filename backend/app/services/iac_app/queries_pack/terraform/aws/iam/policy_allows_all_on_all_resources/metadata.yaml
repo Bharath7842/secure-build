@@ -1,0 +1,20 @@
+id: TF.AWS.IAM.POLICY_ALLOWS_ALL_ON_ALL_RESOURCES
+name: "IAM policy allows all actions on all resources"
+description: "The IAM policy grants Action: '*' on Resource: '*', which is an overly permissive admin-equivalent policy violating least privilege."
+severity: CRITICAL
+category: IAM
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Restrict the IAM policy to specific actions and resources following the
+  principle of least privilege.
+references:
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html
+compliance:
+  - framework: NIST_800_53
+    control: "AC-6"
+  - framework: PCI_DSS
+    control: "7.1"

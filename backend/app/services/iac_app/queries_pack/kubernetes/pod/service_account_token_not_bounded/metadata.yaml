@@ -1,0 +1,18 @@
+id: K8S.POD.SERVICE_ACCOUNT_TOKEN_NOT_BOUNDED
+name: "Pod does not disable automounting of service account token"
+description: "The Kubernetes pod does not set automountServiceAccountToken: false. If the workload does not need to call the Kubernetes API, mounting the token unnecessarily increases the blast radius of a container compromise."
+severity: MEDIUM
+category: IAM
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Set automountServiceAccountToken: false in the pod spec unless the workload
+  explicitly requires Kubernetes API access.
+references:
+  - https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/#opt-out-of-api-credential-automounting
+compliance:
+  - framework: CIS_KUBERNETES
+    control: "5.1.6"

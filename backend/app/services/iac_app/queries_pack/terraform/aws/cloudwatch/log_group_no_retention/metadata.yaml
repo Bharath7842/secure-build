@@ -1,0 +1,17 @@
+id: TF.AWS.CW.LOG_GROUP_NO_RETENTION
+name: "CloudWatch Log Group has no retention policy set"
+description: "The CloudWatch Log Group retains logs indefinitely (retention_in_days = 0 or not set). Setting a retention policy reduces storage costs and limits the data footprint for compliance."
+severity: LOW
+category: LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set retention_in_days to an appropriate value (e.g. 90, 365) on the aws_cloudwatch_log_group resource.
+references:
+  - https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group#retention_in_days
+compliance:
+  - framework: CIS_AWS
+    control: "3.4"

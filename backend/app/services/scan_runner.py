@@ -608,7 +608,10 @@ def _make_findings_writer(scan_id: str):
                 decisions.record_initial(session, rows, findings, scan)
                 for finding_row, f in zip(rows, findings):
                     evidence = f.get("evidence")
-                    if evidence:
+                    # Only DAST findings carry evidence as a dict; IaC and other
+                    # engine findings may put a string in this field for display —
+                    # skip the DastEvidence row for those.
+                    if evidence and isinstance(evidence, dict):
                         session.add(build_evidence_row(finding_row.id, evidence))
                 session.commit()
             tp = sum(1 for f in findings if f.get("verdict") == "true_positive")
@@ -1048,6 +1051,117 @@ def _execute_sbom_scan(db, scan: Scan, project) -> None:
         scan_log.unregister_line_hooks(scan_id)
 
 
+def _execute_iac_scan(db, scan: Scan, project) -> None:
+    """Standalone IaC scan — mirrors `_execute_sca_scan`'s lifecycle but calls
+    `engine_adapter.run_iac_standalone_scan` and writes IaC policy findings."""
+    scan_id = scan.id
+    scan_log.reset(scan_id)
+    try:
+        with scan_log.capture(scan_id):
+            scan_log.log(scan_id, f"Starting IaC scan v{scan.version} for {project.name}.")
+
+            workspace = Path(settings.workspaces_dir) / project.id
+            if not engine_adapter.mock_engine_enabled():
+                scan_log.log(scan_id, f"Cloning {scan.git_url} (branch: {scan.branch})...")
+                try:
+                    workspace = git_workspace.ensure_workspace(
+                        project.id,
+                        scan.git_url,
+                        scan.branch,
+                        scan.commit_sha,
+                        project.git_provider,
+                        git_token.fresh_access_token(project),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    db.rollback()
+                    scan = db.get(Scan, scan_id)
+                    if scan is None:
+                        return
+                    scan.status = "failed"
+                    scan.progress = 100
+                    scan.message = f"workspace checkout failed: {exc}"
+                    scan_log.log(scan_id, f"Could not check out the repository: {exc}")
+                    db.commit()
+                    return
+                resolved_sha = git_workspace.resolve_head_sha(workspace)
+                if resolved_sha:
+                    scan.commit_sha = resolved_sha
+                    db.commit()
+                scan_log.log(scan_id, "Repository ready.")
+            else:
+                scan_log.log(scan_id, "Using the local mock workspace — no checkout needed.")
+
+            if _should_abort(db.get(Scan, scan_id), scan_id):
+                _mark_cancelled(db, scan_id)
+                return
+
+            scan_log.log(scan_id, "Scanning IaC files for security policy violations...")
+            try:
+                engine_result = engine_adapter.run_iac_standalone_scan(
+                    project=project,
+                    workspace=workspace,
+                    scan_id=scan.id,
+                    findings_writer=_make_findings_writer(scan.id),
+                    discovery_writer=_make_discovery_writer(scan.id),
+                    log_fn=lambda msg: scan_log.log(scan_id, msg),
+                )
+                discovery = engine_result.get("discovery") or {}
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                scan = db.get(Scan, scan_id)
+                if scan is None:
+                    return
+                scan.status = "failed"
+                scan.progress = 100
+                scan.message = str(exc)
+                scan_log.log(scan_id, f"The IaC engine hit an error: {exc}")
+                scan_log.log(scan_id, traceback.format_exc())
+                db.commit()
+                return
+
+            scan = db.get(Scan, scan_id)
+            if scan is None:
+                return
+            if _should_abort(scan, scan_id):
+                _merge_engine_metadata(db, scan_id, discovery, None)
+                _mark_cancelled(db, scan_id)
+                return
+
+            scan.progress = 95
+            metadata = dict(scan.metadata_json or {})
+            if discovery:
+                metadata["discovery"] = discovery
+            scan.metadata_json = metadata
+            db.commit()
+
+            scan = db.get(Scan, scan_id)
+            if scan is None or _should_abort(scan, scan_id):
+                _mark_cancelled(db, scan_id)
+                return
+
+            summary = discovery.get("iac_summary") or {}
+            risk = summary.get("risk_summary") or {}
+            sev_counts = summary.get("severity_counts") or {}
+            sev_line = ", ".join(
+                f"{k}={v}" for k, v in sorted(sev_counts.items()) if v
+            )
+            scan_log.log(
+                scan_id,
+                f"Scanned {summary.get('total_files', 0)} IaC file(s) across "
+                f"{len(summary.get('files_by_type') or {})} type(s), "
+                f"found {summary.get('total_findings', 0)} finding(s)"
+                + (f" ({sev_line})" if sev_line else "")
+                + f". Risk score: {risk.get('risk_score', 0):.1f} ({risk.get('risk_level', 'UNKNOWN')}).",
+            )
+            scan.status = "success"
+            scan.progress = 100
+            scan.message = None
+            db.commit()
+            scan_log.log(scan_id, "IaC scan complete.")
+    finally:
+        scan_log.unregister_line_hooks(scan_id)
+
+
 def _credentials_lost_message(missing: list[str]) -> str:
     who = f" for {', '.join(missing)}" if missing else ""
     return (
@@ -1368,35 +1482,35 @@ def _sca_to_findings(sca_result: dict) -> list[dict]:
 
 
 def _iac_to_findings(raw_findings: list[dict]) -> list[dict]:
-    """Normalize IaC query engine output to Finding-dict format."""
+    """Pass through IaC findings from the query engine.
+
+    QueryEngine._to_finding() already emits the full Finding-dict shape:
+    CWE/OWASP derived from category, unresolved_reason, issue_class, ai_fix,
+    matched_text, snippet, etc.  This function only fills in any defaults that
+    might be missing for findings produced by an older code path.
+    """
     findings: list[dict] = []
     for f in raw_findings:
-        category = (f.get("category") or "").upper()
-        cwe = _IAC_CATEGORY_CWE.get(category)
-        owasp = f.get("owasp_category") or _IAC_CATEGORY_OWASP.get(category)
-        evidence = f.get("evidence") or f.get("description") or None
-        remediation = f.get("remediation") or None
-        resource = f.get("resource") or None
-        findings.append({
-            "kind": "iac",
-            "verdict": "unverified",
-            "unresolved_reason": "not_reviewed_iac",
-            "issue_class": "security",
-            "rule_id": f.get("rule_id") or "iac-unknown",
-            "title": f.get("title") or "IaC finding",
-            "severity": f.get("severity") or "MEDIUM",
-            "cwe": cwe,
-            "owasp_category": owasp,
-            "file_path": f.get("file_path") or "__iac__",
-            "line": f.get("line_start"),
-            "snippet": evidence,
-            "matched_text": resource or "",
-            "verdict_reason": remediation,
-            "source": None,
-            "sink": None,
-            "data_flow": None,
-            "ai_fix": remediation,
-        })
+        # Preserve all fields already set by _to_finding(); only backfill gaps.
+        finding = dict(f)
+        finding.setdefault("kind", "iac")
+        finding.setdefault("verdict", "unverified")
+        finding.setdefault("unresolved_reason", "not_reviewed_iac")
+        finding.setdefault("issue_class", "security")
+        finding.setdefault("rule_id", "iac-unknown")
+        finding.setdefault("title", "IaC finding")
+        finding.setdefault("severity", "MEDIUM")
+        finding.setdefault("file_path", "__iac__")
+        finding.setdefault("matched_text", finding.get("resource") or "")
+        # CWE/OWASP fallback using the category mappings when _to_finding()
+        # ran on an older code path that did not apply them.
+        if not finding.get("cwe"):
+            category = (finding.get("category") or "").upper()
+            finding["cwe"] = _IAC_CATEGORY_CWE.get(category)
+        if not finding.get("owasp_category"):
+            category = (finding.get("category") or "").upper()
+            finding["owasp_category"] = _IAC_CATEGORY_OWASP.get(category)
+        findings.append(finding)
     return findings
 
 
@@ -1433,7 +1547,10 @@ def _launch_parallel_scanners(scan_id: str, workspace: Path):
                 f"IaC workspace: {_ws} (exists={_ws.exists()}, tf={_tf_count}, dockerfiles={_docker_count})",
             )
             scan_log.log(scan_id, "### IaC: Scanning infrastructure-as-code files …")
-            iac_result = iac_service.run_iac_scan(str(workspace))
+            iac_result = iac_service.run_iac_scan(
+                str(workspace),
+                log_fn=lambda msg: scan_log.log(scan_id, msg),
+            )
             if iac_result.get("error"):
                 _log.warning("IaC error (scan %s): %s", scan_id, iac_result["error"])
                 results["errors"].append(f"IaC: {iac_result['error']}")
@@ -1544,6 +1661,10 @@ def _execute_scan_unlocked(scan_id: str) -> None:
         if (scan.scan_type or "sast") == "dast":
             db.commit()
             _execute_dast_scan(db, scan, project)
+            return
+        if (scan.scan_type or "sast") == "iac":
+            db.commit()
+            _execute_iac_scan(db, scan, project)
             return
 
         # Keep LLM snapshot from trigger (per-scan override). Backfill from

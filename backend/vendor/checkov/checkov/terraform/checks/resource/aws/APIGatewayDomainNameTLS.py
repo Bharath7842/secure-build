@@ -1,0 +1,37 @@
+from checkov.common.models.enums import CheckCategories
+from checkov.terraform.checks.resource.base_resource_value_check import BaseResourceValueCheck
+from typing import Any, List
+
+
+class APIGatewayDomainNameTLS(BaseResourceValueCheck):
+    def __init__(self):
+        name = "Ensure API Gateway Domain uses a modern security Policy"
+        id = "CKV_AWS_206"
+        supported_resources = ["aws_api_gateway_domain_name"]
+        categories = [CheckCategories.GENERAL_SECURITY]
+        super().__init__(
+            name=name,
+            id=id,
+            categories=categories,
+            supported_resources=supported_resources,
+        )
+
+    def get_inspected_key(self) -> str:
+        return "security_policy"
+
+    def get_expected_values(self) -> List[Any]:
+        # https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-security-policies-list.html
+        return [
+            "TLS_1_2",
+            "SecurityPolicy_TLS12_2018_EDGE",
+            "SecurityPolicy_TLS12_PFS_2025_EDGE",
+            "SecurityPolicy_TLS13_1_2_2021_06",
+            "SecurityPolicy_TLS13_1_2_PFS_PQ_2025_09",
+            "SecurityPolicy_TLS13_1_2_PQ_2025_09",
+            "SecurityPolicy_TLS13_1_3_2025_09",
+            "SecurityPolicy_TLS13_1_3_FIPS_2025_09",
+            "SecurityPolicy_TLS13_2025_EDGE",
+        ]
+
+
+check = APIGatewayDomainNameTLS()

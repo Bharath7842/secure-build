@@ -899,7 +899,11 @@ class ScanFindingsOut(BaseModel):
     # by_issue_class, actionable {severity: cell}, dismissed cell, by_owasp [...].
     severity_group_counts: dict[str, Any] | None = None
     # The same groups rolled up per CWE; `by_bucket[..].finding_ids` name rows of `findings`.
-    cwe_groups: list[CweGroupOut] = []
+    # Nullable: IaC scans send `null` deliberately — their findings are per-resource and
+    # a CWE roll-up would collapse them, so the frontend renders a flat list instead.
+    # Typed as `list` only, this raised a ValidationError inside the route, so the
+    # response was a 500 and the panel's silent catch rendered the scan as 0 findings.
+    cwe_groups: list[CweGroupOut] | None = None
     # False positives the scanner was >= 90 % sure of, left out of everything here
     # (`fp_visibility`).
     hidden_fp_count: int = 0

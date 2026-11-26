@@ -1,0 +1,19 @@
+id: TF.AWS.SNS.TOPIC_POLICY_PUBLIC_ACCESS
+name: "SNS topic policy allows public access"
+description: "The SNS topic resource policy grants access to all principals (Principal: '*'). This allows any AWS account or unauthenticated user to publish or subscribe to the topic."
+severity: HIGH
+category: IAM
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Remove wildcard Principal from the SNS topic policy and restrict access to specific AWS account IDs or IAM principals using Condition keys.
+references:
+  - https://docs.aws.amazon.com/sns/latest/dg/sns-security-best-practices.html
+compliance:
+  - framework: CIS_AWS
+    control: "1.22"
+  - framework: NIST_800_53
+    control: "AC-3"

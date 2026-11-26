@@ -1,0 +1,19 @@
+id: TF.AWS.APIGW.WAF_NOT_ENABLED
+name: "API Gateway stage is not associated with a WAF web ACL"
+description: "No AWS WAF web ACL is associated with this API Gateway stage. WAF protects the API from common web exploits such as SQL injection and cross-site scripting."
+severity: MEDIUM
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set web_acl_arn to the ARN of an AWS WAFv2 web ACL on the aws_api_gateway_stage resource.
+references:
+  - https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-control-access-aws-waf.html
+compliance:
+  - framework: AWS_FSBP
+    control: "APIGateway.4"
+  - framework: NIST_800_53
+    control: "SI-3"

@@ -1,0 +1,17 @@
+id: TF.AWS.NEPTUNE.CLUSTER_NO_BACKUP
+name: "Neptune cluster has no backup retention configured"
+description: "The Neptune cluster backup retention period is not set or is set to zero, risking data loss."
+severity: MEDIUM
+category: RESILIENCE
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set backup_retention_period to a value >= 1 in the aws_neptune_cluster resource.
+references:
+  - https://docs.aws.amazon.com/neptune/latest/userguide/backup-restore.html
+compliance:
+  - framework: NIST_800_53
+    control: "CP-9"

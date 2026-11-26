@@ -1,0 +1,19 @@
+id: TF.AWS.CW.LOG_GROUP_NOT_ENCRYPTED
+name: "CloudWatch Log Group is not encrypted with KMS"
+description: "The CloudWatch Log Group is not encrypted with a KMS customer-managed key. Log data may contain sensitive information and should be encrypted at rest."
+severity: MEDIUM
+category: ENCRYPTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set kms_key_id to the ARN of a KMS key on the aws_cloudwatch_log_group resource.
+references:
+  - https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/encrypt-log-data-kms.html
+compliance:
+  - framework: CIS_AWS
+    control: "3.7"
+  - framework: NIST_800_53
+    control: "AU-9"

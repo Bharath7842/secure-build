@@ -1,0 +1,17 @@
+id: TF.AWS.DOCDB.CLUSTER_NO_DELETION_PROTECTION
+name: "DocumentDB cluster deletion protection is disabled"
+description: "The DocumentDB cluster does not have deletion protection enabled, allowing accidental or unauthorized deletion."
+severity: MEDIUM
+category: RESILIENCE
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set deletion_protection = true in the aws_docdb_cluster resource.
+references:
+  - https://docs.aws.amazon.com/documentdb/latest/developerguide/db-cluster-delete.html
+compliance:
+  - framework: NIST_800_53
+    control: "CP-10"

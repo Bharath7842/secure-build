@@ -1,0 +1,18 @@
+id: DOCKER.PIP_NO_HASH_CHECKING
+name: "Dockerfile installs Python packages without hash verification"
+description: "The Dockerfile runs pip install without --require-hashes, allowing supply-chain attacks through tampered packages on PyPI mirrors."
+severity: MEDIUM
+category: SECURITY
+finding_type: MISCONFIGURATION
+iac_type: docker
+provider: docker
+enabled: true
+version: 1.0.0
+remediation: >
+  Use pip install --require-hashes -r requirements.txt with hashes pinned in
+  the requirements file, or use a lock file tool such as pip-compile with hashes.
+references:
+  - https://pip.pypa.io/en/stable/topics/secure-installs/
+compliance:
+  - framework: NIST_800_53
+    control: "SA-12"

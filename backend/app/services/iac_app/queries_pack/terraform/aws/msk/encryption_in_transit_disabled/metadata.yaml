@@ -1,0 +1,20 @@
+id: TF.AWS.MSK.ENCRYPTION_IN_TRANSIT_DISABLED
+name: "MSK cluster encryption in transit is not fully enabled"
+description: "The Amazon MSK cluster does not enforce TLS encryption for client-broker and broker-broker communication, allowing plaintext traffic."
+severity: HIGH
+category: ENCRYPTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set encryption_info.encryption_in_transit.client_broker to "TLS" and
+  in_cluster to true in the aws_msk_cluster resource.
+references:
+  - https://docs.aws.amazon.com/msk/latest/developerguide/msk-encryption.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-8"
+  - framework: PCI_DSS
+    control: "4.1"

@@ -1,0 +1,17 @@
+id: TF.AWS.DOCDB.CLUSTER_NOT_ENCRYPTED
+name: "DocumentDB cluster storage is not encrypted"
+description: "The Amazon DocumentDB cluster does not have storage encryption enabled."
+severity: HIGH
+category: ENCRYPTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set storage_encrypted = true in the aws_docdb_cluster resource.
+references:
+  - https://docs.aws.amazon.com/documentdb/latest/developerguide/encryption-at-rest.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-28"

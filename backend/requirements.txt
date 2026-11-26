@@ -61,3 +61,5 @@ ripgrep==15.1.0
 
 # --- Integrated IaC / SBOM / SCA scanners ---
 python-hcl2>=4.3.0   # Terraform .tf file parsing (used by iac_app TerraformParser)
+dpath>=2.1.0          # used by vendored Checkov Kubernetes checks
+dockerfile-parse>=2.0.0  # used by vendored Checkov Dockerfile checks

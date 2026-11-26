@@ -288,6 +288,10 @@ def _is_sbom_scan(scan: Scan) -> bool:
     return (getattr(scan, "scan_type", None) or "sast").strip().lower() == "sbom"
 
 
+def _is_iac_scan(scan: Scan) -> bool:
+    return (getattr(scan, "scan_type", None) or "sast").strip().lower() == "iac"
+
+
 def _safe_filename(project_name: str, version: int, ext: str, *, kind: str | None = None) -> str:
     slug = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in (project_name or "scan"))
     slug = "-".join(part for part in slug.split("-") if part)[:60] or "scan"
@@ -297,7 +301,7 @@ def _safe_filename(project_name: str, version: int, ext: str, *, kind: str | Non
 
 
 def export_filenames(project: Project, scan: Scan) -> dict[str, str]:
-    kind = "sca" if _is_sca_scan(scan) else "sbom" if _is_sbom_scan(scan) else "dast" if _is_dast_scan(scan) else None
+    kind = "sca" if _is_sca_scan(scan) else "sbom" if _is_sbom_scan(scan) else "dast" if _is_dast_scan(scan) else "iac" if _is_iac_scan(scan) else None
     return {
         "pdf": _safe_filename(project.name, scan.version, "pdf", kind=kind),
         "xlsx": _safe_filename(project.name, scan.version, "xlsx", kind=kind),
@@ -1400,35 +1404,53 @@ def _build_summary_sheet(sheet: Any, project: Project, scan: Scan, gate: dict, c
     sheet.column_dimensions["D"].width = 14
 
 
-def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
-    headers = [
-        "#",
-        "Severity",
-        "Scanner Verdict",
-        "Review State",
-        "Issue Class",
-        "Unresolved Reason",
-        "Verdict (raw)",
-        "Counted As",
-        "OWASP Category",
-        "CWE",
-        "CVSS",
-        "CVSS Vector",
-        "Severity Basis",
-        "Confidence",
-        "Files",
-        "Issue Groups",
-        "Issue",
-        "Location(s)",
-        "Data Flow",
-        "Risk",
-        "Recommendation",
-        "Example Fix",
-        "Occurrence ID",
-        "Construct Mix",
-        "Reviewed / Total",
-    ]
-    widths = [5, 12, 24, 22, 12, 24, 16, 14, 32, 12, 8, 44, 48, 12, 8, 10, 42, 44, 36, 44, 44, 46, 68, 40, 16]
+def _build_findings_sheet(sheet: Any, findings: list[Finding], *, is_iac: bool = False) -> None:
+    if is_iac:
+        headers = [
+            "#",
+            "Severity",
+            "Scanner Verdict",
+            "Review State",
+            "Issue Class",
+            "Unresolved Reason",
+            "OWASP Category",
+            "CWE",
+            "Files",
+            "Issue",
+            "Location(s)",
+            "Risk",
+            "Recommendation",
+        ]
+        widths = [5, 12, 24, 22, 12, 24, 32, 12, 8, 42, 44, 44, 44]
+    else:
+        headers = [
+            "#",
+            "Severity",
+            "Scanner Verdict",
+            "Review State",
+            "Issue Class",
+            "Unresolved Reason",
+            "Verdict (raw)",
+            "Counted As",
+            "OWASP Category",
+            "CWE",
+            "CVSS",
+            "CVSS Vector",
+            "Severity Basis",
+            "Confidence",
+            "Files",
+            "Issue Groups",
+            "Issue",
+            "Location(s)",
+            "Data Flow",
+            "Risk",
+            "Recommendation",
+            "Example Fix",
+            "Occurrence ID",
+            "Construct Mix",
+            "Reviewed / Total",
+        ]
+        widths = [5, 12, 24, 22, 12, 24, 16, 14, 32, 12, 8, 44, 48, 12, 8, 10, 42, 44, 36, 44, 44, 46, 68, 40, 16]
     _xl_header_row(sheet, 1, headers, widths=widths)
 
     sorted_findings = _sorted_findings(findings)
@@ -1439,33 +1461,50 @@ def _build_findings_sheet(sheet: Any, findings: list[Finding]) -> None:
         recommendation = _recommendation_text(finding)
         if not recommendation and finding.ai_fix and not _example_fix_text(finding):
             recommendation = (finding.ai_fix or "").strip()
-        row_values = [
-            idx,
-            sev.upper(),
-            _display_verdict(_scanner_verdict(finding), finding.unresolved_reason),
-            _review_state_label(finding),
-            finding.issue_class or "",
-            finding.unresolved_reason or "",
-            _scanner_verdict(finding) or "",
-            _counted_as(finding),
-            _owasp_display(finding),
-            _cwe_display(finding),
-            finding.cvss if finding.cvss is not None else "",
-            finding.cvss_vector or "",
-            _excel_cell(severity_basis_text(finding.severity_basis)),
-            _confidence_display(finding),
-            _affected_file_count(finding),
-            len(getattr(finding, "issue_groups", None) or [finding]),
-            _excel_cell(finding.title or ""),
-            _excel_cell(_location_block(finding)),
-            _excel_cell(_taint_flow_text(finding)),
-            _excel_cell(_risk_text(finding)),
-            _excel_cell(recommendation),
-            _excel_cell(_example_fix_text(finding)),
-            "\n".join(_occurrence_ids(finding)),
-            construct_mix_text(getattr(finding, "construct_mix", None)),
-            review_coverage_text(finding),
-        ]
+        if is_iac:
+            row_values = [
+                idx,
+                sev.upper(),
+                _display_verdict(_scanner_verdict(finding), finding.unresolved_reason),
+                _review_state_label(finding),
+                finding.issue_class or "",
+                finding.unresolved_reason or "",
+                _owasp_display(finding),
+                _cwe_display(finding),
+                _affected_file_count(finding),
+                _excel_cell(finding.title or ""),
+                _excel_cell(_location_block(finding)),
+                _excel_cell(_risk_text(finding)),
+                _excel_cell(recommendation),
+            ]
+        else:
+            row_values = [
+                idx,
+                sev.upper(),
+                _display_verdict(_scanner_verdict(finding), finding.unresolved_reason),
+                _review_state_label(finding),
+                finding.issue_class or "",
+                finding.unresolved_reason or "",
+                _scanner_verdict(finding) or "",
+                _counted_as(finding),
+                _owasp_display(finding),
+                _cwe_display(finding),
+                finding.cvss if finding.cvss is not None else "",
+                finding.cvss_vector or "",
+                _excel_cell(severity_basis_text(finding.severity_basis)),
+                _confidence_display(finding),
+                _affected_file_count(finding),
+                len(getattr(finding, "issue_groups", None) or [finding]),
+                _excel_cell(finding.title or ""),
+                _excel_cell(_location_block(finding)),
+                _excel_cell(_taint_flow_text(finding)),
+                _excel_cell(_risk_text(finding)),
+                _excel_cell(recommendation),
+                _excel_cell(_example_fix_text(finding)),
+                "\n".join(_occurrence_ids(finding)),
+                construct_mix_text(getattr(finding, "construct_mix", None)),
+                review_coverage_text(finding),
+            ]
         sheet.append([_excel_scalar(v) for v in row_values])
 
         excel_row = idx + 1
@@ -1722,13 +1761,19 @@ def build_excel_report(project: Project, scan: Scan, findings: list[Finding]) ->
     gate = build_gate_summary(project, units, counts=counts)
     wb = Workbook()
 
-    _report_label = "SCA Report" if _is_sca_scan(scan) else "SAST Scan Report"
+    _is_iac = _is_iac_scan(scan)
+    if _is_iac:
+        _report_label = "IaC Report"
+    elif _is_sca_scan(scan):
+        _report_label = "SCA Report"
+    else:
+        _report_label = "SAST Scan Report"
     summary = wb.active
     summary.title = "Summary"
     _build_summary_sheet(summary, project, scan, gate, counts, report_label=_report_label)
 
-    _build_findings_sheet(wb.create_sheet("Findings"), units)
-    _build_findings_sheet(wb.create_sheet("Issue Groups"), findings)
+    _build_findings_sheet(wb.create_sheet("Findings"), units, is_iac=_is_iac)
+    _build_findings_sheet(wb.create_sheet("Issue Groups"), findings, is_iac=_is_iac)
 
     buf = io.BytesIO()
     protect_workbook_text(wb)
@@ -1984,6 +2029,13 @@ def _finding_story_block(
         if len(meta_fields) == 1:
             meta_weights_raw = [1.0]
         meta_weights = meta_weights_raw
+    elif (finding.kind or "") == "iac":
+        meta_fields = [
+            ("OWASP", _owasp_display(finding)),
+            ("CWE", _cwe_display(finding)),
+            ("Affected files", str(_affected_file_count(finding))),
+        ]
+        meta_weights = [0.46, 0.20, 0.34]
     else:
         meta_fields = [
             ("OWASP", _owasp_display(finding)),
@@ -2898,8 +2950,16 @@ def build_pdf_report(project: Project, scan: Scan, findings: list[Finding]) -> b
     content_width = page[0] - left - right
 
     _is_sca = _is_sca_scan(scan)
-    report_label = "SCA Report" if _is_sca else "SAST Scan Report"
-    report_subject = "Software composition analysis report" if _is_sca else "Static application security testing report"
+    _is_iac = _is_iac_scan(scan)
+    if _is_iac:
+        report_label = "IaC Report"
+        report_subject = "Infrastructure as code security report"
+    elif _is_sca:
+        report_label = "SCA Report"
+        report_subject = "Software composition analysis report"
+    else:
+        report_label = "SAST Scan Report"
+        report_subject = "Static application security testing report"
     doc = SimpleDocTemplate(
         buf,
         pagesize=page,

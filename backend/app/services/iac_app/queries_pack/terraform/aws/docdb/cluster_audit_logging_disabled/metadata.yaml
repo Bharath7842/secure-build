@@ -1,0 +1,17 @@
+id: TF.AWS.DOCDB.CLUSTER_AUDIT_LOGGING_DISABLED
+name: "DocumentDB cluster audit logging is disabled"
+description: "The DocumentDB cluster does not export audit logs to CloudWatch, limiting visibility into database activity."
+severity: MEDIUM
+category: LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add enabled_cloudwatch_logs_exports = ["audit"] to the aws_docdb_cluster resource.
+references:
+  - https://docs.aws.amazon.com/documentdb/latest/developerguide/event-auditing.html
+compliance:
+  - framework: NIST_800_53
+    control: "AU-2"

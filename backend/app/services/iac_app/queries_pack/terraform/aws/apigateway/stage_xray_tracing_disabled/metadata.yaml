@@ -1,0 +1,17 @@
+id: TF.AWS.APIGW.STAGE_XRAY_DISABLED
+name: "API Gateway stage does not have X-Ray tracing enabled"
+description: "X-Ray tracing is not enabled on the API Gateway stage. Enabling X-Ray provides end-to-end distributed tracing to identify performance issues and errors."
+severity: LOW
+category: OBSERVABILITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set xray_tracing_enabled = true on the aws_api_gateway_stage resource.
+references:
+  - https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-enabling-xray.html
+compliance:
+  - framework: AWS_FSBP
+    control: "APIGateway.3"

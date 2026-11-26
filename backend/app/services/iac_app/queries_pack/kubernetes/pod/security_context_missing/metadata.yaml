@@ -1,0 +1,20 @@
+id: K8S.POD.SECURITY_CONTEXT_MISSING
+name: "Pod does not have a security context defined"
+description: "The Kubernetes pod does not define a securityContext, leaving it without key hardening settings like runAsNonRoot, runAsUser, or fsGroup."
+severity: MEDIUM
+category: SECURITY
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a securityContext block to the pod spec with at minimum runAsNonRoot: true
+  and runAsUser set to a non-root UID.
+references:
+  - https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+compliance:
+  - framework: NIST_800_53
+    control: "AC-6"
+  - framework: CIS_KUBERNETES
+    control: "5.7.3"

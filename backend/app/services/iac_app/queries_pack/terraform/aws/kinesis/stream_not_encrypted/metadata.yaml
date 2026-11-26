@@ -1,0 +1,18 @@
+id: TF.AWS.KINESIS.STREAM_NOT_ENCRYPTED
+name: "Kinesis stream is not encrypted"
+description: "The Kinesis data stream does not have server-side encryption enabled, leaving streamed data unprotected at rest."
+severity: MEDIUM
+category: ENCRYPTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a server_side_encryption block with encryption_type = "KMS" and a key_id
+  in the aws_kinesis_stream resource.
+references:
+  - https://docs.aws.amazon.com/streams/latest/dev/server-side-encryption.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-28"

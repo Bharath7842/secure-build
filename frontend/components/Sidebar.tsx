@@ -246,6 +246,17 @@ const SCAN_GROUPS: NavGroup[] = [
     ],
   },
   {
+    id: "iac",
+    label: "IaC",
+    short: "IC",
+    icon: "shield",
+    blocker: (p) => (!hasRepo(p) ? NEEDS_REPO : null),
+    children: [
+      { href: "/scans/new?type=iac", label: "New scan", short: "N", icon: "plus", page: "page.scan_sast" },
+      { href: "/scans?type=iac", label: "Scan history", short: "H", icon: "clock", page: "page.scan_sast" },
+    ],
+  },
+  {
     id: "dast",
     label: "DAST",
     short: "DA",

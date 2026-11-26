@@ -1,0 +1,18 @@
+id: DOCKER.APT_GET_UPGRADE_ALL
+name: "Dockerfile uses apt-get upgrade or dist-upgrade"
+description: "The Dockerfile runs 'apt-get upgrade' or 'apt-get dist-upgrade', which upgrades all packages indiscriminately and can install unexpected versions, making the build non-reproducible."
+severity: LOW
+category: CONFIGURATION
+finding_type: MISCONFIGURATION
+iac_type: docker
+provider: docker
+enabled: true
+version: 1.0.0
+remediation: >
+  Remove apt-get upgrade/dist-upgrade. Instead pin specific package versions with
+  apt-get install <package>=<version> to ensure reproducible builds.
+references:
+  - https://docs.docker.com/develop/develop-images/dockerfile_best-practices/
+compliance:
+  - framework: NIST_800_53
+    control: "CM-6"

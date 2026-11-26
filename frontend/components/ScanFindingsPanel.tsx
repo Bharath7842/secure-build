@@ -505,6 +505,17 @@ export default function ScanFindingsPanel({
     [counts, tab],
   );
 
+  // Auto-switch away from an empty tab once counts load. Confirmed is preferred;
+  // if there are none (e.g. IaC / regex-only scans), show Unresolved instead.
+  useEffect(() => {
+    if (!tabCounts) return;
+    const TAB_ORDER: VerdictTab[] = ["true_positive", "unverified", "false_positive", "all"];
+    if ((tabCounts[tab]?.groups ?? 0) === 0) {
+      const fallback = TAB_ORDER.find((t) => (tabCounts[t]?.groups ?? 0) > 0);
+      if (fallback) setTab(fallback);
+    }
+  }, [tabCounts]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Drop a severity chip that no longer matches (e.g. HIGH selected, then
   // switch to a tab where that severity has 0).
   useEffect(() => {

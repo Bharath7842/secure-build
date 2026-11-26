@@ -1,0 +1,18 @@
+id: K8S.CONTAINER.RESOURCE_REQUESTS_MISSING
+name: "Container does not have resource requests configured"
+description: "One or more containers do not define CPU or memory resource requests, which can lead to resource contention, noisy-neighbor issues, and unreliable scheduling."
+severity: LOW
+category: CONFIGURATION
+finding_type: MISCONFIGURATION
+iac_type: kubernetes
+provider: kubernetes
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a resources.requests block with cpu and memory values to every container
+  and init container in the pod spec.
+references:
+  - https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+compliance:
+  - framework: CIS_KUBERNETES
+    control: "5.1.3"

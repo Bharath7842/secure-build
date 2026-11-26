@@ -1,0 +1,20 @@
+id: TF.AWS.EC2.SECRET_IN_USER_DATA
+name: "EC2 instance user data may contain secrets"
+description: "The EC2 instance user_data appears to contain hardcoded secrets or credentials (passwords, tokens, keys), which are visible in the AWS console and to anyone with EC2 DescribeInstances access."
+severity: CRITICAL
+category: SECRET_MANAGEMENT
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Remove hardcoded credentials from user_data. Use AWS Secrets Manager,
+  Parameter Store, or IAM instance roles to supply credentials at runtime.
+references:
+  - https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/user-data.html
+compliance:
+  - framework: NIST_800_53
+    control: "IA-5"
+  - framework: PCI_DSS
+    control: "6.3.2"

@@ -1,0 +1,18 @@
+id: TF.AWS.IAM.ROLE_ALLOWS_ALL_SERVICES
+name: "IAM role trust policy allows assumption by all AWS services"
+description: "The IAM role's trust policy allows any AWS service to assume the role, violating least-privilege principles."
+severity: HIGH
+category: IAM
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Restrict the Service principal in the assume_role_policy to only the specific
+  AWS services that need to assume this role.
+references:
+  - https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create_for-service.html
+compliance:
+  - framework: NIST_800_53
+    control: "AC-6"

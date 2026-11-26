@@ -1,0 +1,17 @@
+id: TF.AWS.NEPTUNE.CLUSTER_AUDIT_LOGGING_DISABLED
+name: "Neptune cluster audit logging is disabled"
+description: "The Neptune cluster does not have audit logging enabled, limiting visibility into database activity."
+severity: MEDIUM
+category: LOGGING
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add enable_cloudwatch_logs_exports = ["audit"] to the aws_neptune_cluster resource.
+references:
+  - https://docs.aws.amazon.com/neptune/latest/userguide/auditing.html
+compliance:
+  - framework: NIST_800_53
+    control: "AU-2"

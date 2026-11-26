@@ -564,6 +564,113 @@ def _mock_sbom_discovery(project: Project) -> dict[str, Any]:
     }
 
 
+def run_iac_standalone_scan(
+    project,
+    workspace=None,
+    scan_id: str | None = None,
+    findings_writer: Callable[[str, list[dict]], None] | None = None,
+    discovery_writer: Callable[[dict], None] | None = None,
+    log_fn: Callable[[str], None] | None = None,
+) -> ScanRunResult:
+    """IaC standalone scan counterpart to `run_sca_scan` — calls `iac_app.service.run_iac_scan`
+    on the checked-out workspace and returns structured findings.  No LLM involved."""
+    if mock_engine_enabled():
+        discovery = _mock_iac_discovery(project)
+        if discovery_writer:
+            discovery_writer(discovery)
+        return {"discovery": discovery}
+
+    if workspace is None:
+        raise RuntimeError(
+            "run_iac_standalone_scan called without a checked-out workspace; "
+            "git_workspace.ensure_workspace must run before the IaC engine adapter."
+        )
+
+    from app.services.iac_app.service import run_iac_scan as _run_iac
+
+    result = _run_iac(str(workspace), log_fn=log_fn)
+    if "error" in result:
+        raise RuntimeError(f"IaC scan failed: {result['error']}")
+
+    findings = result.get("findings") or []
+    risk_summary = result.get("risk_summary") or {}
+    file_count = result.get("file_count", 0)
+    files_by_type = result.get("files_by_type") or {}
+    rules_executed = result.get("rules_executed", 0)
+
+    # Derive IaC types (iac_type field on each finding) for the summary.
+    iac_types_found = sorted({f.get("iac_type") or "unknown" for f in findings if f.get("iac_type")})
+    # Severity breakdown (using the risk engine's already-computed data).
+    severity_counts: dict[str, int] = {}
+    for f in findings:
+        sev = (f.get("severity") or "UNKNOWN").upper()
+        severity_counts[sev] = severity_counts.get(sev, 0) + 1
+
+    discovery: dict[str, Any] = {
+        "iac_summary": {
+            "total_files": file_count,
+            "total_findings": len(findings),
+            "risk_summary": risk_summary,
+            "severity_counts": severity_counts,
+            "files_by_type": files_by_type,
+            "iac_types": iac_types_found,
+            "rules_executed": rules_executed,
+        },
+        "findings": findings,
+    }
+
+    if discovery_writer:
+        discovery_writer(discovery)
+    if findings_writer and findings:
+        # Group findings by file path to match the per-file findings_writer contract.
+        by_file: dict[str, list[dict]] = {}
+        for f in findings:
+            fp = f.get("file_path") or f.get("path") or "unknown"
+            by_file.setdefault(fp, []).append(f)
+        for fp, file_findings in by_file.items():
+            findings_writer(fp, file_findings)
+
+    return {"discovery": discovery}
+
+
+def _mock_iac_discovery(project) -> dict[str, Any]:
+    """Deterministic fake IaC scan result for the mock engine."""
+    print("STAGE 1 — Mock IaC file classification")
+    findings = [
+        {
+            "file_path": "terraform/main.tf",
+            "ecosystem": "terraform",
+            "rule_id": "aws-s3-no-public-access-block",
+            "title": "S3 bucket missing public access block",
+            "severity": "HIGH",
+            "description": "S3 bucket does not have a public access block configured.",
+            "line": 12,
+            "verdict": None,
+        },
+        {
+            "file_path": "Dockerfile",
+            "ecosystem": "docker",
+            "rule_id": "docker-no-user",
+            "title": "Container runs as root",
+            "severity": "MEDIUM",
+            "description": "No USER instruction — container runs as root by default.",
+            "line": 1,
+            "verdict": None,
+        },
+    ]
+    print(f"  Found {len(findings)} mock IaC finding(s)")
+    print("STAGE 2 — Mock IaC scan complete")
+    return {
+        "iac_summary": {
+            "total_files": 4,
+            "total_findings": len(findings),
+            "risk_summary": {"HIGH": 1, "MEDIUM": 1, "LOW": 0, "CRITICAL": 0},
+            "ecosystems": ["docker", "terraform"],
+        },
+        "findings": findings,
+    }
+
+
 def _mock_sca_discovery(project: Project) -> dict[str, Any]:
     """Deterministic fake dependency inventory for the mock engine — no
     filesystem walk, no network. Mirrors `_mock_discovery`'s spirit."""

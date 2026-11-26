@@ -23,6 +23,7 @@ import ScanResultPanel from "@/components/ScanResultPanel";
 import ScaScanDetail from "@/components/ScaScanDetail";
 import DastScanDetail from "@/components/DastScanDetail";
 import SbomScanDetail from "@/components/SbomScanDetail";
+import IacScanDetail from "@/components/IacScanDetail";
 import ScanStatusBadge from "@/components/ScanStatusBadge";
 import { ApiError, api } from "@/lib/api";
 import { hasUsageData } from "@/lib/formatUsage";
@@ -136,7 +137,8 @@ export default function ScanDetailPage() {
     if (
       status?.scan_type === "sca" ||
       status?.scan_type === "sbom" ||
-      status?.scan_type === "dast"
+      status?.scan_type === "dast" ||
+      status?.scan_type === "iac"
     )
       return;
 
@@ -221,8 +223,8 @@ export default function ScanDetailPage() {
   // ≥ 95) — including while the scan is still running CRITICAL-file scanning.
   useEffect(() => {
     if (!status) return;
-    // handled entirely by ScaScanDetail/SbomScanDetail
-    if (status.scan_type === "sca" || status.scan_type === "sbom" || status.scan_type === "dast")
+    // handled entirely by ScaScanDetail/SbomScanDetail/IacScanDetail
+    if (status.scan_type === "sca" || status.scan_type === "sbom" || status.scan_type === "dast" || status.scan_type === "iac")
       return;
     const terminal = isTerminalStatus(status.status);
     const mayHaveDiscovery = terminal || (status.progress ?? 0) >= 95;
@@ -268,8 +270,8 @@ export default function ScanDetailPage() {
   // still running; terminal scans (including cancelled) fetch once.
   useEffect(() => {
     if (!status) return;
-    // handled entirely by ScaScanDetail/SbomScanDetail
-    if (status.scan_type === "sca" || status.scan_type === "sbom" || status.scan_type === "dast")
+    // handled entirely by ScaScanDetail/SbomScanDetail/IacScanDetail
+    if (status.scan_type === "sca" || status.scan_type === "sbom" || status.scan_type === "dast" || status.scan_type === "iac")
       return;
     const pollFindings =
       isActiveStatus(status.status) && (status.progress ?? 0) >= 97;
@@ -486,6 +488,9 @@ export default function ScanDetailPage() {
   }
   if (status.scan_type === "dast") {
     return <DastScanDetail scanId={id} />;
+  }
+  if (status.scan_type === "iac") {
+    return <IacScanDetail scanId={id} />;
   }
 
   const terminal = isTerminalStatus(status.status);

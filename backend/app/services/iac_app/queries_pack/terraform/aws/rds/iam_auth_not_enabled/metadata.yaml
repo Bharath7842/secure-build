@@ -1,0 +1,17 @@
+id: TF.AWS.RDS.IAM_AUTH_NOT_ENABLED
+name: "RDS instance does not have IAM authentication enabled"
+description: "The RDS database instance does not have IAM database authentication enabled, requiring password-based authentication."
+severity: MEDIUM
+category: IAM
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Set iam_database_authentication_enabled = true in the aws_db_instance resource.
+references:
+  - https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.html
+compliance:
+  - framework: NIST_800_53
+    control: "IA-2"

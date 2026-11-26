@@ -179,7 +179,7 @@ def _backfill_llm_from_log(db: Session, scan: Scan) -> None:
             db.rollback()
 
 
-_VALID_SCAN_TYPES = ("sast", "sca", "sbom", "dast")
+_VALID_SCAN_TYPES = ("sast", "sca", "sbom", "dast", "iac")
 
 
 def _find_existing_scan(
@@ -637,7 +637,10 @@ def get_scan_findings(
         unverified_count=totals[UNVERIFIED_VERDICT]["occurrences"],
         files_scanned=files_scanned,
         severity_group_counts=counts,
-        cwe_groups=group_by_cwe(all_groups),
+        # IaC findings are per-resource / per-endpoint — CWE grouping would
+        # collapse all unauthenticated endpoints into one row, hiding the detail.
+        # Return null so the frontend renders a flat list instead.
+        cwe_groups=None if (scan.scan_type or "sast") == "iac" else group_by_cwe(all_groups),
         hidden_fp_count=hidden_fp_count,
         findings=[FindingOut.model_validate(f) for f in grouped_findings],
     )

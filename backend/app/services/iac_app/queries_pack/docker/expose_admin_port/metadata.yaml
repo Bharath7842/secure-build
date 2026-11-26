@@ -1,0 +1,20 @@
+id: DOCKER.EXPOSE_ADMIN_PORT
+name: "Dockerfile exposes an administrative port"
+description: "The Dockerfile exposes a well-known administrative port (22, 2375, 2376, 3389) that should not be publicly reachable from a container."
+severity: HIGH
+category: NETWORK
+finding_type: MISCONFIGURATION
+iac_type: docker
+provider: docker
+enabled: true
+version: 1.0.0
+remediation: >
+  Remove the EXPOSE instruction for administrative ports. Use private networks,
+  SSH tunnels, or bastion hosts to administer the container.
+references:
+  - https://docs.docker.com/engine/reference/builder/#expose
+compliance:
+  - framework: NIST_800_53
+    control: "SC-7"
+  - framework: PCI_DSS
+    control: "1.3"

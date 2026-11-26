@@ -47,6 +47,7 @@ export const PAGE_ROUTES: ReadonlyArray<{ key: string; match: (path: string) => 
   { key: "page.history", match: (p) => p === "/scans" || p.startsWith("/scans/") || p === "/vulnerabilities" || p === "/agent-reports" || p.startsWith("/agent-reports/") },
   { key: "page.scan_sca", match: (p) => p === "/sca" || p.startsWith("/sca/") },
   { key: "page.scan_sbom", match: (p) => p === "/sbom" || p.startsWith("/sbom/") },
+  // /iac/* redirects to /scans — no separate page.scan_iac route needed.
   { key: "page.settings", match: (p) => p === "/dast/settings" || p === "/settings" || p.startsWith("/settings/") },
   { key: "page.dast", match: (p) => p === "/dast" || p.startsWith("/dast/") },
   { key: "page.feedback", match: (p) => p === "/feedback" || p.startsWith("/feedback/") },

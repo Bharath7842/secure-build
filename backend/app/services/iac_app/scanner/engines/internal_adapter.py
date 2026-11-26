@@ -16,6 +16,26 @@ logger = logging.getLogger(__name__)
 QUERY_PACK_VERSION = "2.0.0"
 
 
+def _run_checkov_on_documents(documents: list[dict]) -> list[dict]:
+    """Run Checkov checks on all Terraform documents and return additional findings."""
+    try:
+        from app.services.iac_app.scanner.engines.checkov_bridge import run_terraform_checks
+    except Exception as exc:
+        logger.debug("Checkov bridge unavailable: %s", exc)
+        return []
+    findings: list[dict] = []
+    for doc in documents:
+        doc_meta = doc.get("document") or {}
+        iac_type = doc_meta.get("iac_type") or ""
+        if iac_type not in ("terraform", "terraform_plan"):
+            continue
+        try:
+            findings.extend(run_terraform_checks(doc))
+        except Exception as exc:
+            logger.debug("Checkov scan failed on %s: %s", doc_meta.get("file"), exc)
+    return findings
+
+
 class InternalQueryAdapter(ScannerAdapter):
     def __init__(self) -> None:
         self.engine = QueryEngine()
@@ -36,6 +56,9 @@ class InternalQueryAdapter(ScannerAdapter):
             has_terraform = any(
                 (d.get("document") or {}).get("iac_type") == "terraform"
                 for d in documents if isinstance(d, dict)
+            ) or any(
+                getattr(d, "iac_type", None) == "terraform"
+                for d in documents if not isinstance(d, dict)
             )
             if has_terraform:
                 from app.services.iac_app.scanner.native.parsers.terraform_resolver import TerraformResolver
@@ -46,8 +69,10 @@ class InternalQueryAdapter(ScannerAdapter):
                 ]
                 resolver = TerraformResolver(terraform_parsed, target_path)
                 resolved_context = resolver.resolve_all()
-                return self.engine.execute_global(documents, resolved_context)
-            return self.engine.execute(documents)
+                native = self.engine.execute_global(documents, resolved_context)
+                return native + _run_checkov_on_documents(documents)
+            native = self.engine.execute(documents)
+            return native
 
         parsed_documents = options.get("parsed_documents")
         if parsed_documents:
@@ -55,14 +80,18 @@ class InternalQueryAdapter(ScannerAdapter):
             has_terraform = any(d.iac_type == "terraform" for d in normalized)
             if has_terraform:
                 from app.services.iac_app.scanner.native.parsers.terraform_resolver import TerraformResolver
-                terraform_parsed = [
-                    d for d in parsed_documents
-                    if (isinstance(d, dict) and d.get("iac_type") == "terraform")
-                ]
+                terraform_parsed = []
+                for d in parsed_documents:
+                    if isinstance(d, dict) and d.get("iac_type") == "terraform":
+                        terraform_parsed.append(d)
+                    elif hasattr(d, "iac_type") and d.iac_type == "terraform":
+                        # ParsedDocument dataclass — convert to dict for the resolver
+                        terraform_parsed.append({"raw": getattr(d, "raw", {}), "file_path": getattr(d, "file_path", ""), "iac_type": "terraform"})
                 resolver = TerraformResolver(terraform_parsed, target_path)
                 resolved_context = resolver.resolve_all()
                 normalized_dicts = [d.to_dict() for d in normalized]
-                return self.engine.execute_global(normalized_dicts, resolved_context)
+                native = self.engine.execute_global(normalized_dicts, resolved_context)
+                return native + _run_checkov_on_documents(normalized_dicts)
             return self.engine.execute(normalized)
 
         classified = options.get("classified_files") or {}
@@ -115,7 +144,8 @@ class InternalQueryAdapter(ScannerAdapter):
                 resolver = TerraformResolver(all_parsed, target_path or str(dirs_seen.pop()) if dirs_seen else "")
                 resolved_context = resolver.resolve_all()
                 normalized_dicts = [d.to_dict() for d in normalized]
-                return self.engine.execute_global(normalized_dicts, resolved_context)
+                native = self.engine.execute_global(normalized_dicts, resolved_context)
+                return native + _run_checkov_on_documents(normalized_dicts)
         return self.engine.execute(normalized)
 
 

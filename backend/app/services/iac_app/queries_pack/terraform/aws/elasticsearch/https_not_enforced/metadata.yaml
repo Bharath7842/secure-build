@@ -1,0 +1,19 @@
+id: TF.AWS.ES.HTTPS_NOT_ENFORCED
+name: "Elasticsearch/OpenSearch domain does not enforce HTTPS"
+description: "The Elasticsearch or OpenSearch domain endpoint does not enforce HTTPS. All traffic to the domain endpoint should use HTTPS to protect data in transit."
+severity: HIGH
+category: NETWORK_SECURITY
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  Add a domain_endpoint_options block with enforce_https = true to the resource.
+references:
+  - https://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/es-createupdatedomains.html
+compliance:
+  - framework: AWS_FSBP
+    control: "ES.3"
+  - framework: NIST_800_53
+    control: "SC-8"

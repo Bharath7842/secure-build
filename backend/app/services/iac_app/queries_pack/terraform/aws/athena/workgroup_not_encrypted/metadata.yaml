@@ -1,0 +1,18 @@
+id: TF.AWS.ATHENA.WORKGROUP_NOT_ENCRYPTED
+name: "Athena workgroup query results are not encrypted"
+description: "The Athena workgroup does not enforce encryption for query results stored in S3."
+severity: MEDIUM
+category: ENCRYPTION
+finding_type: MISCONFIGURATION
+iac_type: terraform
+provider: aws
+enabled: true
+version: 1.0.0
+remediation: >
+  In the aws_athena_workgroup resource, add a configuration.result_configuration.encryption_configuration
+  block with encryption_option set to "SSE_KMS" or "CSE_KMS".
+references:
+  - https://docs.aws.amazon.com/athena/latest/ug/encryption.html
+compliance:
+  - framework: NIST_800_53
+    control: "SC-28"
